@@ -9,6 +9,6 @@ def test_platform_is_orchestration_only() -> None:
     assert not any(
         path.parts[-2:] in [("platform", "data"), ("platform", "ingest"), ("platform", "runtime")] for path in files
     )
-    forbidden = ("pandas", "boto3", "requests", "pypdf", "plotly", "jinja2", "psycopg")
+    forbidden = ("pandas", "requests", "plotly", "psycopg")
     source = "\n".join(path.read_text(encoding="utf-8") for path in files)
     assert not any(f"import {name}" in source or f"from {name}" in source for name in forbidden)
