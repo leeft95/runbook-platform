@@ -1,0 +1,30 @@
+[project]
+name = "runbook-data"
+version = "0.0.1"
+description = "Generic source ingestion, immutable datasets, manifests, and blob storage."
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "redcombojnr" }]
+urls = { Repository = "https://github.com/redcombojnr/runbook-platform" }
+dependencies = [
+    "pandas",
+    "pyarrow",
+    "pydantic",
+    "requests",
+    "loguru",
+    "runbook-core"
+]
+
+[project.optional-dependencies]
+s3 = ["boto3"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["runbook.data*"]

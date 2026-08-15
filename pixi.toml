@@ -1,0 +1,53 @@
+[workspace]
+name = "runbook-platform"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-arm64", "win-64"]
+version = "0.0.1"
+
+[dependencies]
+python = "3.11.*"
+pandas = "*"
+numpy = "*"
+pyarrow = "*"
+plotly = "*"
+pydantic = "*"
+loguru = "*"
+statsmodels = "*"
+isoweek = "*"
+scipy = "*"
+holidays = "*"
+pytz = "*"
+requests = "*"
+croniter = "*"
+fastapi = "*"
+dash = "*"
+dash-ag-grid = "*"
+sqlalchemy = "*"
+psycopg = "*"
+alembic = "*"
+uvicorn = "*"
+ruff = "*"
+pre-commit = "*"
+pytest = ">=9.0.2,<10"
+pytest-cov = "*"
+mypy = "*"
+types-requests = "*"
+python-build = "*"
+wheel = "*"
+
+[pypi-dependencies]
+runbook-core = { path = "packages/runbook/runbook-core", editable = true }
+runbook-data = { path = "packages/runbook/runbook-data", editable = true }
+runbook-platform = { path = "packages/runbook/runbook-platform", editable = true }
+runbook-sdk = { path = "packages/runbook/runbook-sdk", editable = true }
+runbook-services = { path = "packages/runbook/runbook-services", editable = true }
+prophet = "*"
+
+[tasks]
+test = "pytest -q"
+test-cov = "pytest -q --cov=runbook --cov-report=term-missing"
+lint = "ruff check ."
+format-check = "ruff format --check ."
+typecheck = "mypy packages tests --python-version 3.11 --ignore-missing-imports --namespace-packages --explicit-package-bases"
+preview = "runbook-preview"
+tick = "runbook-services tick"

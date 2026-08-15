@@ -1,0 +1,788 @@
+{
+  "$defs": {
+    "table_style_plan": {
+      "$defs": {
+        "ConditionOp": {
+          "enum": [
+            "always",
+            "eq",
+            "ne",
+            "gt",
+            "gte",
+            "lt",
+            "lte",
+            "between",
+            "in",
+            "isna",
+            "notna",
+            "z_gt",
+            "z_lt"
+          ],
+          "title": "ConditionOp",
+          "type": "string"
+        },
+        "RowRefMode": {
+          "enum": [
+            "label",
+            "position"
+          ],
+          "title": "RowRefMode",
+          "type": "string"
+        },
+        "TableAction": {
+          "additionalProperties": false,
+          "properties": {
+            "background_color": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Background Color"
+            },
+            "text_color": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Text Color"
+            },
+            "font_weight": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Font Weight"
+            },
+            "font_style": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Font Style"
+            },
+            "text_align": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Text Align"
+            },
+            "bottom_border": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Bottom Border"
+            },
+            "border_top": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Border Top"
+            },
+            "border_right": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Border Right"
+            },
+            "border_bottom": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Border Bottom"
+            },
+            "border_left": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Border Left"
+            }
+          },
+          "title": "TableAction",
+          "type": "object"
+        },
+        "TableColumnRHS": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "column",
+              "default": "column",
+              "title": "Kind",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "label"
+          ],
+          "title": "TableColumnRHS",
+          "type": "object"
+        },
+        "TableColumnSizing": {
+          "additionalProperties": false,
+          "properties": {
+            "label": {
+              "title": "Label",
+              "type": "string"
+            },
+            "width_px": {
+              "exclusiveMinimum": 0,
+              "title": "Width Px",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "label",
+            "width_px"
+          ],
+          "title": "TableColumnSizing",
+          "type": "object"
+        },
+        "TableCondition": {
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "$ref": "#/$defs/ConditionOp",
+              "default": "always"
+            },
+            "rhs": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TableLiteralRHS"
+                },
+                {
+                  "$ref": "#/$defs/TableColumnRHS"
+                },
+                {
+                  "$ref": "#/$defs/TableRowRHS"
+                },
+                {
+                  "$ref": "#/$defs/TableZScoreRHS"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Rhs"
+            },
+            "lhs_column": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Lhs Column"
+            },
+            "all_of": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/TableCondition"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "All Of"
+            },
+            "any_of": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/TableCondition"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Any Of"
+            }
+          },
+          "title": "TableCondition",
+          "type": "object"
+        },
+        "TableFormatDate": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "date",
+              "default": "date",
+              "title": "Kind",
+              "type": "string"
+            },
+            "pattern": {
+              "title": "Pattern",
+              "type": "string"
+            }
+          },
+          "required": [
+            "pattern"
+          ],
+          "title": "TableFormatDate",
+          "type": "object"
+        },
+        "TableFormatNumber": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "number",
+              "default": "number",
+              "title": "Kind",
+              "type": "string"
+            },
+            "digits": {
+              "default": 2,
+              "minimum": 0,
+              "title": "Digits",
+              "type": "integer"
+            },
+            "thousands": {
+              "default": false,
+              "title": "Thousands",
+              "type": "boolean"
+            }
+          },
+          "title": "TableFormatNumber",
+          "type": "object"
+        },
+        "TableFormatPercent": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "percent",
+              "default": "percent",
+              "title": "Kind",
+              "type": "string"
+            },
+            "digits": {
+              "default": 2,
+              "minimum": 0,
+              "title": "Digits",
+              "type": "integer"
+            }
+          },
+          "title": "TableFormatPercent",
+          "type": "object"
+        },
+        "TableFormatString": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "string",
+              "default": "string",
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          "title": "TableFormatString",
+          "type": "object"
+        },
+        "TableGlobalStyle": {
+          "additionalProperties": false,
+          "properties": {
+            "background_color": {
+              "default": "lightblue",
+              "title": "Background Color",
+              "type": "string"
+            },
+            "one_bg_color": {
+              "default": false,
+              "title": "One Bg Color",
+              "type": "boolean"
+            },
+            "header_border_bottom": {
+              "default": "1px solid black",
+              "title": "Header Border Bottom",
+              "type": "string"
+            },
+            "table_border": {
+              "default": "2px solid black",
+              "title": "Table Border",
+              "type": "string"
+            },
+            "font_size": {
+              "default": "11pt",
+              "title": "Font Size",
+              "type": "string"
+            },
+            "font_family": {
+              "default": "Calibri",
+              "title": "Font Family",
+              "type": "string"
+            },
+            "header_text_align": {
+              "default": "center",
+              "title": "Header Text Align",
+              "type": "string"
+            }
+          },
+          "title": "TableGlobalStyle",
+          "type": "object"
+        },
+        "TableLiteralRHS": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "literal",
+              "default": "literal",
+              "title": "Kind",
+              "type": "string"
+            },
+            "value": {
+              "title": "Value"
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "title": "TableLiteralRHS",
+          "type": "object"
+        },
+        "TableRowRHS": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "row",
+              "default": "row",
+              "title": "Kind",
+              "type": "string"
+            },
+            "row_ref": {
+              "$ref": "#/$defs/TableRowRef"
+            }
+          },
+          "required": [
+            "row_ref"
+          ],
+          "title": "TableRowRHS",
+          "type": "object"
+        },
+        "TableRowRef": {
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "$ref": "#/$defs/RowRefMode"
+            },
+            "value": {
+              "title": "Value"
+            }
+          },
+          "required": [
+            "mode",
+            "value"
+          ],
+          "title": "TableRowRef",
+          "type": "object"
+        },
+        "TableRowSizing": {
+          "additionalProperties": false,
+          "properties": {
+            "row_ref": {
+              "$ref": "#/$defs/TableRowRef"
+            },
+            "width_px": {
+              "exclusiveMinimum": 0,
+              "title": "Width Px",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "row_ref",
+            "width_px"
+          ],
+          "title": "TableRowSizing",
+          "type": "object"
+        },
+        "TableRule": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/TableTarget"
+            },
+            "condition": {
+              "$ref": "#/$defs/TableCondition"
+            },
+            "action": {
+              "$ref": "#/$defs/TableAction"
+            }
+          },
+          "required": [
+            "id",
+            "target",
+            "action"
+          ],
+          "title": "TableRule",
+          "type": "object"
+        },
+        "TableSizing": {
+          "additionalProperties": false,
+          "properties": {
+            "columns": {
+              "items": {
+                "$ref": "#/$defs/TableColumnSizing"
+              },
+              "title": "Columns",
+              "type": "array"
+            },
+            "rows": {
+              "items": {
+                "$ref": "#/$defs/TableRowSizing"
+              },
+              "title": "Rows",
+              "type": "array"
+            }
+          },
+          "title": "TableSizing",
+          "type": "object"
+        },
+        "TableStyleFormat": {
+          "additionalProperties": false,
+          "properties": {
+            "na_rep": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Na Rep"
+            },
+            "precision": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Precision"
+            },
+            "thousands": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Thousands"
+            },
+            "columns": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TableFormatNumber"
+                  },
+                  {
+                    "$ref": "#/$defs/TableFormatPercent"
+                  },
+                  {
+                    "$ref": "#/$defs/TableFormatDate"
+                  },
+                  {
+                    "$ref": "#/$defs/TableFormatString"
+                  }
+                ]
+              },
+              "title": "Columns",
+              "type": "object"
+            }
+          },
+          "title": "TableStyleFormat",
+          "type": "object"
+        },
+        "TableStyleOptions": {
+          "additionalProperties": false,
+          "properties": {
+            "max_rows": {
+              "default": 100,
+              "minimum": 1,
+              "title": "Max Rows",
+              "type": "integer"
+            },
+            "global_style": {
+              "$ref": "#/$defs/TableGlobalStyle"
+            },
+            "show_index": {
+              "default": true,
+              "title": "Show Index",
+              "type": "boolean"
+            },
+            "hidden_columns": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Hidden Columns",
+              "type": "array"
+            },
+            "hidden_rows": {
+              "items": {
+                "$ref": "#/$defs/TableRowRef"
+              },
+              "title": "Hidden Rows",
+              "type": "array"
+            }
+          },
+          "title": "TableStyleOptions",
+          "type": "object"
+        },
+        "TableTarget": {
+          "additionalProperties": false,
+          "properties": {
+            "scope": {
+              "$ref": "#/$defs/TargetScope",
+              "default": "all"
+            },
+            "labels": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Labels"
+            },
+            "positions": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Positions"
+            }
+          },
+          "title": "TableTarget",
+          "type": "object"
+        },
+        "TableZScoreRHS": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "zscore",
+              "default": "zscore",
+              "title": "Kind",
+              "type": "string"
+            },
+            "mean_column": {
+              "title": "Mean Column",
+              "type": "string"
+            },
+            "std_column": {
+              "title": "Std Column",
+              "type": "string"
+            },
+            "num_std": {
+              "default": 1.0,
+              "minimum": 0,
+              "title": "Num Std",
+              "type": "number"
+            }
+          },
+          "required": [
+            "mean_column",
+            "std_column"
+          ],
+          "title": "TableZScoreRHS",
+          "type": "object"
+        },
+        "TargetScope": {
+          "enum": [
+            "all",
+            "columns",
+            "rows"
+          ],
+          "title": "TargetScope",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "table-style/0.1",
+          "default": "table-style/0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "style_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Style Key"
+        },
+        "format": {
+          "$ref": "#/$defs/TableStyleFormat"
+        },
+        "sizing": {
+          "$ref": "#/$defs/TableSizing"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/TableRule"
+          },
+          "title": "Rules",
+          "type": "array"
+        },
+        "options": {
+          "$ref": "#/$defs/TableStyleOptions"
+        }
+      },
+      "title": "TableStylePlan",
+      "type": "object"
+    },
+    "table_artifact_ref": {
+      "additionalProperties": false,
+      "description": "Runtime-facing table artifact references used by PDL table blocks.",
+      "properties": {
+        "data_ref": {
+          "minLength": 1,
+          "title": "Data Ref",
+          "type": "string"
+        },
+        "style_ref": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Style Ref"
+        },
+        "html_ref": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Html Ref"
+        },
+        "style_key": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Style Key"
+        }
+      },
+      "required": [
+        "data_ref"
+      ],
+      "title": "TableArtifactRef",
+      "type": "object"
+    }
+  }
+}
