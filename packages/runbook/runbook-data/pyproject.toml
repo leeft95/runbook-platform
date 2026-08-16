@@ -2,6 +2,7 @@
 name = "runbook-data"
 version = "0.0.1"
 description = "Generic source ingestion, immutable datasets, manifests, and blob storage."
+readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "redcombojnr" }]

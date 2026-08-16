@@ -37,6 +37,16 @@ generic local-file adapter and `csv_timeseries_v1` parser. The parser requires
 `params.timestamp_column`, normalizes timestamps to UTC, and uses that column
 as the deterministic append key and watermark.
 
+## Documentation
+
+- [Data guide](docs/data.md): ingest the synthetic fixtures, configure sources,
+  understand manifests, and load current or historical datasets.
+- [Source adapter and curation guide](docs/source-adapters-and-curation.md): add
+  acquisition capabilities and deterministic Stage 2 parsers.
+- [Service operations](packages/runbook/runbook-services/README.md): configure
+  PostgreSQL, run ticks, use the API, and launch the operations UI.
+- [Contributing](CONTRIBUTING.md) and [security policy](SECURITY.md).
+
 ## Services
 
 Production control uses PostgreSQL for configuration revisions and the run
