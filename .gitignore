@@ -226,3 +226,6 @@ STUDY_BOOK.pdf
 
 #codex agents
 .agents/*
+
+# vscode
+.vscode/*
