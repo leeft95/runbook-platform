@@ -1,6 +1,6 @@
 [project]
 name = "runbook-platform"
-version = "0.0.1"
+version = "0.0.2"
 description = "Deterministic scheduling and snapshot-pinned execution helpers."
 requires-python = ">=3.11"
 license = "Apache-2.0"
