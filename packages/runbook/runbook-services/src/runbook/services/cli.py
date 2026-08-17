@@ -116,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     tick.add_argument("--store", default=None)
     tick.add_argument("--reports-root", default=None)
     tick.add_argument("--code-version", default=None)
+    tick.add_argument("--workers", type=int, default=4)
     serve = sub.add_parser("serve")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8050)
@@ -139,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
                     database=args.database,
                     data_store=args.store,
                     report_root=args.reports_root,
+                    workers=args.workers,
                 ).tick(now=_time(args.now), code_version=args.code_version)
             }
         else:

@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from sqlalchemy import Select, and_, desc, func, select
+from runbook.data.config import SourceConfig
+from sqlalchemy import Select, and_, desc, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from .config import validate_config
 from .models import ConfigRevision, Run
+
+if TYPE_CHECKING:
+    from runbook.data import DatabasePointerRegistry
 
 
 def now_utc() -> datetime:
@@ -27,6 +31,31 @@ def _run_view(row: Run) -> dict[str, Any]:
     return {name: getattr(row, name) for name in Run.__table__.columns.keys()}
 
 
+def _validate_source_ownership(
+    config_id: str,
+    model: SourceConfig,
+    configs: list[ConfigRevision],
+    pointer_owners: dict[str, str],
+) -> None:
+    """Reject ambiguous producers and unsupported ownership transfers."""
+    dataset_ids = {binding.dataset_id for binding in model.datasets.values()}
+    for row in configs:
+        if row.config_id == config_id:
+            continue
+        other = validate_config("source", row.config_id, dict(row.payload)).model
+        if not isinstance(other, SourceConfig):  # pragma: no cover - fixed by kind
+            continue
+        overlap = dataset_ids.intersection(binding.dataset_id for binding in other.datasets.values())
+        if overlap:
+            dataset_id = min(overlap)
+            raise ConflictError(f"dataset {dataset_id!r} already has configured producer {other.source_id!r}")
+    for dataset_id, owner in pointer_owners.items():
+        if dataset_id in dataset_ids and owner != config_id:
+            raise ConflictError(f"dataset {dataset_id!r} is owned by source {owner!r}")
+        if owner == config_id and dataset_id not in dataset_ids:
+            raise ConflictError(f"published dataset {dataset_id!r} cannot be removed from source {config_id!r}")
+
+
 class ConflictError(ValueError):
     pass
 
@@ -40,6 +69,18 @@ class RunRepository:
 
     def __init__(self, session: Session):
         self.session = session
+
+    @property
+    def pointer_registry(self) -> DatabasePointerRegistry:
+        """Return a pointer registry using this session's transaction connection.
+
+        The registry deliberately receives the caller-owned connection, so pointer
+        reads and publications participate in the repository transaction and can be
+        committed atomically with service run state.
+        """
+        from runbook.data import DatabasePointerRegistry
+
+        return DatabasePointerRegistry(self.session.connection())
 
     def latest_config(self, kind: str, config_id: str) -> ConfigRevision | None:
         """Return the newest revision for a configuration."""
@@ -93,9 +134,21 @@ class RunRepository:
     ) -> ConfigRevision:
         """Validate and append a configuration revision."""
         validated = validate_config(kind, config_id, payload)
+        if isinstance(validated.model, SourceConfig) and self.session.get_bind().dialect.name == "postgresql":
+            self.session.execute(text("SELECT pg_advisory_xact_lock(hashtext('runbook-source-config-ownership'))"))
         current = self.latest_config(kind, config_id)
         if expected_revision is not None and (current is None or current.revision != expected_revision):
             raise ConflictError("configuration revision is stale")
+        if isinstance(validated.model, SourceConfig):
+            pointer_owners = {
+                dataset_id: pointer.source_id for dataset_id, pointer in self.pointer_registry.all().items()
+            }
+            _validate_source_ownership(
+                config_id,
+                validated.model,
+                self.list_latest_configs("source"),
+                pointer_owners,
+            )
         if current is not None and current.config_hash == validated.config_hash:
             return current
         revision = (current.revision if current else 0) + 1
@@ -318,9 +371,24 @@ class AsyncRunRepository:
     ) -> ConfigRevision:
         """Validate and append a revision asynchronously."""
         validated = validate_config(kind, config_id, payload)
+        if isinstance(validated.model, SourceConfig) and self.session.get_bind().dialect.name == "postgresql":
+            await self.session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext('runbook-source-config-ownership'))")
+            )
         current = await self.latest_config(kind, config_id)
         if expected_revision is not None and (current is None or current.revision != expected_revision):
             raise ConflictError("configuration revision is stale")
+        if isinstance(validated.model, SourceConfig):
+            from runbook.data.pointers import dataset_pointers
+
+            pointer_rows = (await self.session.execute(select(dataset_pointers))).mappings()
+            pointer_owners = {row["dataset_id"]: row["source_id"] for row in pointer_rows}
+            _validate_source_ownership(
+                config_id,
+                validated.model,
+                await self.list_latest_configs("source"),
+                pointer_owners,
+            )
         if current is not None and current.config_hash == validated.config_hash:
             return current
         row = ConfigRevision(

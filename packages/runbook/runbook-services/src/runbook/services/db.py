@@ -43,14 +43,21 @@ def upgrade_with_metadata(url: str | None = None) -> None:
     checkout usable for local smoke tests and is safe because it only creates
     service-owned tables.
     """
+    from runbook.data import create_pointer_schema
+
     from .models import Base
 
-    Base.metadata.create_all(sync_engine(url))
+    engine = sync_engine(url)
+    Base.metadata.create_all(engine)
+    create_pointer_schema(engine)
 
 
 @contextmanager
 def tick_lock(engine: Engine) -> Iterator[bool]:
     """Hold the single-writer PostgreSQL advisory lock for one tick."""
+    if engine.dialect.name != "postgresql":
+        yield True
+        return
     with engine.connect() as connection:
         acquired = bool(
             connection.execute(text("SELECT pg_try_advisory_lock(hashtext('runbook-services-tick'))")).scalar()
