@@ -2,8 +2,8 @@
 
 `runbook-data` turns source bytes into immutable datasets that reports and
 notebooks can resolve by snapshot. It owns source configuration, acquisition,
-Stage 2 parsing, Parquet revisions, complete dataset manifests, and
-`pointers.json`.
+Stage 2 parsing, Parquet revisions, complete dataset manifests, and the
+PostgreSQL current-pointer registry.
 
 Reports do not call source systems or select files directly.
 
@@ -17,7 +17,7 @@ source config
     -> Stage 2 parser
     -> immutable curated Parquet revisions
     -> complete content-addressed manifest
-    -> pointers.json
+    -> PostgreSQL dataset pointer
     -> snapshot-pinned SDK read or report run
 ```
 
@@ -34,11 +34,12 @@ Run one source directly for local development:
 ```python
 from datetime import datetime, timezone
 
-from runbook.data import load_source_configs, open_blob_store
+from runbook.data import load_source_configs, open_blob_store, open_pointer_registry
 from runbook.data.ingest import IngestRequest, run_ingest
 
 configs = load_source_configs("data/contract/source_configs.json")
 store = open_blob_store("file:.runbook")
+pointers = open_pointer_registry("postgresql+psycopg://postgres:postgres@localhost:5432/runbook")
 
 result = run_ingest(
     IngestRequest(
@@ -46,14 +47,15 @@ result = run_ingest(
         run_time=datetime(2026, 1, 2, tzinfo=timezone.utc),
     ),
     store=store,
+    pointer_registry=pointers,
 )
 print(result.datasets)
 ```
 
-This produces an immutable raw CSV, a curated Parquet revision, a manifest,
-and the local `.runbook/pointers.json`. Direct `run_ingest` calls are useful
-for development and tests. Production source runs should be initiated by
-`runbook-services` so run identity and outcomes are recorded in PostgreSQL.
+This produces an immutable raw CSV, a curated Parquet revision, and a manifest,
+then advances the dataset pointer in PostgreSQL. Production source runs should
+be initiated by `runbook-services` so pointer publication and the run outcome
+commit atomically.
 
 Load the published dataset through the SDK:
 
@@ -62,6 +64,7 @@ from runbook.sdk import create_client
 
 frame, snapshot = create_client(
     store_uri="file:.runbook",
+    database_url="postgresql+psycopg://postgres:postgres@localhost:5432/runbook",
 ).load_dataset("demo_daily_prices")
 
 print(frame.tail())
@@ -168,13 +171,13 @@ File and S3 stores share the same logical layout:
 raw/<source>/<slot>/sha256=<hash>/source.<ext>
 curated/<dataset>/version=<schema>/<partition...>/<revision>.parquet
 curated/<dataset>/manifests/sha256=<hash>.json
-pointers.json
 ```
 
 A manifest is a complete dataset view. It records selected file references,
 file hashes, partitions, raw lineage, the dataset watermark, publication time,
-and the preceding manifest. `pointers.json` contains only
-`dataset_id -> latest manifest reference`.
+and the preceding manifest. PostgreSQL stores the current manifest reference,
+watermark, owning source, and source run for each dataset. Blob storage has no
+mutable pointer state.
 
 Curated directories are storage locations, not query interfaces. Older
 revisions remain present, so reading a directory or glob can combine current

@@ -27,7 +27,7 @@ Parquet revisions, manifests, and pointer publication.
 ## Build a source adapter
 
 An adapter implements the
-[`SourceAdapter`](../packages/runbook/runbook-data/src/runbook/data/ingest/adapters/base/contracts.py)
+[`SourceAdapter`](https://github.com/redcombojnr/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/adapters/base/contracts.py)
 protocol:
 
 ```python
@@ -180,7 +180,7 @@ sensitive URL query parameters before storing or logging a locator.
 ### Register the adapter
 
 Adapters are currently registered in
-[`ingest/adapters/__init__.py`](../packages/runbook/runbook-data/src/runbook/data/ingest/adapters/__init__.py).
+[`ingest/adapters/__init__.py`](https://github.com/redcombojnr/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/adapters/__init__.py).
 Import the implementation and add its stable identifier to `_ADAPTERS`:
 
 ```python
@@ -201,7 +201,7 @@ adapter is therefore an in-tree `runbook-data` change.
 ## Build a Stage 2 parser
 
 The parser is the curator. It implements the
-[`Stage2Parser`](../packages/runbook/runbook-data/src/runbook/data/ingest/parsers/base/contracts.py)
+[`Stage2Parser`](https://github.com/redcombojnr/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/parsers/base/contracts.py)
 call signature and returns one `CuratedFrame` for every produced partition:
 
 ```python
@@ -304,7 +304,7 @@ backwards.
 ### Register the parser
 
 Parsers are registered in
-[`ingest/parsers/__init__.py`](../packages/runbook/runbook-data/src/runbook/data/ingest/parsers/__init__.py):
+[`ingest/parsers/__init__.py`](https://github.com/redcombojnr/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/parsers/__init__.py):
 
 ```python
 from runbook.data.ingest.parsers.orders_json import parse_orders_json
@@ -371,7 +371,7 @@ Cover each boundary separately before adding an end-to-end ingest test:
    verifies append or full-refresh behavior through the SDK.
 
 The existing
-[`tests/data/test_generic_ingest.py`](../tests/data/test_generic_ingest.py)
+[`tests/data/test_generic_ingest.py`](https://github.com/redcombojnr/runbook-platform/blob/main/tests/data/test_generic_ingest.py)
 shows parser and end-to-end examples. Run the focused checks with:
 
 ```bash
@@ -382,8 +382,8 @@ pixi run typecheck
 ```
 
 Before merging, also verify that a repeated ingest of identical bytes reuses
-the existing curated revision and that a parser failure leaves
-`pointers.json` unchanged.
+the existing curated revision and that a parser failure leaves the database
+pointer unchanged.
 
 ## Review checklist
 

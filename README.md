@@ -39,6 +39,7 @@ as the deterministic append key and watermark.
 
 ## Documentation
 
+- [Runbook documentation site](https://redcombojnr.github.io/runbook-platform/)
 - [Data guide](docs/data.md): ingest the synthetic fixtures, configure sources,
   understand manifests, and load current or historical datasets.
 - [Source adapter and curation guide](docs/source-adapters-and-curation.md): add
@@ -49,15 +50,20 @@ as the deterministic append key and watermark.
 
 ## Services
 
-Production control uses PostgreSQL for configuration revisions and the run
-ledger. Apply migrations, import validated configs, and invoke one externally
-scheduled tick process:
+Production control uses PostgreSQL for configuration revisions, current
+dataset pointers, and the run ledger. Apply migrations, import validated
+configs, and invoke one externally scheduled tick process:
 
 ```bash
 runbook-services db upgrade
 runbook-services config import
-runbook-services tick
+runbook-services tick --workers 4
 ```
+
+Each tick runs a bounded in-process DAG: source acquisition, source curation,
+then enabled reports whose complete dataset snapshots are ready. Profile cron
+fields remain accepted for v0.0.1 configuration compatibility; automatic
+report runs are dataset-triggered in v0.0.2.
 
 `runbook-services serve` binds to `127.0.0.1` by default and has no
 authentication. Do not expose it directly to an untrusted network; place it

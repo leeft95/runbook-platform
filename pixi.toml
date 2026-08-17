@@ -34,6 +34,9 @@ mypy = "*"
 types-requests = "*"
 python-build = "*"
 wheel = "*"
+sphinx = ">=8,<9"
+myst-parser = ">=4,<5"
+furo = ">=2024.8"
 
 [pypi-dependencies]
 runbook-core = { path = "packages/runbook/runbook-core", editable = true }
@@ -48,6 +51,8 @@ test = "pytest -q"
 test-cov = "pytest -q --cov=runbook --cov-report=term-missing"
 lint = "ruff check ."
 format-check = "ruff format --check ."
+docs = "sphinx-build -W --keep-going -b html docs docs/_build/html"
+docs-serve = { cmd = "python -m http.server 8765 --bind 127.0.0.1 --directory docs/_build/html", depends-on = ["docs"] }
 typecheck = "mypy packages tests --python-version 3.11 --ignore-missing-imports --namespace-packages --explicit-package-bases"
 preview = "runbook-preview"
 tick = "runbook-services tick"

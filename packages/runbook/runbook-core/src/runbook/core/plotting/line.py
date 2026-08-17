@@ -32,16 +32,19 @@ def plot_line(
     """Plot line charts from a dataframe or a dict of named dataframes.
 
     Accepted inputs:
+
     - Single subplot: ``pd.DataFrame`` (each column is a series).
     - Multi subplot: ``{plot_name: pd.DataFrame}``.
 
     Styling contract:
+
     - ``trace_style``: kwargs applied to every trace in every subplot.
       Example: ``{"line": {"width": 2}, "mode": "lines+markers"}``
     - ``series_styles``: per-series overrides keyed by column name.
       Example: ``{"x": {"line": {"dash": "dot"}}, "y": {"marker": {"size": 10}}}``
 
     Subplot behavior for ``series_styles``:
+
     - Matching is by column name only, across all subplots.
     - If subplot A has column ``x`` and subplot B has column ``y``, both can be
       styled in one dict: ``{"x": {...}, "y": {...}}``.
