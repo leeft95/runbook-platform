@@ -74,7 +74,7 @@ def test_http_query_logs_redact_url_query_parameters() -> None:
     assert "token=secret" not in output
 
 
-def test_ingest_logs_stage_order_and_local_query(tmp_path) -> None:
+def test_ingest_logs_stage_order_and_local_query(tmp_path, pointer_registry) -> None:
     """Expose readiness, acquisition, curation, and writes in order."""
     config = SourceConfig(
         source_id="fixture_logging",
@@ -90,6 +90,7 @@ def test_ingest_logs_stage_order_and_local_query(tmp_path) -> None:
         run_ingest(
             IngestRequest(source_config=config, run_time=slot),
             store=BlobStore(f"file:{tmp_path}"),
+            pointer_registry=pointer_registry,
         )
     finally:
         logger.remove(token)
@@ -98,7 +99,7 @@ def test_ingest_logs_stage_order_and_local_query(tmp_path) -> None:
     assert "mode=immutable" in output
 
 
-def test_local_file_acquisition_logs_query(tmp_path) -> None:
+def test_local_file_acquisition_logs_query(tmp_path, pointer_registry) -> None:
     """Log local source reads with their byte count."""
     source = tmp_path / "source.csv"
     source.write_text("timestamp,close\n2026-08-10T00:00:00Z,82.5\n", encoding="utf-8")
@@ -122,6 +123,7 @@ def test_local_file_acquisition_logs_query(tmp_path) -> None:
                 run_time=datetime(2026, 8, 10, tzinfo=timezone.utc),
             ),
             store=BlobStore(f"file:{tmp_path / 'store'}"),
+            pointer_registry=pointer_registry,
         )
     finally:
         logger.remove(token)

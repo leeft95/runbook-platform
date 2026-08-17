@@ -2,7 +2,9 @@
 
 from runbook.data.ingest.models import (
     AcquisitionResult,
+    AcquisitionStageResult,
     CuratedFrame,
+    CurationResult,
     IngestRequest,
     IngestResult,
     RawArtifactRecord,
@@ -10,10 +12,12 @@ from runbook.data.ingest.models import (
     ReadinessStatus,
     SourceConfig,
 )
-from runbook.data.ingest.runner import run_ingest
+from runbook.data.ingest.runner import run_ingest, run_stage1_acquire
 
 __all__ = [
     "AcquisitionResult",
+    "AcquisitionStageResult",
+    "CurationResult",
     "CuratedFrame",
     "IngestRequest",
     "IngestResult",
@@ -22,4 +26,5 @@ __all__ = [
     "ReadinessStatus",
     "SourceConfig",
     "run_ingest",
+    "run_stage1_acquire",
 ]

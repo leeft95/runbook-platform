@@ -15,7 +15,7 @@ from runbook.data.manifests import (
 from runbook.sdk import ReportProfile, execute_report
 
 
-def test_report_execution_is_shared_and_cache_is_type_stable(tmp_path) -> None:
+def test_report_execution_is_shared_and_cache_is_type_stable(tmp_path, pointer_registry) -> None:
     store = open_blob_store(f"file:{tmp_path}")
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     ref, digest = write_dataframe(store, "prices", pd.DataFrame({"price": [100.0, 101.0, 102.0]}))
@@ -25,8 +25,14 @@ def test_report_execution_is_shared_and_cache_is_type_stable(tmp_path) -> None:
         published_at=now,
         files=[DatasetFile(ref=ref, sha256=digest, partition={"date": "2026-01"})],
     )
-    publish_manifests(store, [(manifest, manifest_digest)])
-    snapshot = resolve_snapshot(store, {"prices": "prices"})
+    publish_manifests(
+        store,
+        [(manifest, manifest_digest)],
+        pointer_registry=pointer_registry,
+        source_id="prices_source",
+        source_run_id="fixture",
+    )
+    snapshot = resolve_snapshot(store, {"prices": "prices"}, pointer_registry=pointer_registry)
     profile = ReportProfile(
         profile_id="vol_dev",
         report_id="vol_report",

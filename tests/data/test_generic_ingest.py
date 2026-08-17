@@ -64,7 +64,7 @@ def test_csv_parser_sorts_deduplicates_and_requires_timestamp() -> None:
         )
 
 
-def test_local_file_ingest_publishes_and_appends_atomically(tmp_path) -> None:
+def test_local_file_ingest_publishes_and_appends_atomically(tmp_path, pointer_registry) -> None:
     csv_path = tmp_path / "prices.csv"
     csv_path.write_text("timestamp,close\n2026-01-01T00:00:00Z,1\n", encoding="utf-8")
     store = open_blob_store(f"file:{tmp_path / 'store'}")
@@ -72,9 +72,10 @@ def test_local_file_ingest_publishes_and_appends_atomically(tmp_path) -> None:
     first = run_ingest(
         IngestRequest(source_config=config, run_time=datetime(2026, 1, 1, tzinfo=timezone.utc)),
         store=store,
+        pointer_registry=pointer_registry,
     )
     assert first.status.value == "ready"
-    pointer_before = store.get_json("pointers.json")["synthetic_prices"]
+    pointer_before = pointer_registry.get(["synthetic_prices"])["synthetic_prices"].manifest_ref
 
     csv_path.write_text(
         "timestamp,close\n2026-01-01T00:00:00Z,1\n2026-01-02T00:00:00Z,2\n",
@@ -83,6 +84,8 @@ def test_local_file_ingest_publishes_and_appends_atomically(tmp_path) -> None:
     second = run_ingest(
         IngestRequest(source_config=config, run_time=datetime(2026, 1, 2, tzinfo=timezone.utc)),
         store=store,
+        pointer_registry=pointer_registry,
     )
     assert second.status.value == "ready"
-    assert store.get_json("pointers.json")["synthetic_prices"] != pointer_before
+    assert pointer_registry.get(["synthetic_prices"])["synthetic_prices"].manifest_ref != pointer_before
+    assert not store.exists("pointers.json")

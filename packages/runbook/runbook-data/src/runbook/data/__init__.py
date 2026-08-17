@@ -6,13 +6,24 @@ from runbook.data.manifests import (
     load_snapshot_dataset,
     publish_manifests,
     resolve_snapshot,
+    write_manifests,
 )
 from runbook.data.pipeline import slot_key
+from runbook.data.pointers import (
+    DatabasePointerRegistry,
+    DatasetPointer,
+    DatasetPointerUpdate,
+    create_pointer_schema,
+    open_pointer_registry,
+)
 from runbook.data.store import BlobStore, open_blob_store
 
 __all__ = [
     "BlobStore",
     "DatasetBinding",
+    "DatabasePointerRegistry",
+    "DatasetPointer",
+    "DatasetPointerUpdate",
     "SourceConfig",
     "build_manifest",
     "load_manifest",
@@ -21,6 +32,9 @@ __all__ = [
     "slot_key",
     "run_ingest",
     "open_blob_store",
+    "create_pointer_schema",
+    "open_pointer_registry",
     "publish_manifests",
     "resolve_snapshot",
+    "write_manifests",
 ]

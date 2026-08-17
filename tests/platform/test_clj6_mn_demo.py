@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from runbook.data import load_source_configs, open_blob_store, resolve_snapshot
 from runbook.platform.report_run import run_report
@@ -33,7 +33,7 @@ class _ReadOnlyBlobStore:
         raise AssertionError("preview wrote to the data store")
 
 
-def test_synthetic_demo_proves_source_to_html_flow(tmp_path) -> None:
+def test_synthetic_demo_proves_source_to_html_flow(tmp_path, pointer_registry) -> None:
     """Prove two fixture sources feed two deterministic report outputs."""
     data_store = open_blob_store(f"file:{tmp_path / 'data'}")
     workspace_store = open_blob_store(f"file:{tmp_path / 'workspace'}")
@@ -45,6 +45,7 @@ def test_synthetic_demo_proves_source_to_html_flow(tmp_path) -> None:
             store=data_store,
             config=sources[source_id],
             slot=slot,
+            pointer_registry=pointer_registry,
         )
         assert outcome.status == "success"
 
@@ -62,14 +63,16 @@ def test_synthetic_demo_proves_source_to_html_flow(tmp_path) -> None:
             profile=profile,
             slot=slot,
             code_version="demo",
+            pointer_registry=pointer_registry,
         )
         assert outcome.status == "success"
         production_results[profile.profile_id] = outcome.as_dict()
         assert not data_store.exists(f"runs/reports/{profile.profile_id}")
 
-    pointers_before = data_store.get_json("pointers.json")
+    pointers_before = pointer_registry.all()
     client = RunbookClient(
         store=_ReadOnlyBlobStore(data_store),
+        pointer_registry=pointer_registry,
         workspace_store=workspace_store,
     )
     cold_hits = {}
@@ -87,7 +90,8 @@ def test_synthetic_demo_proves_source_to_html_flow(tmp_path) -> None:
         assert workspace_store.exists(cold.html_ref)
         assert b"<!doctype html>" in workspace_store.get(cold.html_ref)
 
-    assert data_store.get_json("pointers.json") == pointers_before
+    assert pointer_registry.all() == pointers_before
+    assert not data_store.exists("pointers.json")
     assert cold_hits["timeseries_snapshot_demo"] == {
         "comparison": False,
         "daily_returns": False,
@@ -100,7 +104,20 @@ def test_synthetic_demo_proves_source_to_html_flow(tmp_path) -> None:
     assert cold_hits["volatility_demo"] == {"returns": False, "vol": False}
     assert warm_hits["volatility_demo"] == {"returns": True, "vol": True}
 
-    snapshot = resolve_snapshot(data_store, snapshot_profile.datasets)
-    volatility_snapshot = resolve_snapshot(data_store, volatility_profile.datasets)
+    snapshot = resolve_snapshot(data_store, snapshot_profile.datasets, pointer_registry=pointer_registry)
+    volatility_snapshot = resolve_snapshot(
+        data_store,
+        volatility_profile.datasets,
+        pointer_registry=pointer_registry,
+    )
     assert set(snapshot.datasets) == {"daily_prices", "intraday_bars"}
     assert volatility_snapshot.datasets["prices"] == snapshot.datasets["daily_prices"]
+
+    manual = run_report(
+        store=data_store,
+        profile=snapshot_profile,
+        slot=slot + timedelta(days=1),
+        code_version="demo",
+        snapshot=snapshot,
+    )
+    assert manual.status == "success"

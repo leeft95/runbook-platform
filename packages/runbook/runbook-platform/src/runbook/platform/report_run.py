@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 
 from loguru import logger
-from runbook.data import resolve_snapshot
+from runbook.data import DatabasePointerRegistry, open_pointer_registry, resolve_snapshot
 from runbook.data.pipeline import slot_key
 from runbook.sdk import ReportProfile, execute_report, resolve_code_version
 
@@ -38,14 +38,24 @@ def run_report(
     code_version: str | None = None,
     reports_root: str = "reports",
     snapshot=None,
+    pointer_registry: DatabasePointerRegistry | None = None,
 ) -> ReportOutcome:
     """Publish one immutable report artifact set; run state is service-owned."""
     slot_id = slot_key(slot)
     logger.info("report task start report={} slot={}", profile.profile_id, slot_id)
     try:
         resolved_code = resolve_code_version(code_version)
-        resolved_snapshot = snapshot or resolve_snapshot(store, profile.datasets)
-        if resolved_snapshot.watermark < slot:
+        pinned_snapshot = snapshot is not None
+        if pinned_snapshot:
+            resolved_snapshot = snapshot
+        else:
+            registry = pointer_registry or open_pointer_registry()
+            resolved_snapshot = resolve_snapshot(
+                store,
+                profile.datasets,
+                pointer_registry=registry,
+            )
+        if not pinned_snapshot and resolved_snapshot.watermark < slot:
             logger.info(
                 "report task waiting report={} slot={} reason=watermark",
                 profile.profile_id,

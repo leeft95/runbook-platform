@@ -10,9 +10,8 @@ from typing import Iterable
 import pandas as pd
 from runbook.core.data import DatasetFile, DatasetManifest, Snapshot
 from runbook.core.utils.hashing import canonical_json, sha256_bytes, sha256_json
+from runbook.data.pointers import DatabasePointerRegistry, DatasetPointerUpdate
 from runbook.data.store import BlobStore
-
-POINTERS_KEY = "pointers.json"
 
 
 def _utc(value: datetime) -> datetime:
@@ -133,38 +132,61 @@ def load_manifest(store: BlobStore, ref: str, *, expected_dataset_id: str | None
     return manifest
 
 
-def publish_manifests(store: BlobStore, manifests: Iterable[tuple[DatasetManifest, str]]) -> dict[str, str]:
-    """Publish immutable manifests and update the single pointer document."""
+def write_manifests(store: BlobStore, manifests: Iterable[tuple[DatasetManifest, str]]) -> dict[str, str]:
+    """Write immutable manifests without mutating current pointer state."""
     prepared = list(manifests)
-    pointers = store.get_json(POINTERS_KEY) if store.exists(POINTERS_KEY) else {}
-    if not isinstance(pointers, dict):
-        raise ValueError("pointers.json must contain an object")
-    next_pointers = dict(pointers)
     for manifest, digest in prepared:
         ref = f"curated/{manifest.dataset_id}/manifests/sha256={digest}.json"
         store.put_immutable(ref, canonical_json(manifest.model_dump(mode="json")).encode("utf-8"))
-        next_pointers[manifest.dataset_id] = ref
-    if next_pointers != pointers:
-        store.put_json(POINTERS_KEY, next_pointers)
-    return {manifest.dataset_id: next_pointers[manifest.dataset_id] for manifest, _ in prepared}
+    return {
+        manifest.dataset_id: f"curated/{manifest.dataset_id}/manifests/sha256={digest}.json"
+        for manifest, digest in prepared
+    }
+
+
+def publish_manifests(
+    store: BlobStore,
+    manifests: Iterable[tuple[DatasetManifest, str]],
+    *,
+    pointer_registry: DatabasePointerRegistry,
+    source_id: str,
+    source_run_id: str,
+) -> dict[str, str]:
+    """Write immutable manifests and publish their current database pointers."""
+    prepared = list(manifests)
+    refs = write_manifests(store, prepared)
+    pointer_registry.publish(
+        source_id=source_id,
+        source_run_id=source_run_id,
+        updates=[
+            DatasetPointerUpdate(
+                dataset_id=manifest.dataset_id,
+                manifest_ref=refs[manifest.dataset_id],
+                watermark=manifest.watermark,
+                published_at=manifest.published_at,
+            )
+            for manifest, _digest in prepared
+        ],
+    )
+    return refs
 
 
 def resolve_snapshot(
     store: BlobStore,
     bindings: dict[str, str],
     *,
+    pointer_registry: DatabasePointerRegistry,
     as_of: datetime | None = None,
 ) -> Snapshot:
     """Resolve dataset bindings to one deterministic latest or historical snapshot."""
-    pointers = store.get_json(POINTERS_KEY) if store.exists(POINTERS_KEY) else {}
-    if not isinstance(pointers, dict):
-        raise ValueError("pointers.json must contain an object")
+    pointers = pointer_registry.get(bindings.values())
     selected: dict[str, str] = {}
     manifests: list[DatasetManifest] = []
     for alias, dataset_id in sorted(bindings.items()):
-        ref = pointers.get(dataset_id)
-        if not isinstance(ref, str):
+        pointer = pointers.get(dataset_id)
+        if pointer is None:
             raise ValueError(f"no pointer exists for dataset {dataset_id!r}")
+        ref = pointer.manifest_ref
         manifest = load_manifest(store, ref, expected_dataset_id=dataset_id)
         visited = {ref}
         if as_of is not None:

@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 from runbook.data.config import SourceConfig
+from runbook.data.pointers import DatasetPointerUpdate
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,26 @@ class AcquisitionResult(BaseModel):
     payload: bytes
 
 
+class AcquisitionStageResult(BaseModel):
+    """Result of checking, acquiring, and persisting one source payload."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    acquisition_run: str
+    status: ReadinessStatus
+    readiness: ReadinessResult
+    acquired: AcquisitionResult | None = None
+    message: str | None = None
+
+
+@dataclass(frozen=True)
+class CurationResult:
+    """Immutable curation output awaiting an atomic pointer commit."""
+
+    datasets: dict[str, str]
+    pointer_updates: tuple[DatasetPointerUpdate, ...]
+
+
 class IngestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -92,6 +113,8 @@ class IngestResult(BaseModel):
 
 __all__ = [
     "AcquisitionResult",
+    "AcquisitionStageResult",
+    "CurationResult",
     "CuratedFrame",
     "IngestRequest",
     "IngestResult",

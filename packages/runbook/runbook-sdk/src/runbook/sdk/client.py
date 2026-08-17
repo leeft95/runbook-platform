@@ -9,8 +9,10 @@ import pandas as pd
 from runbook.core.snapshots import Snapshot
 from runbook.data import (
     BlobStore,
+    DatabasePointerRegistry,
     load_snapshot_dataset,
     open_blob_store,
+    open_pointer_registry,
     resolve_snapshot,
 )
 from runbook.sdk.execution import ReportResult, execute_report, resolve_code_version
@@ -22,16 +24,22 @@ class RunbookClient:
         self,
         *,
         store: BlobStore,
+        pointer_registry: DatabasePointerRegistry,
         workspace_store: BlobStore | None = None,
         reports_root: str | Path = "reports",
     ):
         self.store = store
+        self.pointer_registry = pointer_registry
         self.workspace_store = workspace_store
         self.reports_root = Path(reports_root)
 
     def preview(self, profile: ReportProfile, *, code_version: str | None = None) -> ReportResult:
         """Execute a report against the latest snapshot without changing data pointers."""
-        snapshot = resolve_snapshot(self.store, profile.datasets)
+        snapshot = resolve_snapshot(
+            self.store,
+            profile.datasets,
+            pointer_registry=self.pointer_registry,
+        )
         return execute_report(
             store=self.workspace_store or self.store,
             data_store=self.store,
@@ -47,7 +55,12 @@ class RunbookClient:
         """Load all bound datasets from one latest or historical snapshot."""
         if not bindings:
             raise ValueError("load_datasets requires at least one dataset binding")
-        snapshot = resolve_snapshot(self.store, dict(bindings), as_of=as_of)
+        snapshot = resolve_snapshot(
+            self.store,
+            dict(bindings),
+            pointer_registry=self.pointer_registry,
+            as_of=as_of,
+        )
         frames = {alias: load_snapshot_dataset(self.store, snapshot, alias) for alias in sorted(bindings)}
         return frames, snapshot
 
@@ -55,7 +68,12 @@ class RunbookClient:
         self, dataset_id: str, *, as_of: datetime | None = None, **filters: object
     ) -> tuple[pd.DataFrame, Snapshot]:
         """Load one dataset and optional partition filters from a pinned snapshot."""
-        snapshot = resolve_snapshot(self.store, {"dataset": dataset_id}, as_of=as_of)
+        snapshot = resolve_snapshot(
+            self.store,
+            {"dataset": dataset_id},
+            pointer_registry=self.pointer_registry,
+            as_of=as_of,
+        )
         frame = load_snapshot_dataset(self.store, snapshot, "dataset", filters=filters or None)
         return frame, snapshot
 
@@ -63,6 +81,7 @@ class RunbookClient:
 def create_client(
     *,
     store_uri: str | None = None,
+    database_url: str | None = None,
     workspace_store_uri: str | None = None,
     reports_root: str | Path = "reports",
 ) -> RunbookClient:
@@ -72,6 +91,7 @@ def create_client(
     workspace_store = open_blob_store(workspace_uri) if workspace_uri else None
     return RunbookClient(
         store=open_blob_store(data_uri),
+        pointer_registry=open_pointer_registry(database_url),
         workspace_store=workspace_store,
         reports_root=reports_root,
     )

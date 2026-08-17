@@ -13,6 +13,8 @@ dependencies = [
     "pydantic",
     "requests",
     "loguru",
+    "sqlalchemy>=2,<3",
+    "psycopg>=3,<4",
     "runbook-core"
 ]
 

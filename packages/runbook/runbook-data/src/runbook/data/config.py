@@ -67,6 +67,9 @@ class SourceConfig(BaseModel):
     def validate_update_mode_location(self) -> SourceConfig:
         if "update_mode" in self.params:
             raise ValueError("update_mode belongs in each dataset binding, not source params")
+        dataset_ids = [binding.dataset_id for binding in self.datasets.values()]
+        if len(dataset_ids) != len(set(dataset_ids)):
+            raise ValueError(f"source {self.source_id!r} maps multiple aliases to one dataset")
         return self
 
     @field_validator("source_id", "adapter")
@@ -110,10 +113,7 @@ def load_source_configs(path: str | Path) -> dict[str, SourceConfig]:
         get_adapter(config)
         for binding in config.datasets.values():
             get_parser(binding.parser_id)
-        dataset_ids = [binding.dataset_id for binding in config.datasets.values()]
-        if len(dataset_ids) != len(set(dataset_ids)):
-            raise ValueError(f"source {source_id!r} maps multiple aliases to one dataset")
-        for dataset_id in dataset_ids:
+        for dataset_id in (binding.dataset_id for binding in config.datasets.values()):
             previous = producers.setdefault(dataset_id, source_id)
             if previous != source_id:
                 raise ValueError(f"dataset {dataset_id!r} has multiple producers: {previous!r}, {source_id!r}")

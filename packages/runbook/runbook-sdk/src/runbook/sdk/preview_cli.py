@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from runbook.data import open_blob_store, resolve_snapshot
+from runbook.data import open_blob_store, open_pointer_registry, resolve_snapshot
 from runbook.sdk.execution import execute_report, resolve_code_version
 from runbook.sdk.logging import configure_logging
 from runbook.sdk.profiles import load_profiles
@@ -17,6 +17,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--profiles", default="data/contract/report_profiles.json")
     parser.add_argument("--reports-root", default="reports")
     parser.add_argument("--store", default=None)
+    parser.add_argument("--database", default=None)
     parser.add_argument("--code-version", default=None)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument(
@@ -30,7 +31,8 @@ def main(argv: list[str] | None = None) -> int:
     if profile is None:
         parser.error(f"unknown profile: {args.profile_id}")
     store = open_blob_store(args.store)
-    snapshot = resolve_snapshot(store, profile.datasets)
+    pointer_registry = open_pointer_registry(args.database)
+    snapshot = resolve_snapshot(store, profile.datasets, pointer_registry=pointer_registry)
     result = execute_report(
         store=store,
         profile=profile,

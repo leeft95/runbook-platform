@@ -10,6 +10,7 @@ from runbook.core.utils.hashing import sha256_bytes
 from runbook.data.config import SourceConfig, load_source_configs
 from runbook.data.ingest.adapters import get_adapter
 from runbook.data.ingest.models import (
+    AcquisitionStageResult,
     IngestRequest,
     IngestResult,
     ReadinessStatus,
@@ -17,6 +18,7 @@ from runbook.data.ingest.models import (
 from runbook.data.ingest.runners import run_stage2_curate
 from runbook.data.manifests import load_manifest
 from runbook.data.pipeline import slot_key
+from runbook.data.pointers import DatabasePointerRegistry, DatasetPointer, open_pointer_registry
 from runbook.data.store import BlobStore, open_blob_store
 
 
@@ -33,30 +35,33 @@ def _source_config(request: IngestRequest) -> SourceConfig:
         raise ValueError(f"unknown source: {request.source!r}") from exc
 
 
-def _previous_state(store: BlobStore, config: SourceConfig) -> dict[str, datetime]:
-    """Handle previous state."""
-    pointers = store.get_json("pointers.json") if store.exists("pointers.json") else {}
+def _previous_state(
+    store: BlobStore,
+    config: SourceConfig,
+    pointers: dict[str, DatasetPointer],
+) -> dict[str, datetime]:
+    """Load append watermarks from database-selected immutable manifests."""
     watermarks: dict[str, datetime] = {}
     for alias, binding in config.datasets.items():
         if binding.update_mode != "append":
             continue
-        ref = pointers.get(binding.dataset_id)
-        if not isinstance(ref, str):
+        pointer = pointers.get(binding.dataset_id)
+        if pointer is None:
             continue
-        manifest = load_manifest(store, ref, expected_dataset_id=binding.dataset_id)
+        manifest = load_manifest(store, pointer.manifest_ref, expected_dataset_id=binding.dataset_id)
         watermarks[alias] = manifest.watermark
     return watermarks
 
 
-def run_ingest(
-    request: IngestRequest | None = None,
+def run_stage1_acquire(
     *,
-    store: BlobStore | None = None,
-) -> IngestResult:
-    """Run ingest."""
-    resolved = request or IngestRequest()
-    config = _source_config(resolved)
-    slot = resolved.run_time or datetime.now(timezone.utc)
+    source_config: SourceConfig,
+    slot: datetime,
+    store: BlobStore,
+    previous_watermarks: dict[str, datetime] | None = None,
+) -> AcquisitionStageResult:
+    """Check readiness, acquire bytes, and persist one immutable raw artifact."""
+    config = source_config
     if slot.tzinfo is None:
         raise ValueError("ingest run_time must be timezone-aware")
     slot = slot.astimezone(timezone.utc)
@@ -75,16 +80,13 @@ def run_ingest(
         readiness.status.value,
     )
     if readiness.status is not ReadinessStatus.ready:
-        return IngestResult(
-            source_id=config.source_id,
+        return AcquisitionStageResult(
             acquisition_run=run,
             status=readiness.status,
             readiness=readiness,
             message=readiness.message or "source is not ready",
         )
 
-    blob_store = store or open_blob_store(resolved.store_uri)
-    previous_watermarks = _previous_state(blob_store, config)
     logger.info(
         "stage=1B acquire source={} slot={} adapter={}",
         config.source_id,
@@ -95,12 +97,12 @@ def run_ingest(
         source_config=config,
         readiness=readiness,
         fetched_at=slot,
-        previous_watermarks=previous_watermarks,
+        previous_watermarks=previous_watermarks or {},
     )
     raw_sha = sha256_bytes(acquired.payload)
     raw_ref = f"raw/{config.source_id}/{run}/sha256={raw_sha}/source{PurePosixPath(acquired.record.source_filename).suffix or '.bin'}"
-    blob_store.put_immutable(raw_ref, acquired.payload)
-    persisted = blob_store.get(raw_ref)
+    store.put_immutable(raw_ref, acquired.payload)
+    persisted = store.get(raw_ref)
     if sha256_bytes(persisted) != raw_sha:
         raise IOError(f"raw blob verification failed: {raw_ref}")
     acquired = acquired.model_copy(
@@ -120,34 +122,81 @@ def run_ingest(
         raw_ref,
         len(acquired.payload),
     )
+    return AcquisitionStageResult(
+        acquisition_run=run,
+        status=ReadinessStatus.ready,
+        readiness=readiness,
+        acquired=acquired,
+        message="source acquired",
+    )
 
+
+def run_ingest(
+    request: IngestRequest | None = None,
+    *,
+    store: BlobStore | None = None,
+    pointer_registry: DatabasePointerRegistry | None = None,
+) -> IngestResult:
+    """Run acquisition and curation sequentially, publishing pointers to PostgreSQL."""
+    resolved = request or IngestRequest()
+    config = _source_config(resolved)
+    slot = resolved.run_time or datetime.now(timezone.utc)
+    if slot.tzinfo is None:
+        raise ValueError("ingest run_time must be timezone-aware")
+    slot = slot.astimezone(timezone.utc)
+    blob_store = store or open_blob_store(resolved.store_uri)
+    pointers = pointer_registry or open_pointer_registry()
+    current = pointers.get(binding.dataset_id for binding in config.datasets.values())
+    acquisition = run_stage1_acquire(
+        source_config=config,
+        slot=slot,
+        store=blob_store,
+        previous_watermarks=_previous_state(blob_store, config, current),
+    )
+    if acquisition.status is not ReadinessStatus.ready:
+        return IngestResult(
+            source_id=config.source_id,
+            acquisition_run=acquisition.acquisition_run,
+            status=acquisition.status,
+            readiness=acquisition.readiness,
+            message=acquisition.message,
+        )
+    if acquisition.acquired is None:  # pragma: no cover - guarded by the stage contract
+        raise RuntimeError("ready acquisition did not return a payload")
     logger.info(
         "stage=2 curate source={} slot={} datasets={}",
         config.source_id,
-        run,
+        acquisition.acquisition_run,
         sorted(config.datasets),
     )
-    datasets = run_stage2_curate(
+    curated = run_stage2_curate(
         store=blob_store,
         source_config=config,
-        acquired=acquired,
+        acquired=acquisition.acquired,
         published_at=slot,
+        previous_pointers=current,
+    )
+    pointers.publish(
+        source_id=config.source_id,
+        source_run_id=acquisition.acquisition_run,
+        updates=curated.pointer_updates,
+        updated_at=slot,
     )
     logger.info(
         "stage=2 complete source={} slot={} datasets={}",
         config.source_id,
-        run,
-        sorted(datasets),
+        acquisition.acquisition_run,
+        sorted(curated.datasets),
     )
     return IngestResult(
         source_id=config.source_id,
-        acquisition_run=run,
+        acquisition_run=acquisition.acquisition_run,
         status=ReadinessStatus.ready,
-        readiness=readiness,
-        raw_record=acquired.record,
-        datasets=datasets,
+        readiness=acquisition.readiness,
+        raw_record=acquisition.acquired.record,
+        datasets=curated.datasets,
         message="ingest completed",
     )
 
 
-__all__ = ["run_ingest"]
+__all__ = ["run_ingest", "run_stage1_acquire"]

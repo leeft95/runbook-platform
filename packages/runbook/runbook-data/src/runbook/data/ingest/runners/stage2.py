@@ -13,15 +13,17 @@ from runbook.data.config import DatasetBinding, SourceConfig
 from runbook.data.ingest.models import (
     AcquisitionResult,
     CuratedFrame,
+    CurationResult,
 )
 from runbook.data.ingest.parsers import get_parser
 from runbook.data.manifests import (
     build_manifest,
     load_manifest,
-    publish_manifests,
     read_dataframe,
     write_dataframe,
+    write_manifests,
 )
+from runbook.data.pointers import DatasetPointer, DatasetPointerUpdate
 from runbook.data.store import BlobStore
 
 
@@ -78,8 +80,9 @@ def run_stage2_curate(
     source_config: SourceConfig,
     acquired: AcquisitionResult,
     published_at: datetime | None = None,
-) -> dict[str, str]:
-    """Curate persisted raw bytes and atomically publish dataset manifest pointers."""
+    previous_pointers: dict[str, DatasetPointer] | None = None,
+) -> CurationResult:
+    """Curate persisted raw bytes and return immutable manifest pointer updates."""
     logger.info(
         "stage=2 start source={} slot={} datasets={}",
         source_config.source_id,
@@ -102,11 +105,11 @@ def run_stage2_curate(
     if actual != expected:
         raise ValueError(f"source outputs do not match config: expected={sorted(expected)}, actual={sorted(actual)}")
 
-    pointers = store.get_json("pointers.json") if store.exists("pointers.json") else {}
+    pointers = dict(previous_pointers or {})
     previous_manifests = {
-        dataset_id: load_manifest(store, ref, expected_dataset_id=dataset_id)
-        for dataset_id, ref in pointers.items()
-        if isinstance(ref, str) and dataset_id in {binding.dataset_id for binding in source_config.datasets.values()}
+        dataset_id: load_manifest(store, pointer.manifest_ref, expected_dataset_id=dataset_id)
+        for dataset_id, pointer in pointers.items()
+        if dataset_id in {binding.dataset_id for binding in source_config.datasets.values()}
     }
     files_by_dataset: dict[str, list[DatasetFile]] = defaultdict(list)
     frame_by_dataset: dict[str, list[CuratedFrame]] = defaultdict(list)
@@ -194,20 +197,32 @@ def run_stage2_curate(
             )
         )
         if previous and watermark == previous.watermark and tuple(previous.files) == current_files:
-            result[dataset_id] = pointers[dataset_id]
+            result[dataset_id] = pointers[dataset_id].manifest_ref
             continue
         manifest, digest = build_manifest(
             dataset_id=dataset_id,
             watermark=watermark,
             published_at=published,
-            previous=pointers.get(dataset_id) if previous else None,
+            previous=pointers[dataset_id].manifest_ref if previous else None,
             files=files_by_dataset[dataset_id],
         )
         ref = f"curated/{dataset_id}/manifests/sha256={digest}.json"
         result[dataset_id] = ref
         if not previous or manifest.model_dump(mode="json") != previous.model_dump(mode="json"):
             prepared.append((manifest, digest))
-    publish_manifests(store, prepared)
+    write_manifests(store, prepared)
+    manifests_by_id = {manifest.dataset_id: manifest for manifest, _digest in prepared}
+    updates: list[DatasetPointerUpdate] = []
+    for dataset_id, ref in sorted(result.items()):
+        manifest = manifests_by_id.get(dataset_id) or previous_manifests[dataset_id]
+        updates.append(
+            DatasetPointerUpdate(
+                dataset_id=dataset_id,
+                manifest_ref=ref,
+                watermark=manifest.watermark,
+                published_at=manifest.published_at,
+            )
+        )
     logger.info(
         "stage=2 published source={} slot={} manifests={} reused={}",
         source_config.source_id,
@@ -215,7 +230,10 @@ def run_stage2_curate(
         sorted(result),
         len(result) - len(prepared),
     )
-    return result
+    return CurationResult(
+        datasets=result,
+        pointer_updates=tuple(updates),
+    )
 
 
 __all__ = ["run_stage2_curate"]

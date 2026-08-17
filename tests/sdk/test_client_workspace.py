@@ -31,7 +31,7 @@ class ReadOnlyBlobStore:
         raise AssertionError("analyst preview wrote to the shared data store")
 
 
-def _publish_demo_data(store, now: datetime) -> None:
+def _publish_demo_data(store, pointer_registry, now: datetime) -> None:
     daily = pd.DataFrame(
         {
             "timestamp": pd.date_range("2025-01-01", periods=3, tz="UTC"),
@@ -69,16 +69,23 @@ def _publish_demo_data(store, now: datetime) -> None:
             files=[DatasetFile(ref=ref, sha256=digest, partition={})],
         )
         prepared.append((manifest, manifest_digest))
-    publish_manifests(store, prepared)
+    publish_manifests(
+        store,
+        prepared,
+        pointer_registry=pointer_registry,
+        source_id="demo_source",
+        source_run_id="fixture",
+    )
 
 
-def test_client_loads_one_snapshot_and_previews_into_workspace(tmp_path) -> None:
+def test_client_loads_one_snapshot_and_previews_into_workspace(tmp_path, pointer_registry) -> None:
     data_store = open_blob_store(f"file:{tmp_path / 'data'}")
     workspace_store = open_blob_store(f"file:{tmp_path / 'workspace'}")
     now = datetime(2025, 1, 2, tzinfo=timezone.utc)
-    _publish_demo_data(data_store, now)
+    _publish_demo_data(data_store, pointer_registry, now)
     client = RunbookClient(
         store=ReadOnlyBlobStore(data_store),
+        pointer_registry=pointer_registry,
         workspace_store=workspace_store,
     )
 
@@ -117,7 +124,7 @@ def test_client_loads_one_snapshot_and_previews_into_workspace(tmp_path) -> None
     assert not data_store.exists(cold.html_ref)
 
 
-def test_client_load_dataset_filters_manifest_partitions(tmp_path) -> None:
+def test_client_load_dataset_filters_manifest_partitions(tmp_path, pointer_registry) -> None:
     store = open_blob_store(f"file:{tmp_path / 'data'}")
     now = datetime(2026, 8, 7, tzinfo=timezone.utc)
     files = []
@@ -129,9 +136,15 @@ def test_client_load_dataset_filters_manifest_partitions(tmp_path) -> None:
         store.put(ref, payload)
         files.append(DatasetFile(ref=ref, sha256=digest, partition={"year": "2026", "series": series}))
     manifest, digest = build_manifest(dataset_id="market_assets", watermark=now, published_at=now, files=files)
-    publish_manifests(store, [(manifest, digest)])
+    publish_manifests(
+        store,
+        [(manifest, digest)],
+        pointer_registry=pointer_registry,
+        source_id="market_source",
+        source_run_id="fixture",
+    )
 
-    client = RunbookClient(store=ReadOnlyBlobStore(store))
+    client = RunbookClient(store=ReadOnlyBlobStore(store), pointer_registry=pointer_registry)
     frame, snapshot = client.load_dataset("market_assets", series="energy", year=2026)
 
     assert snapshot.as_of is None

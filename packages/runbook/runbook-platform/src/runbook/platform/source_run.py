@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 
 from loguru import logger
-from runbook.data import SourceConfig
+from runbook.data import DatabasePointerRegistry, SourceConfig, open_pointer_registry
 from runbook.data.ingest import IngestRequest, run_ingest
 from runbook.data.pipeline import slot_key
 
@@ -22,14 +22,22 @@ class SourceOutcome:
         return asdict(self)
 
 
-def run_source(*, store, config: SourceConfig, slot: datetime) -> SourceOutcome:
+def run_source(
+    *,
+    store,
+    config: SourceConfig,
+    slot: datetime,
+    pointer_registry: DatabasePointerRegistry | None = None,
+) -> SourceOutcome:
     """Run one source slot; run state is persisted by the service plane."""
     slot_id = slot_key(slot)
     logger.info("source task start source={} slot={}", config.source_id, slot_id)
     try:
+        registry = pointer_registry or open_pointer_registry()
         result = run_ingest(
             IngestRequest(source_config=config, run_time=slot),
             store=store,
+            pointer_registry=registry,
         )
         if result.status.value != "ready":
             outcome = SourceOutcome(
