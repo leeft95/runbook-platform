@@ -130,6 +130,21 @@ def test_worker_log_batches_many_small_records(tmp_path: Path) -> None:
     assert len(manifest["parts"]) == 1
 
 
+def test_worker_log_capture_flushes_large_records_without_recursive_progress(
+    tmp_path: Path,
+) -> None:
+    identity = _identity()
+    store_uri = f"file:{tmp_path / 'logs'}"
+    with capture_worker_logs(store_uri, identity):
+        logger.info("large worker record {}", "x" * (17 * 1024))
+
+    tail = read_log_tail(open_blob_store(store_uri), identity)
+    assert tail["complete"] is True
+    assert tail["manifest"]["bytes"] > 16 * 1024
+    assert len(tail["manifest"]["parts"]) >= 2
+    assert "large worker record" in tail["text"]
+
+
 def test_failure_log_resumes_partial_worker_log_and_marks_it_incomplete(
     tmp_path: Path,
 ) -> None:

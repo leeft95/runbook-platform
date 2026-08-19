@@ -264,7 +264,12 @@ def _json_bytes(value: Any) -> bytes:
 def capture_worker_logs(store_uri: str, identity: RunLogIdentity) -> Iterator[_Capture]:
     """Capture INFO+ Loguru records into immutable chunks and a manifest."""
     capture = _Capture(open_blob_store(store_uri), identity)
-    token = logger.add(capture.sink, level="INFO", diagnose=False)
+    token = logger.add(
+        capture.sink,
+        level="INFO",
+        diagnose=False,
+        filter=lambda record: not record["extra"].get("run_log_internal", False),
+    )
     capture.start()
     try:
         yield capture
