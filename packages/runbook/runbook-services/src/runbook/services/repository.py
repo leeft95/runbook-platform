@@ -356,7 +356,10 @@ class AsyncRunRepository:
             (
                 await self.session.scalars(
                     select(ConfigRevision)
-                    .where(ConfigRevision.kind == kind, ConfigRevision.config_id == config_id)
+                    .where(
+                        ConfigRevision.kind == kind,
+                        ConfigRevision.config_id == config_id,
+                    )
                     .order_by(desc(ConfigRevision.revision))
                 )
             ).all()
@@ -423,6 +426,59 @@ class AsyncRunRepository:
         if status:
             query = query.where(Run.status == status)
         return list((await self.session.scalars(query.order_by(desc(Run.requested_at)).limit(limit))).all())
+
+    async def status_counts(self, statuses: set[str], *, since: datetime | None = None) -> dict[str, int]:
+        """Count statuses in the database without a dashboard row limit."""
+        query = select(Run.status, func.count()).where(Run.status.in_(statuses))
+        if since is not None:
+            query = query.where(Run.requested_at >= since)
+        rows = (await self.session.execute(query.group_by(Run.status))).all()
+        return {status: int(count) for status, count in rows}
+
+    async def list_active_runs(self, limit: int = 100) -> list[Run]:
+        """List active rows separately from unbounded active status counts."""
+        if limit < 1 or limit > 500:
+            raise ValueError("limit must be between 1 and 500")
+        return list(
+            (
+                await self.session.scalars(
+                    select(Run)
+                    .where(Run.status.in_(["queued", "running"]))
+                    .order_by(desc(Run.requested_at))
+                    .limit(limit)
+                )
+            ).all()
+        )
+
+    async def list_attention_runs(self, since: datetime, limit: int = 20) -> list[Run]:
+        """List recent failed/waiting/not-ready rows within the given window."""
+        if limit < 1 or limit > 500:
+            raise ValueError("limit must be between 1 and 500")
+        return list(
+            (
+                await self.session.scalars(
+                    select(Run)
+                    .where(
+                        Run.requested_at >= since,
+                        Run.status.in_(["failed", "waiting", "not_ready"]),
+                    )
+                    .order_by(desc(Run.requested_at))
+                    .limit(limit)
+                )
+            ).all()
+        )
+
+    async def list_pointers(self, limit: int | None = None) -> list[dict[str, Any]]:
+        """Return current dataset pointers for the operations dashboard."""
+        from runbook.data.pointers import dataset_pointers
+
+        query = select(dataset_pointers).order_by(dataset_pointers.c.dataset_id)
+        if limit is not None:
+            if limit < 1 or limit > 500:
+                raise ValueError("limit must be between 1 and 500")
+            query = query.limit(limit)
+        rows = (await self.session.execute(query)).mappings()
+        return [dict(row) for row in rows]
 
     async def queue_run(self, **kwargs: Any) -> Run:
         """Queue one run asynchronously."""

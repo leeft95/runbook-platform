@@ -1,0 +1,21 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, sans-serif;
+  background: #f5f7fa;
+  color: #17202a;
+}
+
+.runbook-cards { display: flex; flex-wrap: wrap; gap: .75rem; margin: .5rem 0 1rem; }
+.runbook-card { background: white; border: 1px solid #d8dee6; border-radius: .35rem; padding: .8rem 1rem; min-width: 9rem; }
+.runbook-stat { display: inline-block; background: white; border: 1px solid #d8dee6; border-radius: .25rem; padding: .5rem .75rem; }
+.runbook-stat-value { font-size: 1.6rem; font-weight: 650; margin-top: .25rem; }
+.runbook-status { font-weight: 650; white-space: nowrap; }
+.runbook-table { border-collapse: collapse; width: 100%; background: white; display: block; overflow-x: auto; }
+.runbook-table th, .runbook-table td { border: 1px solid #d8dee6; padding: .45rem .6rem; text-align: left; }
+.runbook-log { background: #111827; color: #e5e7eb; min-height: 20rem; max-height: 40rem; overflow: auto; padding: 1rem; white-space: pre-wrap; }
+button, input, select, textarea { font: inherit; }
+
+@media (max-width: 720px) {
+  .runbook-card, .runbook-stat { flex: 1 1 100%; }
+  .runbook-log { min-height: 14rem; padding: .65rem; }
+}

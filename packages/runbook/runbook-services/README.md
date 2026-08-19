@@ -1,29 +1,26 @@
 # runbook-services
 
-PostgreSQL-backed configuration, run tracking, FastAPI endpoints, and a small
-Dash operations UI for Runbook.
+PostgreSQL-backed configuration, run tracking, bounded local process
+execution, FastAPI endpoints, and a small Dash operations UI for Runbook.
 
 The API is served with `runbook-services serve`. `GET /` returns package
-versions as JSON; the Dash UI is mounted at `/ui/` and API documentation is at
-`/docs`.
+versions as JSON; the main operations dashboard is mounted at `/ui/` and API
+documentation is at `/docs`. The dashboard links to filterable run history,
+run provenance, and a pop-out diagnostic log viewer. Source and profile
+configuration management remain available at `/ui/sources` and `/ui/profiles`.
 
-After applying `runbook-services db upgrade`, schedule ticks from cron:
+The dashboard shows run status, elapsed time, provenance, and links to a
+run-scoped log page. Worker diagnostics are stored as small immutable chunks
+in the configured blob store rather than PostgreSQL. The log page polls only
+newly available chunks and stops after observing the terminal manifest.
 
-```bash
-runbook-services tick --workers 4
-```
-PostgreSQL is the sole control-plane ledger for production runs and current
-dataset pointers; blob storage retains immutable data and report artifacts.
-
-A tick executes source acquisition and per-source curation in a bounded worker
-pool, then releases enabled reports as their complete dataset snapshots become
-ready. Manual profile runs remain immediate. Automatic profile runs are
-dataset-triggered; profile cron fields are retained only for configuration
-compatibility in v0.0.2.
-
-The first v0.0.2 tick imports a legacy blob-store `pointers.json` only when the
-database pointer table is empty. The legacy file is preserved but ignored
-after import.
+The service mode is externally scheduled. Run `runbook-services tick` from
+cron after applying `runbook-services db upgrade`. Each tick uses bounded
+local process execution and commits source outcomes before dataset-triggered
+profiles are released. PostgreSQL is the sole control-plane ledger for
+production runs; blob storage retains immutable data, manifests, report
+artifacts, and worker logs. Profiles are manual or dataset-triggered; only
+source schedules create scheduled roots.
 
 For local development, enable Uvicorn auto-reload with:
 

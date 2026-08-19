@@ -16,6 +16,8 @@ reports
 data
 source-adapters-and-curation
 operations
+architecture/north-star
+repository-lineage
 ```
 
 ```{toctree}

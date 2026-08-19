@@ -103,7 +103,6 @@ def test_client_loads_one_snapshot_and_previews_into_workspace(tmp_path, pointer
     profile = ReportProfile(
         profile_id="timeseries_snapshot_demo",
         report_id="snapshot_report",
-        schedule={"cron": "0 * * * *", "timezone": "UTC"},
         datasets={
             "daily_prices": "demo_daily_prices",
             "intraday_bars": "demo_intraday_bars",

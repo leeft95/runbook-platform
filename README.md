@@ -12,7 +12,8 @@ calculations, and HTML artifacts.
 - `runbook-sdk`: report authoring, deterministic execution, preview, caching,
   and HTML rendering.
 - `runbook-platform`: scheduling and snapshot-pinned execution helpers.
-- `runbook-services`: PostgreSQL configuration/run control and a Dash UI.
+- `runbook-services`: the PostgreSQL control plane, bounded local run
+  execution, worker diagnostics, and a Dash operations UI.
 
 The dependency direction is `core <- data <- sdk <- platform <- services`.
 Reports are external templates selected with `--reports-root`; they do not
@@ -45,7 +46,8 @@ as the deterministic append key and watermark.
 - [Source adapter and curation guide](docs/source-adapters-and-curation.md): add
   acquisition capabilities and deterministic Stage 2 parsers.
 - [Service operations](packages/runbook/runbook-services/README.md): configure
-  PostgreSQL, run ticks, use the API, and launch the operations UI.
+  PostgreSQL, run bounded ticks, inspect the dashboard and worker logs, use
+  the API, and launch the operations UI.
 - [Contributing](CONTRIBUTING.md) and [security policy](SECURITY.md).
 
 ## Services
@@ -60,10 +62,12 @@ runbook-services config import
 runbook-services tick --workers 4
 ```
 
-Each tick runs a bounded in-process DAG: source acquisition, source curation,
-then enabled reports whose complete dataset snapshots are ready. Profile cron
-fields remain accepted for v0.0.1 configuration compatibility; automatic
-report runs are dataset-triggered in v0.0.2.
+Each tick runs a bounded local process DAG: source acquisition, source
+curation, then profiles whose complete dataset snapshots are ready. Profiles
+are manual or dataset-triggered; source schedules are the only scheduled
+roots. The dashboard exposes run history, provenance, status, and immutable
+worker log chunks without making the service a daemon or a general workflow
+engine.
 
 `runbook-services serve` binds to `127.0.0.1` by default and has no
 authentication. Do not expose it directly to an untrusted network; place it

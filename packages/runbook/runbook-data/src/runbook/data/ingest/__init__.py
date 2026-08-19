@@ -12,7 +12,7 @@ from runbook.data.ingest.models import (
     ReadinessStatus,
     SourceConfig,
 )
-from runbook.data.ingest.runner import run_ingest, run_stage1_acquire
+from runbook.data.ingest.runner import load_previous_append_state, run_ingest, run_stage1_acquire
 
 __all__ = [
     "AcquisitionResult",
@@ -25,6 +25,7 @@ __all__ = [
     "ReadinessResult",
     "ReadinessStatus",
     "SourceConfig",
+    "load_previous_append_state",
     "run_ingest",
     "run_stage1_acquire",
 ]

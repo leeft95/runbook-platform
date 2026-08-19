@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from runbook.data.config import ScheduleSpec
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -18,7 +17,6 @@ class ReportProfile(BaseModel):
     report_id: str
     title: str | None = None
     enabled: bool = True
-    schedule: ScheduleSpec
     datasets: dict[str, str] = Field(min_length=1)
     params: dict[str, Any] = Field(default_factory=dict)
     layout: dict[str, Any] = Field(default_factory=dict)
