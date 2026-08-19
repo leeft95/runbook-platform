@@ -10,6 +10,7 @@ from runbook.data.ingest.adapters import get_adapter
 from runbook.data.ingest.models import AcquisitionResult
 from runbook.data.ingest.parsers import get_parser
 from runbook.data.ingest.runner import run_ingest
+from runbook.data.pointers import DatasetPointerUpdate
 
 
 def _config(path: str, *, update_mode: str = "append") -> SourceConfig:
@@ -89,3 +90,66 @@ def test_local_file_ingest_publishes_and_appends_atomically(tmp_path, pointer_re
     assert second.status.value == "ready"
     assert pointer_registry.get(["synthetic_prices"])["synthetic_prices"].manifest_ref != pointer_before
     assert not store.exists("pointers.json")
+
+
+def test_append_ingest_rejects_a_missing_previous_manifest(tmp_path, pointer_registry) -> None:
+    csv_path = tmp_path / "prices.csv"
+    csv_path.write_text("timestamp,close\n2026-01-02T00:00:00Z,2\n", encoding="utf-8")
+    store = open_blob_store(f"file:{tmp_path / 'store'}")
+    config = _config(str(csv_path), update_mode="append")
+    stale_ref = "curated/synthetic_prices/manifests/sha256=missing.json"
+    pointer_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    pointer_registry.publish(
+        source_id=config.source_id,
+        source_run_id="old-run",
+        updates=[
+            DatasetPointerUpdate(
+                dataset_id="synthetic_prices",
+                manifest_ref=stale_ref,
+                watermark=pointer_time,
+                published_at=pointer_time,
+            )
+        ],
+        updated_at=pointer_time,
+    )
+
+    with pytest.raises(RuntimeError, match="append dataset pointer references missing manifest"):
+        run_ingest(
+            IngestRequest(source_config=config, run_time=datetime(2026, 1, 2, tzinfo=timezone.utc)),
+            store=store,
+            pointer_registry=pointer_registry,
+        )
+
+
+def test_full_ingest_recovers_from_a_missing_previous_manifest(tmp_path, pointer_registry) -> None:
+    csv_path = tmp_path / "prices.csv"
+    csv_path.write_text("timestamp,close\n2026-01-02T00:00:00Z,2\n", encoding="utf-8")
+    store = open_blob_store(f"file:{tmp_path / 'store'}")
+    config = _config(str(csv_path), update_mode="full")
+    stale_ref = "curated/synthetic_prices/manifests/sha256=missing.json"
+    pointer_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    pointer_registry.publish(
+        source_id=config.source_id,
+        source_run_id="old-run",
+        updates=[
+            DatasetPointerUpdate(
+                dataset_id="synthetic_prices",
+                manifest_ref=stale_ref,
+                watermark=pointer_time,
+                published_at=pointer_time,
+            )
+        ],
+        updated_at=pointer_time,
+    )
+
+    result = run_ingest(
+        IngestRequest(source_config=config, run_time=datetime(2026, 1, 2, tzinfo=timezone.utc)),
+        store=store,
+        pointer_registry=pointer_registry,
+    )
+
+    assert result.status.value == "ready"
+    new_ref = result.datasets["synthetic_prices"]
+    assert new_ref != stale_ref
+    assert store.exists(new_ref)
+    assert pointer_registry.get(["synthetic_prices"])["synthetic_prices"].manifest_ref == new_ref

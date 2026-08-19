@@ -20,6 +20,7 @@ from runbook.data import (
 )
 from runbook.data.config import SourceConfig
 from runbook.data.ingest import run_stage1_acquire
+from runbook.data.ingest.runner import load_previous_append_state
 from runbook.data.ingest.runners import run_stage2_curate
 from runbook.data.pipeline import slot_key
 from runbook.platform.report_run import run_report
@@ -619,17 +620,12 @@ class ServiceRunner:
                     try:
                         pointer_ids = [binding.dataset_id for binding in model.datasets.values()]
                         pointers = repository.pointer_registry.get(pointer_ids)
-                        watermarks: dict[str, datetime] = {}
                         store = open_blob_store(self.data_store)
-                        for alias, binding in model.datasets.items():
-                            pointer = pointers.get(binding.dataset_id)
-                            if binding.update_mode == "append" and pointer is not None:
-                                manifest = load_manifest(
-                                    store,
-                                    pointer.manifest_ref,
-                                    expected_dataset_id=binding.dataset_id,
-                                )
-                                watermarks[alias] = manifest.watermark
+                        watermarks, _tickers = load_previous_append_state(
+                            store,
+                            model,
+                            pointers,
+                        )
                     except Exception as exc:
                         identity = RunLogIdentity(
                             run_id=row.run_id,

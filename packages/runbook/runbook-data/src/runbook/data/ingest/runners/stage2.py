@@ -106,11 +106,35 @@ def run_stage2_curate(
         raise ValueError(f"source outputs do not match config: expected={sorted(expected)}, actual={sorted(actual)}")
 
     pointers = dict(previous_pointers or {})
-    previous_manifests = {
-        dataset_id: load_manifest(store, pointer.manifest_ref, expected_dataset_id=dataset_id)
-        for dataset_id, pointer in pointers.items()
-        if dataset_id in {binding.dataset_id for binding in source_config.datasets.values()}
+    bindings_by_dataset = {
+        binding.dataset_id: binding for binding in source_config.datasets.values()
     }
+    previous_manifests: dict[str, DatasetManifest] = {}
+    for dataset_id, pointer in pointers.items():
+        binding = bindings_by_dataset.get(dataset_id)
+        if binding is None:
+            continue
+        if not store.exists(pointer.manifest_ref):
+            if binding.update_mode == "append":
+                raise RuntimeError(
+                    "append dataset pointer references missing manifest: "
+                    f"dataset_id={dataset_id!r} "
+                    f"manifest_ref={pointer.manifest_ref!r} "
+                    f"source_run_id={pointer.source_run_id!r}"
+                )
+            logger.warning(
+                "ignoring missing previous manifest for full refresh "
+                "dataset={} manifest_ref={} source_run_id={}",
+                dataset_id,
+                pointer.manifest_ref,
+                pointer.source_run_id,
+            )
+            continue
+        previous_manifests[dataset_id] = load_manifest(
+            store,
+            pointer.manifest_ref,
+            expected_dataset_id=dataset_id,
+        )
     files_by_dataset: dict[str, list[DatasetFile]] = defaultdict(list)
     frame_by_dataset: dict[str, list[CuratedFrame]] = defaultdict(list)
     initialized_datasets: set[str] = set()

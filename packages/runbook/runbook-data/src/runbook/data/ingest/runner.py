@@ -35,22 +35,41 @@ def _source_config(request: IngestRequest) -> SourceConfig:
         raise ValueError(f"unknown source: {request.source!r}") from exc
 
 
-def _previous_state(
+def load_previous_append_state(
     store: BlobStore,
     config: SourceConfig,
     pointers: dict[str, DatasetPointer],
-) -> dict[str, datetime]:
-    """Load append watermarks from database-selected immutable manifests."""
+) -> tuple[dict[str, datetime], dict[str, set[str]]]:
+    """Load append state and reject pointers whose manifests disappeared."""
     watermarks: dict[str, datetime] = {}
+    tickers: dict[str, set[str]] = {}
     for alias, binding in config.datasets.items():
         if binding.update_mode != "append":
             continue
         pointer = pointers.get(binding.dataset_id)
         if pointer is None:
             continue
-        manifest = load_manifest(store, pointer.manifest_ref, expected_dataset_id=binding.dataset_id)
+        if not store.exists(pointer.manifest_ref):
+            raise RuntimeError(
+                "append dataset pointer references missing manifest: "
+                f"dataset_id={binding.dataset_id!r} "
+                f"manifest_ref={pointer.manifest_ref!r} "
+                f"source_run_id={pointer.source_run_id!r}"
+            )
+        manifest = load_manifest(
+            store,
+            pointer.manifest_ref,
+            expected_dataset_id=binding.dataset_id,
+        )
         watermarks[alias] = manifest.watermark
-    return watermarks
+        values = {
+            item.partition["ticker"]
+            for item in manifest.files
+            if "ticker" in item.partition
+        }
+        if values:
+            tickers[alias] = values
+    return watermarks, tickers
 
 
 def run_stage1_acquire(
@@ -147,11 +166,16 @@ def run_ingest(
     blob_store = store or open_blob_store(resolved.store_uri)
     pointers = pointer_registry or open_pointer_registry()
     current = pointers.get(binding.dataset_id for binding in config.datasets.values())
+    previous_watermarks, _previous_tickers = load_previous_append_state(
+        blob_store,
+        config,
+        current,
+    )
     acquisition = run_stage1_acquire(
         source_config=config,
         slot=slot,
         store=blob_store,
-        previous_watermarks=_previous_state(blob_store, config, current),
+        previous_watermarks=previous_watermarks,
     )
     if acquisition.status is not ReadinessStatus.ready:
         return IngestResult(
@@ -199,4 +223,4 @@ def run_ingest(
     )
 
 
-__all__ = ["run_ingest", "run_stage1_acquire"]
+__all__ = ["load_previous_append_state", "run_ingest", "run_stage1_acquire"]
