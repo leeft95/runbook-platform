@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Barrier
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ import httpx
 import pytest
 import uvicorn
 from dash import dcc, html
+from runbook.core import Snapshot
 from runbook.data import (
     DatabasePointerRegistry,
     DatasetPointerUpdate,
@@ -32,6 +34,7 @@ from runbook.services.app import create_app, version_payload
 from runbook.services.dash import runs
 from runbook.services.dash._config import _config_skeleton, register_config_page
 from runbook.services.db import sync_sessions, upgrade_with_metadata
+from runbook.services.logging import RunLogIdentity, read_log_tail
 from runbook.services.models import Base
 from runbook.services.repository import ConflictError, RunRepository
 from runbook.services.runner import ServiceRunner
@@ -39,13 +42,33 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 
+def _threaded_runner(**kwargs) -> ServiceRunner:
+    """Use threads only for tests that monkeypatch worker callables."""
+    return ServiceRunner(
+        executor_factory=lambda workers: ThreadPoolExecutor(max_workers=workers),
+        **kwargs,
+    )
+
+
 def test_root_version_endpoint_and_dash_mount() -> None:
     app = create_app(database="postgresql+psycopg://postgres:postgres@localhost:5432/runbook")
     assert "/api/v1/sources" in app.openapi()["paths"]
     assert "/api/v1/profiles/{profile_id}/runs" in app.openapi()["paths"]
-    assert {
-        page["path"] for module, page in dash.page_registry.items() if module.startswith("runbook.services.dash.")
-    } == {"/", "/profiles", "/runs"}
+    pages = [page for module, page in dash.page_registry.items() if module.startswith("runbook.services.dash.")]
+    assert {page["path"] for page in pages if page["path_template"] is None} == {
+        "/",
+        "/profiles",
+        "/runs",
+        "/sources",
+    }
+    assert {page["path_template"] for page in pages if page["path_template"]} == {
+        "/runs/<run_id>",
+        "/runs/<run_id>/logs",
+    }
+    detail_page, _ = dash._pages._path_to_page("runs/example")
+    logs_page, _ = dash._pages._path_to_page("runs/example/logs")
+    assert detail_page["module"].endswith(".run_detail")
+    assert logs_page["module"].endswith(".run_logs")
 
     async def check_routes() -> None:
         startup = asyncio.Event()
@@ -76,6 +99,9 @@ def test_root_version_endpoint_and_dash_mount() -> None:
             assert (await client.get("/ui/")).status_code == 200
             assert (await client.get("/ui/profiles")).status_code == 200
             assert (await client.get("/ui/runs")).status_code == 200
+            assert (await client.get("/ui/sources")).status_code == 200
+            assert (await client.get("/ui/runs/example")).status_code == 200
+            assert (await client.get("/ui/runs/example/logs")).status_code == 200
             assert (await client.get("/docs")).status_code == 200
         await events.put({"type": "lifespan.shutdown"})
         await shutdown.wait()
@@ -130,7 +156,6 @@ def test_id_selectors_are_database_backed_dropdowns() -> None:
             "runbook-ui-profiles-revision",
             "runbook-ui-profiles-trigger-id",
         ],
-        "runbook.services.dash.runs": ["runbook-ui-runs-run-id"],
     }
     for module, component_ids in expected.items():
         children = dash.page_registry[module]["layout"].children
@@ -171,7 +196,34 @@ def test_id_selectors_are_database_backed_dropdowns() -> None:
     assert "runbook-ui-profiles-trigger-id.options" in callback_keys
     assert "runbook-ui-profiles-revision.options" in callback_keys
     assert "runbook-ui-profiles-revision.value" in callback_keys
-    assert "runbook-ui-runs-run-id.options" in callback_keys
+    assert "runbook-ui-runs-url.pathname" not in callback_keys
+    assert not any(any(item["id"] == "runbook-ui-runs-grid" and item["property"] == "cellClicked" for item in callback["inputs"]) for callback in callback_app.callback_map.values())
+    assert "runbook-ui-runs-run-id.options" not in callback_keys
+    run_page = dash.page_registry["runbook.services.dash.runs"]["layout"]
+    grid = next(child for child in run_page.children if getattr(child, "id", None) == "runbook-ui-runs-grid")
+    assert grid.columnDefs[0] == {
+        "field": "run_link",
+        "headerName": "Run ID",
+        "cellRenderer": "markdown",
+        "filter": "agTextColumnFilter",
+    }
+    serialized = runs._run_row(
+        SimpleNamespace(
+            run_id="run-1",
+            kind="source",
+            target_id="source-1",
+            status="success",
+            slot=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            trigger="manual",
+            reason=None,
+            snapshot_id=None,
+            context_hash=None,
+            code_version=None,
+            artifact_id=None,
+        )
+    )
+    assert serialized["run_id"] == "run-1"
+    assert serialized["run_link"] == "[run-1](/ui/runs/run-1)"
 
 
 def test_new_config_skeletons_are_complete_and_disabled() -> None:
@@ -240,7 +292,7 @@ def test_tick_orders_persisted_and_newly_scheduled_rows(monkeypatch, tmp_path) -
                             "update_mode": "full",
                         }
                     },
-                    "params": {"local_path": "unused.csv", "timestamp_column": "timestamp"},
+                    "params": {"local_path": "unused.csv", "ticker": "prices"},
                 },
             )
             repository.queue_run(
@@ -267,13 +319,16 @@ def test_tick_orders_persisted_and_newly_scheduled_rows(monkeypatch, tmp_path) -
         )
 
     monkeypatch.setattr(runner_module, "run_stage1_acquire", not_ready)
-    outcomes = ServiceRunner(database=database, data_store=f"file:{tmp_path / 'store'}").tick(
+    outcomes = _threaded_runner(database=database, data_store=f"file:{tmp_path / 'store'}").tick(
         now=current,
         code_version="test",
     )
 
     assert [item["status"] for item in outcomes] == ["not_ready", "not_ready"]
-    assert [item["slot"] for item in outcomes] == [earlier.isoformat(), current.isoformat()]
+    assert [item["slot"] for item in outcomes] == [
+        earlier.isoformat(),
+        current.isoformat(),
+    ]
     assert _config_skeleton("profile") == {
         "profile_id": "",
         "enabled": False,
@@ -440,7 +495,11 @@ def test_service_runner_persists_report_artifact_references(monkeypatch, tmp_pat
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     slot = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    snapshot = SimpleNamespace(snapshot_id="snapshot", watermark=slot - timedelta(days=1))
+    snapshot = Snapshot(
+        snapshot_id="0" * 64,
+        watermark=slot - timedelta(days=1),
+        datasets={"prices": "manifests/prices.json"},
+    )
     result = {
         "profile_id": "demo",
         "slot": "20260101T000000Z",
@@ -457,7 +516,11 @@ def test_service_runner_persists_report_artifact_references(monkeypatch, tmp_pat
     }
     monkeypatch.setattr(runner_module, "resolve_snapshot", lambda *_args, **_kwargs: snapshot)
     monkeypatch.setattr(runner_module, "resolve_code_version", lambda *_args, **_kwargs: "code")
-    monkeypatch.setattr(runner_module, "run_report", lambda **_kwargs: SimpleNamespace(as_dict=lambda: result))
+    monkeypatch.setattr(
+        runner_module,
+        "run_report",
+        lambda **_kwargs: SimpleNamespace(as_dict=lambda: result),
+    )
     with sessionmaker(engine, expire_on_commit=False)() as session:
         repository = RunRepository(session)
         with session.begin():
@@ -479,7 +542,7 @@ def test_service_runner_persists_report_artifact_references(monkeypatch, tmp_pat
                 force=False,
                 config=config,
             )
-        outcomes = ServiceRunner(data_store=f"file:{tmp_path}")._run_dag(
+        outcomes = _threaded_runner(data_store=f"file:{tmp_path}")._run_dag(
             session,
             repository,
             [row],
@@ -522,7 +585,7 @@ def test_service_runner_fans_out_ready_dataset_to_report(tmp_path) -> None:
                             "update_mode": "full",
                         }
                     },
-                    "params": {"local_path": str(source_file), "timestamp_column": "timestamp"},
+                        "params": {"local_path": str(source_file), "timestamp_column": "timestamp"},
                 },
             )
             repository.save_config(
@@ -551,11 +614,33 @@ def test_service_runner_fans_out_ready_dataset_to_report(tmp_path) -> None:
     with sync_sessions(database)() as session:
         rows = RunRepository(session).list_runs(limit=10)
         profile_run = next(row for row in rows if row.kind == "profile")
+        source_run = next(row for row in rows if row.kind == "source")
         assert profile_run.trigger == "dataset"
         assert profile_run.artifact_id
+        assert profile_run.result["snapshot"]["snapshot_id"] == profile_run.snapshot_id
+        assert profile_run.result["snapshot"]["datasets"]["prices"]
         pointer = RunRepository(session).pointer_registry.get(["prices"])["prices"]
         assert pointer.source_id == "prices_source"
-        assert pointer.source_run_id == next(row.run_id for row in rows if row.kind == "source")
+        assert pointer.source_run_id == source_run.run_id
+        assert read_log_tail(
+            open_blob_store(data_store),
+            RunLogIdentity(
+                source_run.run_id,
+                "source",
+                source_run.target_id,
+                source_run.slot.replace(tzinfo=timezone.utc),
+            ),
+        )["complete"]
+        assert read_log_tail(
+            open_blob_store(data_store),
+            RunLogIdentity(
+                profile_run.run_id,
+                "profile",
+                profile_run.target_id,
+                profile_run.slot.replace(tzinfo=timezone.utc),
+                report_id="vol_report",
+            ),
+        )["complete"]
     assert not open_blob_store(data_store).exists("pointers.json")
 
 
@@ -638,7 +723,10 @@ def test_curation_failure_uses_previous_complete_snapshot_only(
                             "update_mode": "full",
                         }
                     },
-                    "params": {"local_path": "unused.csv", "timestamp_column": "timestamp"},
+                    "params": {
+                        "local_path": "unused.csv",
+                        "timestamp_column": "timestamp",
+                    },
                 },
             )
             profile_config = repository.save_config(
@@ -680,7 +768,7 @@ def test_curation_failure_uses_previous_complete_snapshot_only(
                 force=False,
                 config=source_config,
             )
-        outcomes = ServiceRunner(data_store=f"file:{tmp_path}", workers=2)._run_dag(
+        outcomes = _threaded_runner(data_store=f"file:{tmp_path}", workers=2)._run_dag(
             session,
             repository,
             [source_run],
@@ -726,7 +814,10 @@ def test_service_runner_imports_legacy_pointers_once(tmp_path) -> None:
                             "update_mode": "full",
                         }
                     },
-                    "params": {"local_path": "unused.csv", "timestamp_column": "timestamp"},
+                    "params": {
+                        "local_path": "unused.csv",
+                        "timestamp_column": "timestamp",
+                    },
                 },
             )
 
@@ -805,7 +896,10 @@ def test_service_runner_acquires_distinct_sources_concurrently(monkeypatch, tmp_
                                 "parser_id": "csv_timeseries_v1",
                             }
                         },
-                        "params": {"local_path": "unused.csv", "timestamp_column": "timestamp"},
+                        "params": {
+                            "local_path": "unused.csv",
+                            "timestamp_column": "timestamp",
+                        },
                     },
                 )
                 rows.append(
@@ -818,7 +912,7 @@ def test_service_runner_acquires_distinct_sources_concurrently(monkeypatch, tmp_
                         config=config,
                     )
                 )
-        outcomes = ServiceRunner(data_store=f"file:{tmp_path}", workers=2)._run_dag(
+        outcomes = _threaded_runner(data_store=f"file:{tmp_path}", workers=2)._run_dag(
             session,
             repository,
             rows,
@@ -894,7 +988,10 @@ def test_service_runner_orders_same_source_by_slot(monkeypatch, tmp_path) -> Non
                             "update_mode": "full",
                         }
                     },
-                    "params": {"local_path": "unused.csv", "timestamp_column": "timestamp"},
+                    "params": {
+                        "local_path": "unused.csv",
+                        "timestamp_column": "timestamp",
+                    },
                 },
             )
             rows = [
@@ -908,7 +1005,7 @@ def test_service_runner_orders_same_source_by_slot(monkeypatch, tmp_path) -> Non
                 )
                 for slot in (later, earlier)
             ]
-        ServiceRunner(data_store=f"file:{tmp_path}", workers=2)._run_dag(
+        _threaded_runner(data_store=f"file:{tmp_path}", workers=2)._run_dag(
             session,
             repository,
             rows,

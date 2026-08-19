@@ -4,7 +4,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 
 from loguru import logger
-from runbook.data import DatabasePointerRegistry, open_pointer_registry, resolve_snapshot
+from runbook.data import (
+    DatabasePointerRegistry,
+    open_pointer_registry,
+    resolve_snapshot,
+)
 from runbook.data.pipeline import slot_key
 from runbook.sdk import ReportProfile, execute_report, resolve_code_version
 
@@ -110,7 +114,7 @@ def run_report(
                 exc,
             )
             return ReportOutcome(profile.profile_id, slot_id, "waiting", reason=str(exc))
-        logger.error(
+        logger.exception(
             "report task failed report={} slot={} reason={}",
             profile.profile_id,
             slot_id,
@@ -118,7 +122,7 @@ def run_report(
         )
         return ReportOutcome(profile.profile_id, slot_id, "failed", reason=str(exc))
     except Exception as exc:
-        logger.error(
+        logger.exception(
             "report task failed report={} slot={} reason={}",
             profile.profile_id,
             slot_id,

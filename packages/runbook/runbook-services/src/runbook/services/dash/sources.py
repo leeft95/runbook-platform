@@ -12,7 +12,7 @@ def register(dash_app: Any, sessions: Any) -> None:
         sessions,
         module=__name__,
         kind="source",
-        path="/",
+        path="/sources",
         name="Sources",
         order=0,
     )

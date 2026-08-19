@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Any
 
 import dash_ag_grid as dag
-from dash import Input, Output, State, dcc, html, register_page
+from dash import Input, Output, dcc, html, register_page
 
 from ..repository import AsyncRunRepository
 
@@ -28,6 +27,7 @@ def _run_row(row: Any) -> dict[str, Any]:
     ):
         value = getattr(row, name)
         result[name] = value.isoformat() if isinstance(value, datetime) else value
+    result["run_link"] = f"[{result['run_id']}](/ui/runs/{result['run_id']})"
     return result
 
 
@@ -44,29 +44,74 @@ def register(dash_app: Any, sessions: Any) -> None:
                 html.H2("Runs"),
                 html.Div(id=f"{prefix}-summary"),
                 dcc.Interval(id=f"{prefix}-refresh", interval=5000, n_intervals=0),
+                dcc.Dropdown(
+                    id=f"{prefix}-kind",
+                    options=[{"label": value.title(), "value": value} for value in ("source", "profile")],
+                    placeholder="kind",
+                    clearable=True,
+                    style={
+                        "width": "180px",
+                        "display": "inline-block",
+                        "marginRight": "8px",
+                    },
+                ),
+                dcc.Dropdown(
+                    id=f"{prefix}-status",
+                    options=[
+                        {"label": value.replace("_", " ").title(), "value": value}
+                        for value in (
+                            "queued",
+                            "running",
+                            "success",
+                            "failed",
+                            "waiting",
+                            "not_ready",
+                            "skipped",
+                        )
+                    ],
+                    placeholder="status",
+                    clearable=True,
+                    style={
+                        "width": "180px",
+                        "display": "inline-block",
+                        "marginRight": "8px",
+                    },
+                ),
+                dcc.Input(
+                    id=f"{prefix}-target",
+                    placeholder="target id",
+                    type="text",
+                    style={"width": "180px"},
+                ),
                 dag.AgGrid(
                     id=f"{prefix}-grid",
                     rowData=[],
                     columnDefs=[
-                        {"field": "run_id"},
-                        {"field": "kind"},
-                        {"field": "target_id"},
-                        {"field": "status"},
-                        {"field": "slot"},
-                        {"field": "trigger"},
-                        {"field": "reason"},
-                        {"field": "snapshot_id"},
-                        {"field": "context_hash"},
-                        {"field": "code_version"},
-                        {"field": "artifact_id"},
+                        {
+                            "field": "run_link",
+                            "headerName": "Run ID",
+                            "cellRenderer": "markdown",
+                            "filter": "agTextColumnFilter",
+                        },
+                        *[
+                            {"field": field, "filter": True}
+                            for field in (
+                                "kind",
+                                "target_id",
+                                "status",
+                                "slot",
+                                "trigger",
+                                "reason",
+                                "snapshot_id",
+                                "context_hash",
+                                "code_version",
+                                "artifact_id",
+                            )
+                        ],
                     ],
                     dashGridOptions={"pagination": True},
                     style={"height": "360px", "width": "100%"},
                 ),
-                html.H2("Run detail and provenance"),
-                dcc.Dropdown(id=f"{prefix}-run-id", options=[], placeholder="run id", style={"width": "400px"}),
-                html.Button("Load run", id=f"{prefix}-load-run"),
-                html.Pre(id=f"{prefix}-detail"),
             ]
         ),
     )
@@ -74,31 +119,13 @@ def register(dash_app: Any, sessions: Any) -> None:
     @dash_app.callback(
         Output(f"{prefix}-grid", "rowData"),
         Output(f"{prefix}-summary", "children"),
-        Output(f"{prefix}-run-id", "options"),
         Input(f"{prefix}-refresh", "n_intervals"),
+        Input(f"{prefix}-kind", "value"),
+        Input(f"{prefix}-status", "value"),
+        Input(f"{prefix}-target", "value"),
     )
-    async def refresh(_interval: int):
+    async def refresh(_interval: int, kind: str | None, status: str | None, target_id: str | None):
         """Refresh the recent-runs grid and summary."""
         async with sessions() as session:
-            rows = await AsyncRunRepository(session).list_runs(limit=100)
-        options = [{"label": row.run_id, "value": row.run_id} for row in rows]
-        return [_run_row(row) for row in rows], f"{len(rows)} recent runs", options
-
-    @dash_app.callback(
-        Output(f"{prefix}-detail", "children"),
-        Input(f"{prefix}-load-run", "n_clicks"),
-        State(f"{prefix}-run-id", "value"),
-        prevent_initial_call=True,
-    )
-    async def load_run(_clicks: int, run_id: str):
-        """Load one run and its provenance fields."""
-        async with sessions() as session:
-            row = await AsyncRunRepository(session).get_run(run_id)
-        if row is None:
-            return json.dumps({"error": "unknown run"}, indent=2)
-        return json.dumps(
-            {name: getattr(row, name) for name in row.__table__.columns.keys()},
-            default=str,
-            indent=2,
-            sort_keys=True,
-        )
+            rows = await AsyncRunRepository(session).list_runs(kind=kind, status=status, target_id=target_id or None, limit=100)
+        return [_run_row(row) for row in rows], f"{len(rows)} recent runs"
