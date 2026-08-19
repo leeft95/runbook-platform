@@ -3,7 +3,7 @@
 `runbook-services` is the PostgreSQL-backed control plane. PostgreSQL stores
 validated configuration revisions, current dataset pointers, and the run
 ledger. Blob storage retains immutable raw data, curated files, manifests,
-and report artifacts.
+report artifacts, and per-run worker log chunks.
 
 ## Configure the service
 
@@ -36,11 +36,12 @@ Run one tick from an external scheduler such as cron:
 runbook-services tick --workers 4
 ```
 
-Each tick runs a bounded worker pool for source acquisition and curation,
-then releases enabled reports whose complete dataset snapshots are ready.
-Automatic report runs are dataset-triggered in v0.0.2; profile cron fields
-remain accepted for configuration compatibility. Manual API-triggered runs
-remain immediate.
+Each tick runs bounded local process workers for source acquisition and
+curation, then releases profiles whose complete dataset snapshots are ready.
+Profiles are manual or dataset-triggered; source schedules are the only
+scheduled roots. Manual API-triggered runs remain immediate. The process is
+externally scheduled and exits after the bounded tick; it is not a daemon or a
+general workflow engine.
 
 ## Serve the API and UI
 
@@ -55,9 +56,11 @@ for development only. The root endpoint returns versions, `/healthz` is a
 process health check, `/readyz` checks database readiness, API routes are
 under `/api/v1`, and the Dash UI is mounted at `/ui/`.
 
-The service has no authentication. Keep the loopback binding or put the
-service behind an authenticated, appropriately secured boundary before
-exposing it to a network. See the repository [security policy](https://github.com/redcombojnr/runbook-platform/blob/main/SECURITY.md).
+The dashboard provides run history, provenance, status, and links to the
+immutable worker logs. The service has no authentication. Keep the loopback
+binding or put the service behind an authenticated, appropriately secured
+boundary before exposing it to a network. See the repository [security
+policy](https://github.com/redcombojnr/runbook-platform/blob/main/SECURITY.md).
 
 ## Failure and recovery
 
