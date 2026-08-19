@@ -64,7 +64,7 @@ checks for configuration mutation before publishing a report.
 ## Profiles
 
 Profiles are JSON objects keyed by `profile_id`. A profile contains a
-`report_id`, a schedule, at least one dataset binding, optional `params` and
+`report_id` and at least one dataset binding, optional `params` and
 `layout`, and an `enabled` flag. Dataset map keys are the aliases used by the
 report; values are stable curated dataset IDs.
 
@@ -74,7 +74,6 @@ report; values are stable curated dataset IDs.
     "report_id": "vol_report",
     "title": "Synthetic Volatility Demo",
     "enabled": true,
-    "schedule": {"cron": "15 0 * * *", "timezone": "UTC"},
     "datasets": {"prices": "demo_daily_prices"},
     "params": {"price_col": "close", "vol_window": 20},
     "layout": {"plot_width": 700, "plot_height": 360}
