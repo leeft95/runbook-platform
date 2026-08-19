@@ -7060,17 +7060,17 @@ packages:
 - pypi: ./packages/runbook/runbook-services
   name: runbook-services
   version: 0.0.2
-  sha256: 95685ef926d762a93f0531cbd3da4945370e83300ef021d65f2a387f5b2b2514
+  sha256: 5edb95bd05dd02be13eb69329dfaa8dc53eb7fe64debf365354d91b827bc7f21
   requires_dist:
   - runbook-core
   - runbook-data
   - runbook-sdk
   - runbook-platform
   - fastapi>=0.115,<1
-  - dash>=4.2,<5
+  - dash[fastapi]>=4.2,<5
   - dash-ag-grid>=35,<36
-  - sqlalchemy>=2,<3
-  - psycopg>=3,<4
+  - sqlalchemy[asyncio]>=2,<3
+  - psycopg[binary]>=3,<4
   - alembic>=1,<2
   - uvicorn>=0.30,<1
   - loguru
