@@ -192,7 +192,11 @@ def _report_worker(
                 slot=datetime.fromisoformat(slot_value),
                 code_version=code_version,
                 reports_root=reports_root,
-                snapshot=(Snapshot.model_validate(snapshot_payload) if isinstance(snapshot_payload, dict) else snapshot_payload),
+                snapshot=(
+                    Snapshot.model_validate(snapshot_payload)
+                    if isinstance(snapshot_payload, dict)
+                    else snapshot_payload
+                ),
             ).as_dict()
             outcome["log_ref"] = log.log_ref
             return outcome
@@ -300,7 +304,9 @@ class ServiceRunner:
             for binding in model.datasets.values():
                 previous = producers.setdefault(binding.dataset_id, model.source_id)
                 if previous != model.source_id:
-                    raise ValueError(f"dataset {binding.dataset_id!r} has multiple producers: {previous!r}, {model.source_id!r}")
+                    raise ValueError(
+                        f"dataset {binding.dataset_id!r} has multiple producers: {previous!r}, {model.source_id!r}"
+                    )
         return producers
 
     def _import_legacy_pointers(
@@ -424,9 +430,7 @@ class ServiceRunner:
             if config is None:
                 fail_preflight(
                     row,
-                    RuntimeError(
-                        "pinned configuration revision is unavailable"
-                    ),
+                    RuntimeError("pinned configuration revision is unavailable"),
                 )
                 continue
 
@@ -440,9 +444,7 @@ class ServiceRunner:
                 if not isinstance(model, SourceConfig):
                     fail_preflight(
                         row,
-                        ValueError(
-                            "pinned source configuration is invalid"
-                        ),
+                        ValueError("pinned source configuration is invalid"),
                     )
                     continue
 
@@ -481,8 +483,7 @@ class ServiceRunner:
             dependencies = {
                 producer_by_dataset[dataset_id]
                 for dataset_id in model.datasets.values()
-                if producer_by_dataset.get(dataset_id)
-                in participating_sources
+                if producer_by_dataset.get(dataset_id) in participating_sources
             }
 
             if not dependencies:
@@ -490,14 +491,10 @@ class ServiceRunner:
 
             profile_models[model.profile_id] = model
             profile_revision_by_id[model.profile_id] = config
-            remaining_dependencies[model.profile_id] = set(
-                dependencies
-            )
+            remaining_dependencies[model.profile_id] = set(dependencies)
 
             for source_id in dependencies:
-                profiles_by_source[source_id].add(
-                    model.profile_id
-                )
+                profiles_by_source[source_id].add(model.profile_id)
 
         futures: dict[
             Future[Any],
@@ -571,9 +568,7 @@ class ServiceRunner:
                 if config is None:
                     fail_preflight(
                         row,
-                        RuntimeError(
-                            "pinned configuration revision is unavailable"
-                        ),
+                        RuntimeError("pinned configuration revision is unavailable"),
                     )
                     session.commit()
                     return
@@ -588,9 +583,7 @@ class ServiceRunner:
                 if not isinstance(model, ReportProfile):
                     fail_preflight(
                         row,
-                        ValueError(
-                            "pinned profile configuration is invalid"
-                        ),
+                        ValueError("pinned profile configuration is invalid"),
                     )
                     session.commit()
                     return
@@ -603,18 +596,10 @@ class ServiceRunner:
                         model.datasets,
                         pointer_registry=repository.pointer_registry,
                     )
-                    resolved_code = resolve_code_version(
-                        code_version
-                    )
+                    resolved_code = resolve_code_version(code_version)
 
                 except ValueError as exc:
-                    status = (
-                        "waiting"
-                        if str(exc).startswith(
-                            "no pointer exists for dataset"
-                        )
-                        else "failed"
-                    )
+                    status = "waiting" if str(exc).startswith("no pointer exists for dataset") else "failed"
 
                     if status == "waiting":
                         repository.finish(
@@ -669,25 +654,17 @@ class ServiceRunner:
 
                 run_slot = _aware_utc(row.slot)
 
-                if (
-                    row.trigger != "manual"
-                    and pinned.watermark < run_slot
-                ):
+                if row.trigger != "manual" and pinned.watermark < run_slot:
                     repository.finish(
                         row,
                         status="waiting",
-                        reason=(
-                            "dataset watermark is behind "
-                            "report slot"
-                        ),
+                        reason=("dataset watermark is behind report slot"),
                     )
                     session.commit()
                     finish_terminal(row)
                     return
 
-                context_hash = build_context_hash(
-                    model.execution_config()
-                )
+                context_hash = build_context_hash(model.execution_config())
 
                 expected_artifact = sha256_json(
                     {
@@ -723,9 +700,7 @@ class ServiceRunner:
 
                 identity = row_identity(row, model)
 
-                snapshot_payload: dict[str, Any] = pinned.model_dump(
-                    mode="json"
-                    )
+                snapshot_payload: dict[str, Any] = pinned.model_dump(mode="json")
 
                 try:
                     future = executor.submit(
@@ -772,20 +747,16 @@ class ServiceRunner:
                     )
 
                 except ValueError as exc:
-                    if str(exc).startswith(
-                        "no pointer exists for dataset"
-                    ):
+                    if str(exc).startswith("no pointer exists for dataset"):
                         logger.info(
-                            "profile fanout blocked "
-                            "profile={} reason={}",
+                            "profile fanout blocked profile={} reason={}",
                             profile_id,
                             exc,
                         )
                         return
 
                     logger.error(
-                        "profile fanout failed "
-                        "profile={} reason={}",
+                        "profile fanout failed profile={} reason={}",
                         profile_id,
                         exc,
                     )
@@ -793,8 +764,7 @@ class ServiceRunner:
 
                 except Exception as exc:
                     logger.error(
-                        "profile fanout failed "
-                        "profile={} reason={}",
+                        "profile fanout failed profile={} reason={}",
                         profile_id,
                         exc,
                     )
@@ -806,9 +776,7 @@ class ServiceRunner:
                     slot=snapshot.watermark,
                     trigger="dataset",
                     force=False,
-                    config=profile_revision_by_id[
-                        profile_id
-                    ],
+                    config=profile_revision_by_id[profile_id],
                 )
 
                 session.commit()
@@ -827,15 +795,11 @@ class ServiceRunner:
                         (),
                     )
                 ):
-                    remaining = remaining_dependencies[
-                        profile_id
-                    ]
+                    remaining = remaining_dependencies[profile_id]
                     remaining.discard(source_id)
 
                     if not remaining:
-                        submit_generated_profile(
-                            profile_id
-                        )
+                        submit_generated_profile(profile_id)
 
             def start_next_source(
                 source_id: str,
@@ -863,28 +827,16 @@ class ServiceRunner:
                         continue
 
                     try:
-                        pointer_ids = [
-                            binding.dataset_id
-                            for binding
-                            in model.datasets.values()
-                        ]
+                        pointer_ids = [binding.dataset_id for binding in model.datasets.values()]
 
-                        pointers = (
-                            repository.pointer_registry.get(
-                                pointer_ids
-                            )
-                        )
+                        pointers = repository.pointer_registry.get(pointer_ids)
 
-                        store = open_blob_store(
-                            self.data_store
-                        )
+                        store = open_blob_store(self.data_store)
 
-                        watermarks, _tickers = (
-                            load_previous_append_state(
-                                store,
-                                model,
-                                pointers,
-                            )
+                        watermarks, _tickers = load_previous_append_state(
+                            store,
+                            model,
+                            pointers,
                         )
 
                     except Exception as exc:
@@ -933,30 +885,16 @@ class ServiceRunner:
                     try:
                         future = executor.submit(
                             _source_worker,
-                            model.model_dump(
-                                mode="json"
-                            ),
+                            model.model_dump(mode="json"),
                             run_slot.isoformat(),
                             self.data_store,
-                            {
-                                key: value.isoformat()
-                                for key, value
-                                in watermarks.items()
-                            },
-                            {
-                                key: _pointer_payload(value)
-                                for key, value
-                                in pointers.items()
-                            },
+                            {key: value.isoformat() for key, value in watermarks.items()},
+                            {key: _pointer_payload(value) for key, value in pointers.items()},
                             {
                                 "run_id": identity.run_id,
                                 "kind": identity.kind,
-                                "target_id": (
-                                    identity.target_id
-                                ),
-                                "slot": (
-                                    identity.slot.isoformat()
-                                ),
+                                "target_id": (identity.target_id),
+                                "slot": (identity.slot.isoformat()),
                             },
                         )
 
@@ -983,9 +921,7 @@ class ServiceRunner:
                 for row in profile_roots:
                     submit_report(row)
 
-                for source_id in sorted(
-                    source_rows
-                ):
+                for source_id in sorted(source_rows):
                     start_next_source(source_id)
 
                 while futures:
@@ -998,19 +934,14 @@ class ServiceRunner:
                     if not done:
                         logger.warning(
                             "runner waiting on workers active={}",
-                            [
-                                task.run_id
-                                for task in futures.values()
-                            ],
+                            [task.run_id for task in futures.values()],
                         )
                         continue
 
                     for future in done:
                         task = futures.pop(future)
 
-                        task_row = repository.get_run(
-                            task.run_id
-                        )
+                        task_row = repository.get_run(task.run_id)
 
                         if task_row is None:
                             # Run rows are not deleted.
@@ -1024,44 +955,33 @@ class ServiceRunner:
                         ):
                             try:
                                 result = future.result()
-                                result["snapshot"] = (
-                                    task.snapshot
-                                )
+                                result["snapshot"] = task.snapshot
 
                                 repository.finish(
                                     row,
-                                    status=result[
-                                        "status"
-                                    ],
+                                    status=result["status"],
                                     outcome=result,
-                                    reason=result.get(
-                                        "reason"
-                                    ),
+                                    reason=result.get("reason"),
                                 )
 
                             except Exception as exc:
                                 logger.exception(
-                                    "report worker failed "
-                                    "run_id={}",
+                                    "report worker failed run_id={}",
                                     row.run_id,
                                 )
 
-                                log_ref = (
-                                    write_failure_log(
-                                        self.data_store,
-                                        task.identity,
-                                        exc,
-                                        incomplete=True,
-                                    )
+                                log_ref = write_failure_log(
+                                    self.data_store,
+                                    task.identity,
+                                    exc,
+                                    incomplete=True,
                                 )
 
                                 result = {
                                     "status": "failed",
                                     "reason": str(exc),
                                     "log_ref": log_ref,
-                                    "snapshot": (
-                                        task.snapshot
-                                    ),
+                                    "snapshot": (task.snapshot),
                                 }
 
                                 repository.finish(
@@ -1075,53 +995,27 @@ class ServiceRunner:
                             finish_terminal(row)
                             continue
 
-                        source_id = (
-                            task.config.source_id
-                        )
+                        source_id = task.config.source_id
 
                         try:
                             result = future.result()
 
-                            if (
-                                result["status"]
-                                != "success"
-                            ):
+                            if result["status"] != "success":
                                 repository.finish(
                                     row,
-                                    status=result[
-                                        "status"
-                                    ],
+                                    status=result["status"],
                                     outcome=result,
-                                    reason=result.get(
-                                        "reason"
-                                    ),
+                                    reason=result.get("reason"),
                                 )
                             else:
                                 updates = tuple(
                                     DatasetPointerUpdate(
-                                        dataset_id=item[
-                                            "dataset_id"
-                                        ],
-                                        manifest_ref=item[
-                                            "manifest_ref"
-                                        ],
-                                        watermark=(
-                                            datetime.fromisoformat(
-                                                item[
-                                                    "watermark"
-                                                ]
-                                            )
-                                        ),
-                                        published_at=(
-                                            datetime.fromisoformat(
-                                                item[
-                                                    "published_at"
-                                                ]
-                                            )
-                                        ),
+                                        dataset_id=item["dataset_id"],
+                                        manifest_ref=item["manifest_ref"],
+                                        watermark=(datetime.fromisoformat(item["watermark"])),
+                                        published_at=(datetime.fromisoformat(item["published_at"])),
                                     )
-                                    for item
-                                    in result.get(
+                                    for item in result.get(
                                         "pointer_updates",
                                         (),
                                     )
@@ -1129,15 +1023,9 @@ class ServiceRunner:
 
                                 with session.begin_nested():
                                     (
-                                        repository
-                                        .pointer_registry
-                                        .publish(
-                                            source_id=(
-                                                source_id
-                                            ),
-                                            source_run_id=(
-                                                row.run_id
-                                            ),
+                                        repository.pointer_registry.publish(
+                                            source_id=(source_id),
+                                            source_run_id=(row.run_id),
                                             updates=updates,
                                         )
                                     )
@@ -1150,8 +1038,7 @@ class ServiceRunner:
 
                         except Exception as exc:
                             logger.exception(
-                                "source worker failed "
-                                "run_id={}",
+                                "source worker failed run_id={}",
                                 row.run_id,
                             )
 
@@ -1164,11 +1051,7 @@ class ServiceRunner:
 
                             result = {
                                 "source_id": source_id,
-                                "slot": slot_key(
-                                    _aware_utc(
-                                        row.slot
-                                    )
-                                ),
+                                "slot": slot_key(_aware_utc(row.slot)),
                                 "status": "failed",
                                 "datasets": None,
                                 "reason": str(exc),
@@ -1188,8 +1071,7 @@ class ServiceRunner:
 
             except KeyboardInterrupt:
                 logger.warning(
-                    "service runner interrupted; "
-                    "failing active runs count={}",
+                    "service runner interrupted; failing active runs count={}",
                     len(started_run_ids),
                 )
 
@@ -1197,22 +1079,15 @@ class ServiceRunner:
                 # ProcessPoolExecutor shutdown may otherwise block while
                 # workers are still unwinding.
                 for run_id in tuple(started_run_ids):
-                    row = repository.get_run(
-                        run_id
-                    )
+                    row = repository.get_run(run_id)
 
-                    if (
-                        row is None
-                        or row.status != "running"
-                    ):
+                    if row is None or row.status != "running":
                         continue
 
                     repository.finish(
                         row,
                         status="failed",
-                        reason=(
-                            "service runner interrupted"
-                        ),
+                        reason=("service runner interrupted"),
                     )
 
                 session.commit()
@@ -1233,11 +1108,7 @@ class ServiceRunner:
             ),
         )
 
-        return [
-            outcome
-            for _requested_at, _run_id, outcome
-            in ordered
-        ]
+        return [outcome for _requested_at, _run_id, outcome in ordered]
 
     @staticmethod
     def _outcome(row: Run) -> dict[str, Any]:

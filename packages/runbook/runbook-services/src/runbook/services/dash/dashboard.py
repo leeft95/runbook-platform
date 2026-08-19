@@ -8,7 +8,6 @@ from dash import Input, Output, dcc, html, register_page
 
 from ..repository import AsyncRunRepository
 
-
 REFRESH_MS = 5_000
 ACTIVE_LIMIT = 250
 ATTENTION_LIMIT = 100
@@ -264,10 +263,7 @@ def register(dash_app: Any, sessions: Any) -> None:
             )
             pointers = await repository.list_pointers(limit=POINTER_LIMIT)
 
-        waiting = (
-            window_counts.get("waiting", 0)
-            + window_counts.get("not_ready", 0)
-        )
+        waiting = window_counts.get("waiting", 0) + window_counts.get("not_ready", 0)
 
         return (
             str(active_counts.get("queued", 0)),
@@ -412,11 +408,7 @@ def register(dash_app: Any, sessions: Any) -> None:
 
 def _aware(value: datetime) -> datetime:
     """Normalize database timestamps to timezone-aware UTC."""
-    return (
-        value.replace(tzinfo=timezone.utc)
-        if value.tzinfo is None
-        else value.astimezone(timezone.utc)
-    )
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 __all__ = ["register"]

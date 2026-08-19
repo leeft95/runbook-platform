@@ -47,7 +47,9 @@ def _validate_partition(binding: DatasetBinding, partition: dict[str, str]) -> d
     if binding.partition_keys:
         actual = tuple(partition)
         if actual != binding.partition_keys:
-            raise ValueError(f"partition keys do not match configuration: expected={binding.partition_keys}, actual={actual}")
+            raise ValueError(
+                f"partition keys do not match configuration: expected={binding.partition_keys}, actual={actual}"
+            )
     return {key: partition[key] for key in binding.partition_keys} if binding.partition_keys else dict(partition)
 
 
@@ -64,7 +66,11 @@ def _append_frame(store: BlobStore, frame: CuratedFrame, prior: DatasetFile | No
     if missing:
         raise ValueError(f"append merge keys are missing: {missing}")
     merged = pd.concat([previous, frame.frame], ignore_index=True)
-    merged = merged.drop_duplicates(list(frame.merge_keys), keep="last").sort_values(list(frame.merge_keys), kind="mergesort").reset_index(drop=True)
+    merged = (
+        merged.drop_duplicates(list(frame.merge_keys), keep="last")
+        .sort_values(list(frame.merge_keys), kind="mergesort")
+        .reset_index(drop=True)
+    )
     return CuratedFrame(frame.output_alias, merged, frame.watermark, frame.partition, frame.merge_keys)
 
 
@@ -112,10 +118,7 @@ def run_stage2_curate(
         raise ValueError(f"source outputs do not match config: expected={sorted(expected)}, actual={sorted(actual)}")
 
     pointers = dict(previous_pointers or {})
-    bindings_by_dataset = {
-        binding.dataset_id: binding
-        for binding in source_config.datasets.values()
-    }
+    bindings_by_dataset = {binding.dataset_id: binding for binding in source_config.datasets.values()}
     previous_manifests: dict[str, DatasetManifest] = {}
 
     for dataset_id, pointer in pointers.items():
@@ -138,8 +141,7 @@ def run_stage2_curate(
                 )
 
             logger.warning(
-                "ignoring missing previous manifest for full refresh "
-                "dataset={} manifest_ref={} source_run_id={}",
+                "ignoring missing previous manifest for full refresh dataset={} manifest_ref={} source_run_id={}",
                 dataset_id,
                 pointer.manifest_ref,
                 pointer.source_run_id,

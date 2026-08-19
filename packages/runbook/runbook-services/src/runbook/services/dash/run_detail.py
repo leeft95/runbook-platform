@@ -27,8 +27,14 @@ def register(dash_app: Any, sessions: Any) -> None:
             pointers = await repository.list_pointers() if row else []
         if row is None:
             return html.P("Unknown run")
-        dataset_ids = set((config.payload.get("datasets") or {}).values()) if config and row.kind == "profile" else set()
-        current_pointers = [pointer for pointer in pointers if (pointer["source_id"] == row.target_id if row.kind == "source" else pointer["dataset_id"] in dataset_ids)]
+        dataset_ids = (
+            set((config.payload.get("datasets") or {}).values()) if config and row.kind == "profile" else set()
+        )
+        current_pointers = [
+            pointer
+            for pointer in pointers
+            if (pointer["source_id"] == row.target_id if row.kind == "source" else pointer["dataset_id"] in dataset_ids)
+        ]
         payload = {name: getattr(row, name) for name in row.__table__.columns.keys()}
         payload["pinned_config"] = dict(config.payload) if config else None
         payload["provenance"] = {

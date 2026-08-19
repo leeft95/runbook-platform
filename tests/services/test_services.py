@@ -11,7 +11,6 @@ import dash_ag_grid as dag
 import httpx
 import pytest
 import uvicorn
-from dash import dcc, html
 from runbook.core import Snapshot
 from runbook.data import (
     DatabasePointerRegistry,
@@ -181,7 +180,10 @@ def test_config_pages_use_grid_editors() -> None:
     assert "runbook-ui-profiles-grid.rowData" in callback_keys
     assert "runbook-ui-profiles-result.children" in callback_keys
     assert "runbook-ui-runs-url.pathname" not in callback_keys
-    assert not any(any(item["id"] == "runbook-ui-runs-grid" and item["property"] == "cellClicked" for item in callback["inputs"]) for callback in callback_app.callback_map.values())
+    assert not any(
+        any(item["id"] == "runbook-ui-runs-grid" and item["property"] == "cellClicked" for item in callback["inputs"])
+        for callback in callback_app.callback_map.values()
+    )
     assert "runbook-ui-runs-run-id.options" not in callback_keys
     run_page = dash.page_registry["runbook.services.dash.runs"]["layout"]
     grid = next(child for child in run_page.children if getattr(child, "id", None) == "runbook-ui-runs-grid")
@@ -321,6 +323,8 @@ def test_tick_orders_persisted_and_newly_scheduled_rows(monkeypatch, tmp_path) -
         earlier.isoformat(),
         current.isoformat(),
     ]
+
+
 def test_config_revisions_are_immutable_and_compare_and_swap() -> None:
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
@@ -562,7 +566,7 @@ def test_service_runner_fans_out_ready_dataset_to_report(tmp_path) -> None:
                             "update_mode": "full",
                         }
                     },
-                        "params": {"local_path": str(source_file), "timestamp_column": "timestamp"},
+                    "params": {"local_path": str(source_file), "timestamp_column": "timestamp"},
                 },
             )
             repository.save_config(
@@ -1008,10 +1012,7 @@ def test_interrupt_fails_only_started_runs_before_executor_shutdown(tmp_path) ->
             # A separate connection proves the handler committed before the
             # executor context began shutdown.
             with sync_sessions(database)() as check_session:
-                self.statuses = {
-                    row.run_id: row.status
-                    for row in RunRepository(check_session).list_runs(limit=20)
-                }
+                self.statuses = {row.run_id: row.status for row in RunRepository(check_session).list_runs(limit=20)}
             return False
 
         def submit(self, *_args, **_kwargs):

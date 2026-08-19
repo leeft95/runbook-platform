@@ -62,11 +62,7 @@ def load_previous_append_state(
             expected_dataset_id=binding.dataset_id,
         )
         watermarks[alias] = manifest.watermark
-        values = {
-            item.partition["ticker"]
-            for item in manifest.files
-            if "ticker" in item.partition
-        }
+        values = {item.partition["ticker"] for item in manifest.files if "ticker" in item.partition}
         if values:
             tickers[alias] = values
     return watermarks, tickers

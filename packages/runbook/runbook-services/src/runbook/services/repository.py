@@ -84,7 +84,12 @@ class RunRepository:
 
     def latest_config(self, kind: str, config_id: str) -> ConfigRevision | None:
         """Return the newest revision for a configuration."""
-        return self.session.scalar(select(ConfigRevision).where(ConfigRevision.kind == kind, ConfigRevision.config_id == config_id).order_by(desc(ConfigRevision.revision)).limit(1))
+        return self.session.scalar(
+            select(ConfigRevision)
+            .where(ConfigRevision.kind == kind, ConfigRevision.config_id == config_id)
+            .order_by(desc(ConfigRevision.revision))
+            .limit(1)
+        )
 
     def get_config(self, kind: str, config_id: str, revision: int) -> ConfigRevision | None:
         """Return an exact pinned configuration revision."""
@@ -98,7 +103,11 @@ class RunRepository:
 
     def list_latest_configs(self, kind: str, *, enabled_only: bool = False) -> list[ConfigRevision]:
         """Return one newest revision per configuration ID."""
-        rows = self.session.scalars(select(ConfigRevision).where(ConfigRevision.kind == kind).order_by(ConfigRevision.config_id, desc(ConfigRevision.revision))).all()
+        rows = self.session.scalars(
+            select(ConfigRevision)
+            .where(ConfigRevision.kind == kind)
+            .order_by(ConfigRevision.config_id, desc(ConfigRevision.revision))
+        ).all()
         latest: dict[str, ConfigRevision] = {}
         for row in rows:
             latest.setdefault(row.config_id, row)
@@ -108,7 +117,13 @@ class RunRepository:
 
     def list_config_revisions(self, kind: str, config_id: str) -> list[ConfigRevision]:
         """Return all revisions for one configuration, newest first."""
-        return list(self.session.scalars(select(ConfigRevision).where(ConfigRevision.kind == kind, ConfigRevision.config_id == config_id).order_by(desc(ConfigRevision.revision))).all())
+        return list(
+            self.session.scalars(
+                select(ConfigRevision)
+                .where(ConfigRevision.kind == kind, ConfigRevision.config_id == config_id)
+                .order_by(desc(ConfigRevision.revision))
+            ).all()
+        )
 
     def save_config(
         self,
@@ -125,7 +140,9 @@ class RunRepository:
         if expected_revision is not None and (current is None or current.revision != expected_revision):
             raise ConflictError("configuration revision is stale")
         if isinstance(validated.model, SourceConfig):
-            pointer_owners = {dataset_id: pointer.source_id for dataset_id, pointer in self.pointer_registry.all().items()}
+            pointer_owners = {
+                dataset_id: pointer.source_id for dataset_id, pointer in self.pointer_registry.all().items()
+            }
             _validate_source_ownership(
                 config_id,
                 validated.model,
@@ -243,7 +260,11 @@ class RunRepository:
 
     def queued_runs(self, limit: int = 100) -> list[Run]:
         """Return queued runs in FIFO order."""
-        return list(self.session.scalars(select(Run).where(Run.status == "queued").order_by(Run.requested_at, Run.run_id).limit(limit)).all())
+        return list(
+            self.session.scalars(
+                select(Run).where(Run.status == "queued").order_by(Run.requested_at, Run.run_id).limit(limit)
+            ).all()
+        )
 
     def mark_running(self, row: Run) -> None:
         """Mark a run as started."""
@@ -294,7 +315,14 @@ class AsyncRunRepository:
 
     async def latest_config(self, kind: str, config_id: str) -> ConfigRevision | None:
         """Return the newest revision asynchronously."""
-        return (await self.session.scalars(select(ConfigRevision).where(ConfigRevision.kind == kind, ConfigRevision.config_id == config_id).order_by(desc(ConfigRevision.revision)).limit(1))).first()
+        return (
+            await self.session.scalars(
+                select(ConfigRevision)
+                .where(ConfigRevision.kind == kind, ConfigRevision.config_id == config_id)
+                .order_by(desc(ConfigRevision.revision))
+                .limit(1)
+            )
+        ).first()
 
     async def get_config(self, kind: str, config_id: str, revision: int) -> ConfigRevision | None:
         """Return an exact pinned revision asynchronously."""
@@ -310,7 +338,13 @@ class AsyncRunRepository:
 
     async def list_latest_configs(self, kind: str) -> list[ConfigRevision]:
         """Return newest revisions asynchronously."""
-        rows = (await self.session.scalars(select(ConfigRevision).where(ConfigRevision.kind == kind).order_by(ConfigRevision.config_id, desc(ConfigRevision.revision)))).all()
+        rows = (
+            await self.session.scalars(
+                select(ConfigRevision)
+                .where(ConfigRevision.kind == kind)
+                .order_by(ConfigRevision.config_id, desc(ConfigRevision.revision))
+            )
+        ).all()
         latest: dict[str, ConfigRevision] = {}
         for row in rows:
             latest.setdefault(row.config_id, row)
@@ -341,7 +375,9 @@ class AsyncRunRepository:
         """Validate and append a revision asynchronously."""
         validated = validate_config(kind, config_id, payload)
         if isinstance(validated.model, SourceConfig) and self.session.get_bind().dialect.name == "postgresql":
-            await self.session.execute(text("SELECT pg_advisory_xact_lock(hashtext('runbook-source-config-ownership'))"))
+            await self.session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext('runbook-source-config-ownership'))")
+            )
         current = await self.latest_config(kind, config_id)
         if expected_revision is not None and (current is None or current.revision != expected_revision):
             raise ConflictError("configuration revision is stale")
@@ -403,7 +439,16 @@ class AsyncRunRepository:
         """List active rows separately from unbounded active status counts."""
         if limit < 1 or limit > 500:
             raise ValueError("limit must be between 1 and 500")
-        return list((await self.session.scalars(select(Run).where(Run.status.in_(["queued", "running"])).order_by(desc(Run.requested_at)).limit(limit))).all())
+        return list(
+            (
+                await self.session.scalars(
+                    select(Run)
+                    .where(Run.status.in_(["queued", "running"]))
+                    .order_by(desc(Run.requested_at))
+                    .limit(limit)
+                )
+            ).all()
+        )
 
     async def list_attention_runs(self, since: datetime, limit: int = 20) -> list[Run]:
         """List recent failed/waiting/not-ready rows within the given window."""

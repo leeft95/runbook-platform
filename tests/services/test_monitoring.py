@@ -249,7 +249,12 @@ def test_source_worker_returns_only_compact_serializable_result(monkeypatch, tmp
         slot.isoformat(),
         f"file:{tmp_path / 'store'}",
         {"prices": slot.isoformat()},
-        {"prices": {name: value.isoformat() if isinstance(value, datetime) else value for name, value in previous.__dict__.items()}},
+        {
+            "prices": {
+                name: value.isoformat() if isinstance(value, datetime) else value
+                for name, value in previous.__dict__.items()
+            }
+        },
         {
             "run_id": "run-1",
             "kind": "source",
@@ -311,7 +316,9 @@ def test_corrupt_source_manifest_gets_parent_failure_log(tmp_path: Path) -> None
                 force=False,
                 config=config,
             )
-        outcomes = ServiceRunner(data_store=f"file:{tmp_path / 'store'}")._run_dag(session, repository, [row], [], {}, code_version="test")
+        outcomes = ServiceRunner(data_store=f"file:{tmp_path / 'store'}")._run_dag(
+            session, repository, [row], [], {}, code_version="test"
+        )
         session.commit()
         assert outcomes[0]["status"] == "failed"
         run_id = row.run_id

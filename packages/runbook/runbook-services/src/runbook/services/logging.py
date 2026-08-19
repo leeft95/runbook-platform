@@ -66,7 +66,9 @@ def _format_record(message: Any) -> tuple[bytes, bool]:
     body = str(record["message"])
     exception = record.get("exception")
     if exception is not None:
-        body += "\n" + "".join(traceback.format_exception(exception.type, exception.value, exception.traceback)).rstrip("\n")
+        body += "\n" + "".join(traceback.format_exception(exception.type, exception.value, exception.traceback)).rstrip(
+            "\n"
+        )
     return (prefix + body + "\n").encode("utf-8", errors="replace"), exception is not None
 
 
@@ -193,7 +195,8 @@ class _Capture:
         """Append a full standard traceback using reserved exception capacity."""
         payload = (
             f"{_utc_now().isoformat(timespec='milliseconds').replace('+00:00', 'Z')} level=ERROR "
-            f"pid={os.getpid()} process={current_process().name} worker failure: {exc}\n" + "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            f"pid={os.getpid()} process={current_process().name} worker failure: {exc}\n"
+            + "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         ).encode("utf-8", errors="replace")
         self.add(payload, exception=True)
 

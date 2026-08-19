@@ -127,5 +127,7 @@ def register(dash_app: Any, sessions: Any) -> None:
     async def refresh(_interval: int, kind: str | None, status: str | None, target_id: str | None):
         """Refresh the recent-runs grid and summary."""
         async with sessions() as session:
-            rows = await AsyncRunRepository(session).list_runs(kind=kind, status=status, target_id=target_id or None, limit=100)
+            rows = await AsyncRunRepository(session).list_runs(
+                kind=kind, status=status, target_id=target_id or None, limit=100
+            )
         return [_run_row(row) for row in rows], f"{len(rows)} recent runs"

@@ -13,7 +13,6 @@ from dash import ClientsideFunction, Input, Output, State, ctx, dcc, html, no_up
 from ..config import validate_config
 from ..repository import AsyncRunRepository
 
-
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _EVERY_N_HOURS_RE = re.compile(r"^(\d+)\s+\*/(\d+)\s+\*\s+\*\s+\*$")
 DEFAULT_SCHEDULE = {"cron": "0 0 * * *", "timezone": "UTC"}
@@ -69,26 +68,87 @@ def _profile_new_row() -> dict[str, Any]:
 
 
 SOURCE_COLUMNS = [
-    {"field": "config_id", "headerName": "Source ID", "editable": {"function": "params.data._new === true"}, "minWidth": 190, "pinned": "left"},
+    {
+        "field": "config_id",
+        "headerName": "Source ID",
+        "editable": {"function": "params.data._new === true"},
+        "minWidth": 190,
+        "pinned": "left",
+    },
     {"field": "enabled", "headerName": "Enabled", "editable": True, "cellEditor": "agCheckboxCellEditor", "width": 105},
-    {"field": "adapter", "headerName": "Adapter", "editable": True, "cellEditor": "agSelectCellEditor", "cellEditorParams": {"values": ["bloomberg", "http", "local_file"]}, "minWidth": 150},
-    {"field": "schedule", "headerName": "Schedule", "editable": False, "valueFormatter": {"function": "scheduleSummary(params.value)"}, "minWidth": 190},
-    {"field": "datasets", "headerName": "Datasets", "editable": False, "valueFormatter": {"function": "mappingSummary(params.value)"}, "minWidth": 140},
-    {"field": "params", "headerName": "Params", "editable": False, "valueFormatter": {"function": "jsonSummary(params.value)"}, "minWidth": 120},
+    {
+        "field": "adapter",
+        "headerName": "Adapter",
+        "editable": True,
+        "cellEditor": "agSelectCellEditor",
+        "cellEditorParams": {"values": ["bloomberg", "http", "local_file"]},
+        "minWidth": 150,
+    },
+    {
+        "field": "schedule",
+        "headerName": "Schedule",
+        "editable": False,
+        "valueFormatter": {"function": "scheduleSummary(params.value)"},
+        "minWidth": 190,
+    },
+    {
+        "field": "datasets",
+        "headerName": "Datasets",
+        "editable": False,
+        "valueFormatter": {"function": "mappingSummary(params.value)"},
+        "minWidth": 140,
+    },
+    {
+        "field": "params",
+        "headerName": "Params",
+        "editable": False,
+        "valueFormatter": {"function": "jsonSummary(params.value)"},
+        "minWidth": 120,
+    },
     {"field": "revision", "headerName": "Rev", "editable": False, "width": 85},
     {"field": "_status", "headerName": "Status", "editable": False, "width": 110},
     {"field": "created_at", "headerName": "Created", "editable": False, "minWidth": 185},
 ]
 
 PROFILE_COLUMNS = [
-    {"field": "config_id", "headerName": "Profile ID", "editable": {"function": "params.data._new === true"}, "minWidth": 190, "pinned": "left"},
+    {
+        "field": "config_id",
+        "headerName": "Profile ID",
+        "editable": {"function": "params.data._new === true"},
+        "minWidth": 190,
+        "pinned": "left",
+    },
     {"field": "enabled", "headerName": "Enabled", "editable": True, "cellEditor": "agCheckboxCellEditor", "width": 105},
     {"field": "report_id", "headerName": "Report ID", "editable": True, "minWidth": 180},
     {"field": "title", "headerName": "Title", "editable": True, "minWidth": 220},
-    {"field": "datasets", "headerName": "Datasets", "editable": False, "valueFormatter": {"function": "mappingSummary(params.value)"}, "minWidth": 140},
-    {"field": "params", "headerName": "Params", "editable": False, "valueFormatter": {"function": "jsonSummary(params.value)"}, "minWidth": 120},
-    {"field": "layout", "headerName": "Layout", "editable": False, "valueFormatter": {"function": "jsonSummary(params.value)"}, "minWidth": 120},
-    {"field": "extensions", "headerName": "Extensions", "editable": False, "valueFormatter": {"function": "jsonSummary(params.value)"}, "minWidth": 130},
+    {
+        "field": "datasets",
+        "headerName": "Datasets",
+        "editable": False,
+        "valueFormatter": {"function": "mappingSummary(params.value)"},
+        "minWidth": 140,
+    },
+    {
+        "field": "params",
+        "headerName": "Params",
+        "editable": False,
+        "valueFormatter": {"function": "jsonSummary(params.value)"},
+        "minWidth": 120,
+    },
+    {
+        "field": "layout",
+        "headerName": "Layout",
+        "editable": False,
+        "valueFormatter": {"function": "jsonSummary(params.value)"},
+        "minWidth": 120,
+    },
+    {
+        "field": "extensions",
+        "headerName": "Extensions",
+        "editable": False,
+        "valueFormatter": {"function": "jsonSummary(params.value)"},
+        "minWidth": 130,
+    },
     {"field": "revision", "headerName": "Rev", "editable": False, "width": 85},
     {"field": "_status", "headerName": "Status", "editable": False, "width": 110},
     {"field": "created_at", "headerName": "Created", "editable": False, "minWidth": 185},
@@ -169,7 +229,16 @@ def _cron_form_values(schedule: dict[str, Any] | None) -> dict[str, Any]:
     """Build the cron schedule from the string schedule"""
     schedule = schedule or {}
     cron = str(schedule.get("cron") or DEFAULT_SCHEDULE["cron"]).strip()
-    values = {"mode": "custom", "minute": 0, "hour": 0, "interval": 6, "dow": "1", "dom": 1, "custom": cron, "timezone": str(schedule.get("timezone") or "UTC")}
+    values = {
+        "mode": "custom",
+        "minute": 0,
+        "hour": 0,
+        "interval": 6,
+        "dow": "1",
+        "dom": 1,
+        "custom": cron,
+        "timezone": str(schedule.get("timezone") or "UTC"),
+    }
     match = _EVERY_N_HOURS_RE.match(cron)
     if match:
         minute, interval = match.groups()
@@ -195,7 +264,15 @@ def _cron_form_values(schedule: dict[str, Any] | None) -> dict[str, Any]:
     return values
 
 
-def _build_cron(mode: str | None, minute: int | None, hour: int | None, interval: int | None, dow: str | None, dom: int | None, custom: str | None) -> str:
+def _build_cron(
+    mode: str | None,
+    minute: int | None,
+    hour: int | None,
+    interval: int | None,
+    dow: str | None,
+    dom: int | None,
+    custom: str | None,
+) -> str:
     """Builds the cron from the inputs to be validated then saved"""
     mode = mode or "daily"
     minute = 0 if minute is None else int(minute)
@@ -213,12 +290,18 @@ def _build_cron(mode: str | None, minute: int | None, hour: int | None, interval
         raise ValueError("day of week must be 0..6")
     if not 1 <= dom <= 31:
         raise ValueError("day of month must be 1..31")
-    if mode == "hourly": return f"{minute} * * * *"
-    if mode == "every_n_hours": return f"{minute} */{interval} * * *"
-    if mode == "daily": return f"{minute} {hour} * * *"
-    if mode == "weekdays": return f"{minute} {hour} * * 1-5"
-    if mode == "weekly": return f"{minute} {hour} * * {dow}"
-    if mode == "monthly": return f"{minute} {hour} {dom} * *"
+    if mode == "hourly":
+        return f"{minute} * * * *"
+    if mode == "every_n_hours":
+        return f"{minute} */{interval} * * *"
+    if mode == "daily":
+        return f"{minute} {hour} * * *"
+    if mode == "weekdays":
+        return f"{minute} {hour} * * 1-5"
+    if mode == "weekly":
+        return f"{minute} {hour} * * {dow}"
+    if mode == "monthly":
+        return f"{minute} {hour} {dom} * *"
     if mode == "custom":
         cron = str(custom or "").strip()
         if len(cron.split()) != 5:
@@ -229,7 +312,17 @@ def _build_cron(mode: str | None, minute: int | None, hour: int | None, interval
 
 def _source_dataset_rows(datasets: dict[str, Any] | None) -> list[dict[str, Any]]:
     """build row for the source dataset mapping"""
-    return [{"alias": alias, "dataset_id": spec.get("dataset_id", ""), "schema_version": spec.get("schema_version", "v1"), "parser_id": spec.get("parser_id", ""), "update_mode": spec.get("update_mode", "append"), "partition_keys": ",".join(spec.get("partition_keys") or [])} for alias, spec in (datasets or {}).items()]
+    return [
+        {
+            "alias": alias,
+            "dataset_id": spec.get("dataset_id", ""),
+            "schema_version": spec.get("schema_version", "v1"),
+            "parser_id": spec.get("parser_id", ""),
+            "update_mode": spec.get("update_mode", "append"),
+            "partition_keys": ",".join(spec.get("partition_keys") or []),
+        }
+        for alias, spec in (datasets or {}).items()
+    ]
 
 
 def _profile_dataset_rows(datasets: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -263,7 +356,9 @@ def _datasets_from_editor(kind: str, rows: list[dict[str, Any]] | None) -> dict[
                 "schema_version": str(row.get("schema_version") or "v1"),
                 "parser_id": parser_id,
                 "update_mode": update_mode,
-                "partition_keys": [item.strip() for item in str(row.get("partition_keys") or "").split(",") if item.strip()],
+                "partition_keys": [
+                    item.strip() for item in str(row.get("partition_keys") or "").split(",") if item.strip()
+                ],
             }
     return result
 
@@ -275,7 +370,14 @@ def _source_dataset_columns() -> list[dict[str, Any]]:
         {"field": "dataset_id", "headerName": "Dataset ID", "editable": True, "minWidth": 220},
         {"field": "schema_version", "headerName": "Schema", "editable": True, "width": 110},
         {"field": "parser_id", "headerName": "Parser ID", "editable": True, "minWidth": 180},
-        {"field": "update_mode", "headerName": "Update", "editable": True, "cellEditor": "agSelectCellEditor", "cellEditorParams": {"values": ["append", "full"]}, "width": 120},
+        {
+            "field": "update_mode",
+            "headerName": "Update",
+            "editable": True,
+            "cellEditor": "agSelectCellEditor",
+            "cellEditorParams": {"values": ["append", "full"]},
+            "width": 120,
+        },
         {"field": "partition_keys", "headerName": "Partition keys", "editable": True, "minWidth": 180},
     ]
 
@@ -295,7 +397,12 @@ def _main_grid(prefix: str, spec: ConfigGridSpec) -> dag.AgGrid:
         rowData=[],
         columnDefs=spec.columns,
         defaultColDef={"resizable": True, "sortable": True, "filter": True},
-        dashGridOptions={"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True, "rowSelection": "single", "getRowId": {"function": "params.data._row_key"}},
+        dashGridOptions={
+            "singleClickEdit": True,
+            "stopEditingWhenCellsLoseFocus": True,
+            "rowSelection": "single",
+            "getRowId": {"function": "params.data._row_key"},
+        },
         style={"height": "560px", "width": "100%"},
     )
 
@@ -305,58 +412,249 @@ def _editor_modal(prefix: str) -> html.Div:
     return html.Div(
         id=f"{prefix}-editor-modal",
         style={"display": "none"},
-        children=[html.Div([
-            html.Div([html.H3(id=f"{prefix}-editor-title", style={"margin": 0}), html.Button("×", id=f"{prefix}-editor-close", n_clicks=0)], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"}),
-            html.Hr(),
-            html.Div(id=f"{prefix}-schedule-section", style={"display": "none"}, children=[
-                dcc.Dropdown(id=f"{prefix}-schedule-mode", options=[{"label": x.replace("_", " ").title(), "value": x} for x in ["hourly", "every_n_hours", "daily", "weekdays", "weekly", "monthly", "custom"]], clearable=False),
-                html.Div([
-                    html.Div([html.Label("Minute"), dcc.Input(id=f"{prefix}-schedule-minute", type="number", min=0, max=59, style={"width": "100%"})]),
-                    html.Div([html.Label("Hour"), dcc.Input(id=f"{prefix}-schedule-hour", type="number", min=0, max=23, style={"width": "100%"})]),
-                    html.Div([html.Label("Every N hours"), dcc.Input(id=f"{prefix}-schedule-interval", type="number", min=1, max=23, style={"width": "100%"})]),
-                    html.Div([html.Label("Day of week"), dcc.Dropdown(id=f"{prefix}-schedule-dow", options=[{"label": n, "value": str(i)} for i, n in enumerate(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])], clearable=False)]),
-                    html.Div([html.Label("Day of month"), dcc.Input(id=f"{prefix}-schedule-dom", type="number", min=1, max=31, style={"width": "100%"})]),
-                    html.Div([html.Label("Timezone"), dcc.Dropdown(id=f"{prefix}-schedule-timezone", options=[{"label": x, "value": x} for x in ["UTC", "Europe/London", "America/New_York", "Asia/Dubai"]], clearable=False)]),
-                ], style={"display": "grid", "gridTemplateColumns": "repeat(2, minmax(0, 1fr))", "gap": "12px", "marginTop": "12px"}),
-                html.Div([html.Label("Custom cron"), dcc.Input(id=f"{prefix}-schedule-custom", style={"width": "100%"})], style={"marginTop": "12px"}),
-                html.Div(id=f"{prefix}-schedule-preview", style={"marginTop": "12px", "padding": "10px", "border": "1px solid #ddd", "borderRadius": "6px"}),
-            ]),
-            html.Div(id=f"{prefix}-datasets-section", style={"display": "none"}, children=[
-                dag.AgGrid(id=f"{prefix}-datasets-grid", rowData=[], columnDefs=[], defaultColDef={"resizable": True}, dashGridOptions={"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True, "rowSelection": "single"}, style={"height": "320px", "width": "100%"}),
-                html.Div([html.Button("+ Add mapping", id=f"{prefix}-datasets-add", n_clicks=0), html.Button("Remove selected", id=f"{prefix}-datasets-remove", n_clicks=0)], style={"display": "flex", "gap": "8px", "marginTop": "10px"}),
-            ]),
-            html.Div(id=f"{prefix}-json-section", style={"display": "none"}, children=[dcc.Textarea(id=f"{prefix}-json-editor", style={"width": "100%", "height": "320px", "fontFamily": "monospace"})]),
-            html.Div(id=f"{prefix}-editor-error", style={"marginTop": "10px", "minHeight": "24px"}),
-            html.Div([html.Button("Cancel", id=f"{prefix}-editor-cancel", n_clicks=0), html.Button("Apply", id=f"{prefix}-editor-apply", n_clicks=0)], style={"display": "flex", "justifyContent": "flex-end", "gap": "8px", "marginTop": "16px"}),
-        ], style={"width": "min(900px, 96vw)", "maxHeight": "88vh", "overflowY": "auto", "background": "white", "borderRadius": "10px", "padding": "18px", "boxShadow": "0 14px 40px rgba(0,0,0,.22)"})],
+        children=[
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.H3(id=f"{prefix}-editor-title", style={"margin": 0}),
+                            html.Button("×", id=f"{prefix}-editor-close", n_clicks=0),
+                        ],
+                        style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"},
+                    ),
+                    html.Hr(),
+                    html.Div(
+                        id=f"{prefix}-schedule-section",
+                        style={"display": "none"},
+                        children=[
+                            dcc.Dropdown(
+                                id=f"{prefix}-schedule-mode",
+                                options=[
+                                    {"label": x.replace("_", " ").title(), "value": x}
+                                    for x in [
+                                        "hourly",
+                                        "every_n_hours",
+                                        "daily",
+                                        "weekdays",
+                                        "weekly",
+                                        "monthly",
+                                        "custom",
+                                    ]
+                                ],
+                                clearable=False,
+                            ),
+                            html.Div(
+                                [
+                                    html.Div(
+                                        [
+                                            html.Label("Minute"),
+                                            dcc.Input(
+                                                id=f"{prefix}-schedule-minute",
+                                                type="number",
+                                                min=0,
+                                                max=59,
+                                                style={"width": "100%"},
+                                            ),
+                                        ]
+                                    ),
+                                    html.Div(
+                                        [
+                                            html.Label("Hour"),
+                                            dcc.Input(
+                                                id=f"{prefix}-schedule-hour",
+                                                type="number",
+                                                min=0,
+                                                max=23,
+                                                style={"width": "100%"},
+                                            ),
+                                        ]
+                                    ),
+                                    html.Div(
+                                        [
+                                            html.Label("Every N hours"),
+                                            dcc.Input(
+                                                id=f"{prefix}-schedule-interval",
+                                                type="number",
+                                                min=1,
+                                                max=23,
+                                                style={"width": "100%"},
+                                            ),
+                                        ]
+                                    ),
+                                    html.Div(
+                                        [
+                                            html.Label("Day of week"),
+                                            dcc.Dropdown(
+                                                id=f"{prefix}-schedule-dow",
+                                                options=[
+                                                    {"label": n, "value": str(i)}
+                                                    for i, n in enumerate(
+                                                        [
+                                                            "Sunday",
+                                                            "Monday",
+                                                            "Tuesday",
+                                                            "Wednesday",
+                                                            "Thursday",
+                                                            "Friday",
+                                                            "Saturday",
+                                                        ]
+                                                    )
+                                                ],
+                                                clearable=False,
+                                            ),
+                                        ]
+                                    ),
+                                    html.Div(
+                                        [
+                                            html.Label("Day of month"),
+                                            dcc.Input(
+                                                id=f"{prefix}-schedule-dom",
+                                                type="number",
+                                                min=1,
+                                                max=31,
+                                                style={"width": "100%"},
+                                            ),
+                                        ]
+                                    ),
+                                    html.Div(
+                                        [
+                                            html.Label("Timezone"),
+                                            dcc.Dropdown(
+                                                id=f"{prefix}-schedule-timezone",
+                                                options=[
+                                                    {"label": x, "value": x}
+                                                    for x in ["UTC", "Europe/London", "America/New_York", "Asia/Dubai"]
+                                                ],
+                                                clearable=False,
+                                            ),
+                                        ]
+                                    ),
+                                ],
+                                style={
+                                    "display": "grid",
+                                    "gridTemplateColumns": "repeat(2, minmax(0, 1fr))",
+                                    "gap": "12px",
+                                    "marginTop": "12px",
+                                },
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Custom cron"),
+                                    dcc.Input(id=f"{prefix}-schedule-custom", style={"width": "100%"}),
+                                ],
+                                style={"marginTop": "12px"},
+                            ),
+                            html.Div(
+                                id=f"{prefix}-schedule-preview",
+                                style={
+                                    "marginTop": "12px",
+                                    "padding": "10px",
+                                    "border": "1px solid #ddd",
+                                    "borderRadius": "6px",
+                                },
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        id=f"{prefix}-datasets-section",
+                        style={"display": "none"},
+                        children=[
+                            dag.AgGrid(
+                                id=f"{prefix}-datasets-grid",
+                                rowData=[],
+                                columnDefs=[],
+                                defaultColDef={"resizable": True},
+                                dashGridOptions={
+                                    "singleClickEdit": True,
+                                    "stopEditingWhenCellsLoseFocus": True,
+                                    "rowSelection": "single",
+                                },
+                                style={"height": "320px", "width": "100%"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Button("+ Add mapping", id=f"{prefix}-datasets-add", n_clicks=0),
+                                    html.Button("Remove selected", id=f"{prefix}-datasets-remove", n_clicks=0),
+                                ],
+                                style={"display": "flex", "gap": "8px", "marginTop": "10px"},
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        id=f"{prefix}-json-section",
+                        style={"display": "none"},
+                        children=[
+                            dcc.Textarea(
+                                id=f"{prefix}-json-editor",
+                                style={"width": "100%", "height": "320px", "fontFamily": "monospace"},
+                            )
+                        ],
+                    ),
+                    html.Div(id=f"{prefix}-editor-error", style={"marginTop": "10px", "minHeight": "24px"}),
+                    html.Div(
+                        [
+                            html.Button("Cancel", id=f"{prefix}-editor-cancel", n_clicks=0),
+                            html.Button("Apply", id=f"{prefix}-editor-apply", n_clicks=0),
+                        ],
+                        style={"display": "flex", "justifyContent": "flex-end", "gap": "8px", "marginTop": "16px"},
+                    ),
+                ],
+                style={
+                    "width": "min(900px, 96vw)",
+                    "maxHeight": "88vh",
+                    "overflowY": "auto",
+                    "background": "white",
+                    "borderRadius": "10px",
+                    "padding": "18px",
+                    "boxShadow": "0 14px 40px rgba(0,0,0,.22)",
+                },
+            )
+        ],
     )
 
 
 def _page_layout(prefix: str, spec: ConfigGridSpec) -> html.Div:
     """Main page layout"""
-    return html.Div([
-        dcc.Store(id=f"{prefix}-editor-context"),
-        html.H2(spec.title),
-        html.Div([
-            html.Button(f"+ New {spec.kind}", id=f"{prefix}-new", n_clicks=0),
-            html.Button("Validate", id=f"{prefix}-validate", n_clicks=0),
-            html.Button("Save", id=f"{prefix}-save", n_clicks=0),
-            html.Button("Run selected", id=f"{prefix}-run", n_clicks=0),
-            html.Button("Disable", id=f"{prefix}-disable", n_clicks=0),
-            html.Button("Refresh", id=f"{prefix}-refresh", n_clicks=0),
-        ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "12px"}),
-        html.Div("Edit scalar cells directly. Click Schedule, Datasets, Params, Layout or Extensions to open an editor.", style={"marginBottom": "10px", "opacity": 0.75}),
-        _main_grid(prefix, spec),
-        html.Div(id=f"{prefix}-result", style={"marginTop": "12px", "minHeight": "28px"}),
-        _editor_modal(prefix),
-    ])
+    return html.Div(
+        [
+            dcc.Store(id=f"{prefix}-editor-context"),
+            html.H2(spec.title),
+            html.Div(
+                [
+                    html.Button(f"+ New {spec.kind}", id=f"{prefix}-new", n_clicks=0),
+                    html.Button("Validate", id=f"{prefix}-validate", n_clicks=0),
+                    html.Button("Save", id=f"{prefix}-save", n_clicks=0),
+                    html.Button("Run selected", id=f"{prefix}-run", n_clicks=0),
+                    html.Button("Disable", id=f"{prefix}-disable", n_clicks=0),
+                    html.Button("Refresh", id=f"{prefix}-refresh", n_clicks=0),
+                ],
+                style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "12px"},
+            ),
+            html.Div(
+                "Edit scalar cells directly. Click Schedule, Datasets, Params, Layout or Extensions to open an editor.",
+                style={"marginBottom": "10px", "opacity": 0.75},
+            ),
+            _main_grid(prefix, spec),
+            html.Div(id=f"{prefix}-result", style={"marginTop": "12px", "minHeight": "28px"}),
+            _editor_modal(prefix),
+        ]
+    )
 
 
 def _modal_style(open_: bool) -> dict[str, Any]:
     """sets the modal styling depending on if the modal is opened"""
     if not open_:
         return {"display": "none"}
-    return {"display": "flex", "position": "fixed", "inset": "0", "zIndex": 2000, "background": "rgba(0, 0, 0, 0.38)", "alignItems": "center", "justifyContent": "center", "padding": "24px"}
+    return {
+        "display": "flex",
+        "position": "fixed",
+        "inset": "0",
+        "zIndex": 2000,
+        "background": "rgba(0, 0, 0, 0.38)",
+        "alignItems": "center",
+        "justifyContent": "center",
+        "padding": "24px",
+    }
 
 
 async def _latest_grid_rows(sessions: Any, kind: str) -> list[dict[str, Any]]:
@@ -366,7 +664,9 @@ async def _latest_grid_rows(sessions: Any, kind: str) -> list[dict[str, Any]]:
     return [_grid_row(row, kind) for row in rows]
 
 
-def _current_selected_row(row_data: list[dict[str, Any]] | None, selected_rows: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+def _current_selected_row(
+    row_data: list[dict[str, Any]] | None, selected_rows: list[dict[str, Any]] | None
+) -> dict[str, Any] | None:
     """Determines what row is selected from the list of selected rows"""
     if not selected_rows:
         return None
@@ -374,7 +674,9 @@ def _current_selected_row(row_data: list[dict[str, Any]] | None, selected_rows: 
     return next((row for row in row_data or [] if row.get("_row_key") == key), selected_rows[0])
 
 
-def register_config_page(dash_app: Any, sessions: Any, *, module: str, kind: str, path: str, name: str, order: int) -> None:
+def register_config_page(
+    dash_app: Any, sessions: Any, *, module: str, kind: str, path: str, name: str, order: int
+) -> None:
     """Register a generic database-backed config grid. Existing sources.py/profiles.py work unchanged."""
     spec = _spec(kind, name)
     prefix = f"runbook-ui-{kind}s"
@@ -417,7 +719,11 @@ def register_config_page(dash_app: Any, sessions: Any, *, module: str, kind: str
             try:
                 config_id, payload = _payload_from_row(kind, selected)
                 validate_config(kind, config_id, payload)
-                expected_revision = selected.get("revision") if selected.get("_original_config_id") == config_id and not selected.get("_new") else None
+                expected_revision = (
+                    selected.get("revision")
+                    if selected.get("_original_config_id") == config_id and not selected.get("_new")
+                    else None
+                )
                 async with sessions() as session:
                     repository = AsyncRunRepository(session)
                     async with session.begin():
@@ -432,11 +738,7 @@ def register_config_page(dash_app: Any, sessions: Any, *, module: str, kind: str
             if selected is None:
                 return no_update, "Select a row first."
             if selected.get("_new"):
-                rows = [
-                    row
-                    for row in (row_data or [])
-                    if row.get("_row_key") != selected.get("_row_key")
-                ]
+                rows = [row for row in (row_data or []) if row.get("_row_key") != selected.get("_row_key")]
                 return rows, f"Removed unsaved {kind} draft."
             try:
                 config_id, payload = _payload_from_row(kind, selected)
@@ -469,7 +771,14 @@ def register_config_page(dash_app: Any, sessions: Any, *, module: str, kind: str
                         config = await repository.latest_config(kind, config_id)
                         if config is None:
                             raise ValueError("configuration no longer exists")
-                        run = await repository.queue_run(kind=kind, target_id=config_id, slot=datetime.now(timezone.utc).replace(second=0, microsecond=0), trigger="manual", force=False, config=config)
+                        run = await repository.queue_run(
+                            kind=kind,
+                            target_id=config_id,
+                            slot=datetime.now(timezone.utc).replace(second=0, microsecond=0),
+                            trigger="manual",
+                            force=False,
+                            config=config,
+                        )
                 return no_update, f"Queued {run.run_id}."
             except Exception as exc:
                 return no_update, f"Run failed: {exc}"
@@ -513,18 +822,44 @@ def register_config_page(dash_app: Any, sessions: Any, *, module: str, kind: str
         cron = _cron_form_values(row.get("schedule"))
         if field == "datasets":
             columns = _source_dataset_columns() if kind == "source" else _profile_dataset_columns()
-            dataset_rows = _source_dataset_rows(row.get("datasets")) if kind == "source" else _profile_dataset_rows(row.get("datasets"))
+            dataset_rows = (
+                _source_dataset_rows(row.get("datasets"))
+                if kind == "source"
+                else _profile_dataset_rows(row.get("datasets"))
+            )
         else:
             columns, dataset_rows = [], []
-        json_value = json.dumps(row.get(field) or {}, indent=2, sort_keys=True) if field in {"params", "layout", "extensions"} else "{}"
-        titles = {"schedule": "Edit schedule", "datasets": "Edit dataset mappings", "params": "Edit params", "layout": "Edit layout", "extensions": "Edit extensions"}
+        json_value = (
+            json.dumps(row.get(field) or {}, indent=2, sort_keys=True)
+            if field in {"params", "layout", "extensions"}
+            else "{}"
+        )
+        titles = {
+            "schedule": "Edit schedule",
+            "datasets": "Edit dataset mappings",
+            "params": "Edit params",
+            "layout": "Edit layout",
+            "extensions": "Edit extensions",
+        }
         return (
-            context, _modal_style(True), titles[field],
+            context,
+            _modal_style(True),
+            titles[field],
             {"display": "block"} if field == "schedule" else {"display": "none"},
             {"display": "block"} if field == "datasets" else {"display": "none"},
             {"display": "block"} if field in {"params", "layout", "extensions"} else {"display": "none"},
-            cron["mode"], cron["minute"], cron["hour"], cron["interval"], cron["dow"], cron["dom"], cron["custom"], cron["timezone"],
-            columns, dataset_rows, json_value, "",
+            cron["mode"],
+            cron["minute"],
+            cron["hour"],
+            cron["interval"],
+            cron["dow"],
+            cron["dom"],
+            cron["custom"],
+            cron["timezone"],
+            columns,
+            dataset_rows,
+            json_value,
+            "",
         )
 
     dash_app.clientside_callback(
@@ -542,15 +877,29 @@ def register_config_page(dash_app: Any, sessions: Any, *, module: str, kind: str
 
     @dash_app.callback(
         Output(f"{prefix}-datasets-grid", "rowData", allow_duplicate=True),
-        Input(f"{prefix}-datasets-add", "n_clicks"), Input(f"{prefix}-datasets-remove", "n_clicks"),
-        State(f"{prefix}-datasets-grid", "rowData"), State(f"{prefix}-datasets-grid", "selectedRows"), State(f"{prefix}-editor-context", "data"),
+        Input(f"{prefix}-datasets-add", "n_clicks"),
+        Input(f"{prefix}-datasets-remove", "n_clicks"),
+        State(f"{prefix}-datasets-grid", "rowData"),
+        State(f"{prefix}-datasets-grid", "selectedRows"),
+        State(f"{prefix}-editor-context", "data"),
         prevent_initial_call=True,
     )
     def edit_dataset_mappings(_add, _remove, rows, selected, editor_context):
         """Updates the state of the dataset mappings for the modal"""
         rows = list(rows or [])
         if ctx.triggered_id == f"{prefix}-datasets-add":
-            rows.append({"alias": "", "dataset_id": "", "schema_version": "v1", "parser_id": "", "update_mode": "append", "partition_keys": ""} if (editor_context or {}).get("kind") == "source" else {"alias": "", "dataset_id": ""})
+            rows.append(
+                {
+                    "alias": "",
+                    "dataset_id": "",
+                    "schema_version": "v1",
+                    "parser_id": "",
+                    "update_mode": "append",
+                    "partition_keys": "",
+                }
+                if (editor_context or {}).get("kind") == "source"
+                else {"alias": "", "dataset_id": ""}
+            )
             return rows
         if ctx.triggered_id == f"{prefix}-datasets-remove" and selected:
             target = selected[0]
@@ -568,13 +917,40 @@ def register_config_page(dash_app: Any, sessions: Any, *, module: str, kind: str
         Output(f"{prefix}-editor-modal", "style", allow_duplicate=True),
         Output(f"{prefix}-grid", "rowData", allow_duplicate=True),
         Output(f"{prefix}-editor-error", "children", allow_duplicate=True),
-        Input(f"{prefix}-editor-apply", "n_clicks"), Input(f"{prefix}-editor-cancel", "n_clicks"), Input(f"{prefix}-editor-close", "n_clicks"),
-        State(f"{prefix}-editor-context", "data"), State(f"{prefix}-grid", "rowData"),
-        State(f"{prefix}-schedule-mode", "value"), State(f"{prefix}-schedule-minute", "value"), State(f"{prefix}-schedule-hour", "value"), State(f"{prefix}-schedule-interval", "value"), State(f"{prefix}-schedule-dow", "value"), State(f"{prefix}-schedule-dom", "value"), State(f"{prefix}-schedule-custom", "value"), State(f"{prefix}-schedule-timezone", "value"),
-        State(f"{prefix}-datasets-grid", "rowData"), State(f"{prefix}-json-editor", "value"),
+        Input(f"{prefix}-editor-apply", "n_clicks"),
+        Input(f"{prefix}-editor-cancel", "n_clicks"),
+        Input(f"{prefix}-editor-close", "n_clicks"),
+        State(f"{prefix}-editor-context", "data"),
+        State(f"{prefix}-grid", "rowData"),
+        State(f"{prefix}-schedule-mode", "value"),
+        State(f"{prefix}-schedule-minute", "value"),
+        State(f"{prefix}-schedule-hour", "value"),
+        State(f"{prefix}-schedule-interval", "value"),
+        State(f"{prefix}-schedule-dow", "value"),
+        State(f"{prefix}-schedule-dom", "value"),
+        State(f"{prefix}-schedule-custom", "value"),
+        State(f"{prefix}-schedule-timezone", "value"),
+        State(f"{prefix}-datasets-grid", "rowData"),
+        State(f"{prefix}-json-editor", "value"),
         prevent_initial_call=True,
     )
-    def apply_or_close_editor(_apply, _cancel, _close, editor_context, rows, mode, minute, hour, interval, dow, dom, custom, tz, dataset_rows, json_text):
+    def apply_or_close_editor(
+        _apply,
+        _cancel,
+        _close,
+        editor_context,
+        rows,
+        mode,
+        minute,
+        hour,
+        interval,
+        dow,
+        dom,
+        custom,
+        tz,
+        dataset_rows,
+        json_text,
+    ):
         """Save operations for the editor modal"""
         if ctx.triggered_id in {f"{prefix}-editor-cancel", f"{prefix}-editor-close"}:
             return _modal_style(False), no_update, ""
@@ -587,7 +963,10 @@ def register_config_page(dash_app: Any, sessions: Any, *, module: str, kind: str
                 raise ValueError("configuration row is no longer available")
             field = editor_context["field"]
             if field == "schedule":
-                schedule = {"cron": _build_cron(mode, minute, hour, interval, dow, dom, custom), "timezone": tz or "UTC"}
+                schedule = {
+                    "cron": _build_cron(mode, minute, hour, interval, dow, dom, custom),
+                    "timezone": tz or "UTC",
+                }
                 target["schedule"] = schedule
             elif field == "datasets":
                 datasets = _datasets_from_editor(kind, dataset_rows)

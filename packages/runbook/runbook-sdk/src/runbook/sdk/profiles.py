@@ -26,7 +26,12 @@ class ReportProfile(BaseModel):
     @classmethod
     def validate_datasets(cls, value: dict[str, str]) -> dict[str, str]:
         for alias, dataset_id in value.items():
-            if not isinstance(alias, str) or not _ID.fullmatch(alias) or not isinstance(dataset_id, str) or not _ID.fullmatch(dataset_id):
+            if (
+                not isinstance(alias, str)
+                or not _ID.fullmatch(alias)
+                or not isinstance(dataset_id, str)
+                or not _ID.fullmatch(dataset_id)
+            ):
                 raise ValueError(f"invalid dataset binding: {alias!r} -> {dataset_id!r}")
         return value
 
