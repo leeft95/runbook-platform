@@ -6,6 +6,14 @@ reconciliation started from platform commit `4df3f40` on branch
 inspected read-only and ported as coherent final states; generated files,
 private plans, and employer-specific data were not copied.
 
+## Frozen input revisions
+
+| Repository | Revision | Role |
+| --- | --- | --- |
+| `runbook-platform` | `4df3f40` | Public destination baseline |
+| `runbook-private` | `421f89a` | Private generic-work source |
+| `runbook-legacy` | `7f386f7` | Historical provenance reference |
+
 ## Reconciled changes
 
 | Platform change | Source commit(s) |
