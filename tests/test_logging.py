@@ -96,6 +96,10 @@ def test_ingest_logs_stage_order_and_local_query(tmp_path, pointer_registry) -> 
         logger.remove(token)
     output = sink.getvalue()
     assert output.index("stage=1A readiness") < output.index("stage=1B acquire") < output.index("stage=2 curate")
+    assert "stage=2 raw verified" in output
+    assert "stage=2 parsed" in output
+    assert "stage=2 writing" in output
+    assert "stage=2 wrote" in output
     assert "mode=immutable" in output
 
 

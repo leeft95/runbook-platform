@@ -990,3 +990,115 @@ def test_service_runner_orders_same_source_by_slot(monkeypatch, tmp_path) -> Non
         )
 
     assert acquired_slots == [earlier, later]
+
+
+def test_interrupt_fails_only_started_runs_before_executor_shutdown(tmp_path) -> None:
+    database = f"sqlite:///{tmp_path / 'service.db'}"
+    upgrade_with_metadata(database)
+    slot = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    class InterruptingExecutor:
+        def __init__(self) -> None:
+            self.statuses: dict[str, str] = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            # A separate connection proves the handler committed before the
+            # executor context began shutdown.
+            with sync_sessions(database)() as check_session:
+                self.statuses = {
+                    row.run_id: row.status
+                    for row in RunRepository(check_session).list_runs(limit=20)
+                }
+            return False
+
+        def submit(self, *_args, **_kwargs):
+            raise KeyboardInterrupt
+
+    executor = InterruptingExecutor()
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        with session.begin():
+            source_a = repository.save_config(
+                "source",
+                "source_a",
+                {
+                    "adapter": "local_file",
+                    "schedule": {"cron": "0 * * * *", "timezone": "UTC"},
+                    "datasets": {
+                        "data": {
+                            "dataset_id": "source_a_data",
+                            "parser_id": "csv_timeseries_v1",
+                            "update_mode": "full",
+                        }
+                    },
+                    "params": {
+                        "local_path": "unused.csv",
+                        "timestamp_column": "timestamp",
+                    },
+                },
+            )
+            source_b = repository.save_config(
+                "source",
+                "source_b",
+                {
+                    "adapter": "local_file",
+                    "schedule": {"cron": "0 * * * *", "timezone": "UTC"},
+                    "datasets": {
+                        "data": {
+                            "dataset_id": "source_b_data",
+                            "parser_id": "csv_timeseries_v1",
+                            "update_mode": "full",
+                        }
+                    },
+                    "params": {
+                        "local_path": "unused.csv",
+                        "timestamp_column": "timestamp",
+                    },
+                },
+            )
+            started = repository.queue_run(
+                kind="source",
+                target_id="source_a",
+                slot=slot,
+                trigger="manual",
+                force=False,
+                config=source_a,
+            )
+            queued = repository.queue_run(
+                kind="source",
+                target_id="source_a",
+                slot=slot + timedelta(hours=1),
+                trigger="manual",
+                force=True,
+                config=source_a,
+            )
+            unrelated = repository.queue_run(
+                kind="source",
+                target_id="source_b",
+                slot=slot,
+                trigger="manual",
+                force=False,
+                config=source_b,
+            )
+            repository.mark_running(unrelated)
+
+        runner = ServiceRunner(
+            data_store=f"file:{tmp_path / 'store'}",
+            executor_factory=lambda _workers: executor,
+        )
+        with pytest.raises(KeyboardInterrupt):
+            runner._run_dag(
+                session,
+                repository,
+                [started, queued],
+                [],
+                {"source_a_data": "source_a"},
+                code_version="test",
+            )
+
+    assert executor.statuses[started.run_id] == "failed"
+    assert executor.statuses[queued.run_id] == "queued"
+    assert executor.statuses[unrelated.run_id] == "running"

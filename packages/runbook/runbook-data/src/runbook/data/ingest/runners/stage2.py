@@ -47,9 +47,7 @@ def _validate_partition(binding: DatasetBinding, partition: dict[str, str]) -> d
     if binding.partition_keys:
         actual = tuple(partition)
         if actual != binding.partition_keys:
-            raise ValueError(
-                f"partition keys do not match configuration: expected={binding.partition_keys}, actual={actual}"
-            )
+            raise ValueError(f"partition keys do not match configuration: expected={binding.partition_keys}, actual={actual}")
     return {key: partition[key] for key in binding.partition_keys} if binding.partition_keys else dict(partition)
 
 
@@ -66,11 +64,7 @@ def _append_frame(store: BlobStore, frame: CuratedFrame, prior: DatasetFile | No
     if missing:
         raise ValueError(f"append merge keys are missing: {missing}")
     merged = pd.concat([previous, frame.frame], ignore_index=True)
-    merged = (
-        merged.drop_duplicates(list(frame.merge_keys), keep="last")
-        .sort_values(list(frame.merge_keys), kind="mergesort")
-        .reset_index(drop=True)
-    )
+    merged = merged.drop_duplicates(list(frame.merge_keys), keep="last").sort_values(list(frame.merge_keys), kind="mergesort").reset_index(drop=True)
     return CuratedFrame(frame.output_alias, merged, frame.watermark, frame.partition, frame.merge_keys)
 
 
@@ -98,8 +92,20 @@ def run_stage2_curate(
     persisted = store.get(acquired.record.artifact_ref)
     if sha256_bytes(persisted) != acquired.record.content_sha256:
         raise IOError(f"raw blob verification failed: {acquired.record.artifact_ref}")
+    logger.info(
+        "stage=2 raw verified source={} slot={} ref={}",
+        source_config.source_id,
+        acquired.record.acquisition_run,
+        acquired.record.artifact_ref,
+    )
     persisted_acquired = acquired.model_copy(update={"payload": persisted})
     frames = _curate_frames(source_config, persisted_acquired)
+    logger.info(
+        "stage=2 parsed source={} slot={} frames={}",
+        source_config.source_id,
+        acquired.record.acquisition_run,
+        len(frames),
+    )
     expected = set(source_config.datasets)
     actual = {frame.output_alias for frame in frames}
     if actual != expected:
@@ -107,13 +113,21 @@ def run_stage2_curate(
 
     pointers = dict(previous_pointers or {})
     bindings_by_dataset = {
-        binding.dataset_id: binding for binding in source_config.datasets.values()
+        binding.dataset_id: binding
+        for binding in source_config.datasets.values()
     }
     previous_manifests: dict[str, DatasetManifest] = {}
+
     for dataset_id, pointer in pointers.items():
+        logger.info(
+            "stage=2 loading previous manifest dataset={} ref={}",
+            dataset_id,
+            pointer.manifest_ref,
+        )
         binding = bindings_by_dataset.get(dataset_id)
         if binding is None:
             continue
+
         if not store.exists(pointer.manifest_ref):
             if binding.update_mode == "append":
                 raise RuntimeError(
@@ -122,6 +136,7 @@ def run_stage2_curate(
                     f"manifest_ref={pointer.manifest_ref!r} "
                     f"source_run_id={pointer.source_run_id!r}"
                 )
+
             logger.warning(
                 "ignoring missing previous manifest for full refresh "
                 "dataset={} manifest_ref={} source_run_id={}",
@@ -130,6 +145,7 @@ def run_stage2_curate(
                 pointer.source_run_id,
             )
             continue
+
         previous_manifests[dataset_id] = load_manifest(
             store,
             pointer.manifest_ref,
@@ -175,6 +191,12 @@ def run_stage2_curate(
         incoming_watermarks[dataset_id] = max(incoming_watermarks.get(dataset_id, frame.watermark), frame.watermark)
 
     for frame, binding, dataset_id, prior, partition, previous in normalized_frames:
+        logger.info(
+            "stage=2 writing dataset={} partition={} rows={}",
+            dataset_id,
+            partition,
+            len(frame.frame),
+        )
         file_ref, file_sha = write_dataframe(
             store,
             dataset_id,
@@ -182,6 +204,12 @@ def run_stage2_curate(
             partition=partition,
             schema_version=binding.schema_version,
             previous=prior,
+        )
+        logger.info(
+            "stage=2 wrote dataset={} partition={} ref={}",
+            dataset_id,
+            partition,
+            file_ref,
         )
         if dataset_id not in initialized_datasets:
             # Full refreshes replace the dataset; append runs retain prior
@@ -208,7 +236,7 @@ def run_stage2_curate(
 
     prepared: list[tuple[DatasetManifest, str]] = []
     result: dict[str, str] = {}
-    for dataset_id, dataset_frames in frame_by_dataset.items():
+    for dataset_id in frame_by_dataset:
         previous = previous_manifests.get(dataset_id)
         watermark = max(
             incoming_watermarks[dataset_id],

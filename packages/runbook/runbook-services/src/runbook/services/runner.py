@@ -361,7 +361,10 @@ class ServiceRunner:
         profile_roots: list[Run] = []
         terminal: list[tuple[datetime, str, dict[str, Any]]] = []
 
-        def row_identity(row: Run, model: ReportProfile | None = None) -> RunLogIdentity:
+        def row_identity(
+            row: Run,
+            model: ReportProfile | None = None,
+        ) -> RunLogIdentity:
             return RunLogIdentity(
                 run_id=row.run_id,
                 kind=row.kind,
@@ -370,36 +373,84 @@ class ServiceRunner:
                 report_id=model.report_id if model is not None else None,
             )
 
-        def fail_preflight(row: Run, exc: Exception, model: ReportProfile | None = None) -> None:
+        def fail_preflight(
+            row: Run,
+            exc: Exception,
+            model: ReportProfile | None = None,
+        ) -> None:
             """Persist unexpected parent-side failures with a diagnostic log."""
-            logger.exception("run preflight failed run_id={}", row.run_id)
+            logger.exception(
+                "run preflight failed run_id={}",
+                row.run_id,
+            )
             identity = row_identity(row, model)
-            log_ref = write_failure_log(self.data_store, identity, exc)
-            outcome = {"status": "failed", "reason": str(exc), "log_ref": log_ref}
-            repository.finish(row, status="failed", outcome=outcome, reason=str(exc))
-            terminal.append((row.requested_at, row.run_id, self._outcome(row)))
+            log_ref = write_failure_log(
+                self.data_store,
+                identity,
+                exc,
+            )
+            outcome = {
+                "status": "failed",
+                "reason": str(exc),
+                "log_ref": log_ref,
+            }
+            repository.finish(
+                row,
+                status="failed",
+                outcome=outcome,
+                reason=str(exc),
+            )
+            terminal.append(
+                (
+                    row.requested_at,
+                    row.run_id,
+                    self._outcome(row),
+                )
+            )
 
-        for row in sorted(queued, key=lambda item: (_aware_utc(item.requested_at), item.run_id)):
-            config = repository.get_config(row.kind, row.target_id, row.config_revision)
+        for row in sorted(
+            queued,
+            key=lambda item: (
+                _aware_utc(item.requested_at),
+                item.run_id,
+            ),
+        ):
+            config = repository.get_config(
+                row.kind,
+                row.target_id,
+                row.config_revision,
+            )
+
             if config is None:
                 fail_preflight(
                     row,
-                    RuntimeError("pinned configuration revision is unavailable"),
+                    RuntimeError(
+                        "pinned configuration revision is unavailable"
+                    ),
                 )
                 continue
+
             try:
                 model = self._model(config)
             except Exception as exc:
                 fail_preflight(row, exc)
                 continue
+
             if row.kind == "source":
                 if not isinstance(model, SourceConfig):
-                    fail_preflight(row, ValueError("pinned source configuration is invalid"))
+                    fail_preflight(
+                        row,
+                        ValueError(
+                            "pinned source configuration is invalid"
+                        ),
+                    )
                     continue
+
                 source_rows[row.target_id].append(row)
                 source_models[row.run_id] = model
             else:
                 profile_roots.append(row)
+
         for source_id, rows in source_rows.items():
             source_rows[source_id] = deque(
                 sorted(
@@ -411,108 +462,233 @@ class ServiceRunner:
                     ),
                 )
             )
+
         session.commit()
 
         participating_sources = set(source_rows)
+
         profile_models: dict[str, ReportProfile] = {}
         remaining_dependencies: dict[str, set[str]] = {}
         profiles_by_source: dict[str, set[str]] = defaultdict(set)
         profile_revision_by_id: dict[str, ConfigRevision] = {}
+
         for config in profile_configs:
             model = self._model(config)
+
             if not isinstance(model, ReportProfile):
                 continue
-            dependencies = {producer_by_dataset[dataset_id] for dataset_id in model.datasets.values() if producer_by_dataset.get(dataset_id) in participating_sources}
+
+            dependencies = {
+                producer_by_dataset[dataset_id]
+                for dataset_id in model.datasets.values()
+                if producer_by_dataset.get(dataset_id)
+                in participating_sources
+            }
+
             if not dependencies:
                 continue
+
             profile_models[model.profile_id] = model
             profile_revision_by_id[model.profile_id] = config
-            remaining_dependencies[model.profile_id] = set(dependencies)
-            for source_id in dependencies:
-                profiles_by_source[source_id].add(model.profile_id)
+            remaining_dependencies[model.profile_id] = set(
+                dependencies
+            )
 
-        futures: dict[Future[Any], _SourceTask | _ReportTask] = {}
+            for source_id in dependencies:
+                profiles_by_source[source_id].add(
+                    model.profile_id
+                )
+
+        futures: dict[
+            Future[Any],
+            _SourceTask | _ReportTask,
+        ] = {}
+
+        # Runs transitioned to "running" by this invocation of _run_dag().
+        # This prevents Ctrl+C from failing unrelated running rows.
+        started_run_ids: set[str] = set()
+
         with self._executor() as executor:
 
             def finish_terminal(row: Run) -> None:
-                terminal.append((row.requested_at, row.run_id, self._outcome(row)))
+                """Record a terminal outcome and stop tracking it as active."""
+                started_run_ids.discard(row.run_id)
+                terminal.append(
+                    (
+                        row.requested_at,
+                        row.run_id,
+                        self._outcome(row),
+                    )
+                )
 
-            def fail_submission(row: Run, identity: RunLogIdentity, exc: Exception) -> None:
+            def fail_submission(
+                row: Run,
+                identity: RunLogIdentity,
+                exc: Exception,
+            ) -> None:
                 """Persist startup/broken-pool failures as ordinary run outcomes."""
-                logger.error("worker submission failed run_id={} reason={}", row.run_id, exc)
-                log_ref = write_failure_log(self.data_store, identity, exc)
-                outcome = {"status": "failed", "reason": str(exc), "log_ref": log_ref}
-                repository.finish(row, status="failed", outcome=outcome, reason=str(exc))
+                logger.error(
+                    "worker submission failed run_id={} reason={}",
+                    row.run_id,
+                    exc,
+                )
+
+                log_ref = write_failure_log(
+                    self.data_store,
+                    identity,
+                    exc,
+                )
+
+                outcome = {
+                    "status": "failed",
+                    "reason": str(exc),
+                    "log_ref": log_ref,
+                }
+
+                repository.finish(
+                    row,
+                    status="failed",
+                    outcome=outcome,
+                    reason=str(exc),
+                )
                 session.commit()
                 finish_terminal(row)
 
-            def submit_report(row: Run, snapshot=None) -> None:
+            def submit_report(
+                row: Run,
+                snapshot: Snapshot | None = None,
+            ) -> None:
                 """Prepare and submit one pinned report worker task."""
                 if row.status != "queued":
                     return
-                config = repository.get_config(row.kind, row.target_id, row.config_revision)
+
+                config = repository.get_config(
+                    row.kind,
+                    row.target_id,
+                    row.config_revision,
+                )
+
                 if config is None:
                     fail_preflight(
                         row,
-                        RuntimeError("pinned configuration revision is unavailable"),
+                        RuntimeError(
+                            "pinned configuration revision is unavailable"
+                        ),
                     )
                     session.commit()
                     return
+
                 try:
                     model = self._model(config)
                 except Exception as exc:
                     fail_preflight(row, exc)
                     session.commit()
                     return
+
                 if not isinstance(model, ReportProfile):
-                    fail_preflight(row, ValueError("pinned profile configuration is invalid"))
+                    fail_preflight(
+                        row,
+                        ValueError(
+                            "pinned profile configuration is invalid"
+                        ),
+                    )
                     session.commit()
                     return
+
                 identity = row_identity(row, model)
+
                 try:
                     pinned = snapshot or resolve_snapshot(
                         open_blob_store(self.data_store),
                         model.datasets,
                         pointer_registry=repository.pointer_registry,
                     )
-                    resolved_code = resolve_code_version(code_version)
+                    resolved_code = resolve_code_version(
+                        code_version
+                    )
+
                 except ValueError as exc:
-                    status = "waiting" if str(exc).startswith("no pointer exists for dataset") else "failed"
+                    status = (
+                        "waiting"
+                        if str(exc).startswith(
+                            "no pointer exists for dataset"
+                        )
+                        else "failed"
+                    )
+
                     if status == "waiting":
-                        repository.finish(row, status=status, reason=str(exc))
+                        repository.finish(
+                            row,
+                            status=status,
+                            reason=str(exc),
+                        )
                     else:
-                        log_ref = write_failure_log(self.data_store, identity, exc)
+                        log_ref = write_failure_log(
+                            self.data_store,
+                            identity,
+                            exc,
+                        )
                         outcome = {
                             "status": status,
                             "reason": str(exc),
                             "log_ref": log_ref,
                         }
-                        repository.finish(row, status=status, outcome=outcome, reason=str(exc))
+                        repository.finish(
+                            row,
+                            status=status,
+                            outcome=outcome,
+                            reason=str(exc),
+                        )
+
                     session.commit()
                     finish_terminal(row)
                     return
+
                 except Exception as exc:
-                    log_ref = write_failure_log(self.data_store, identity, exc)
+                    log_ref = write_failure_log(
+                        self.data_store,
+                        identity,
+                        exc,
+                    )
+
                     outcome = {
                         "status": "failed",
                         "reason": str(exc),
                         "log_ref": log_ref,
                     }
-                    repository.finish(row, status="failed", outcome=outcome, reason=str(exc))
-                    session.commit()
-                    finish_terminal(row)
-                    return
-                run_slot = _aware_utc(row.slot)
-                if row.trigger != "manual" and pinned.watermark < run_slot:
+
                     repository.finish(
                         row,
-                        status="waiting",
-                        reason="dataset watermark is behind report slot",
+                        status="failed",
+                        outcome=outcome,
+                        reason=str(exc),
                     )
                     session.commit()
                     finish_terminal(row)
                     return
-                context_hash = build_context_hash(model.execution_config())
+
+                run_slot = _aware_utc(row.slot)
+
+                if (
+                    row.trigger != "manual"
+                    and pinned.watermark < run_slot
+                ):
+                    repository.finish(
+                        row,
+                        status="waiting",
+                        reason=(
+                            "dataset watermark is behind "
+                            "report slot"
+                        ),
+                    )
+                    session.commit()
+                    finish_terminal(row)
+                    return
+
+                context_hash = build_context_hash(
+                    model.execution_config()
+                )
+
                 expected_artifact = sha256_json(
                     {
                         "report_id": model.report_id,
@@ -521,23 +697,36 @@ class ServiceRunner:
                         "context_hash": context_hash,
                     }
                 )
+
                 row.snapshot_id = pinned.snapshot_id
                 row.context_hash = context_hash
                 row.code_version = resolved_code
+
                 if not row.force and repository.successful(
                     row.kind,
                     row.target_id,
                     row.slot,
                     artifact_id=expected_artifact,
                 ):
-                    repository.finish(row, status="skipped", reason="identity already succeeded")
+                    repository.finish(
+                        row,
+                        status="skipped",
+                        reason="identity already succeeded",
+                    )
                     session.commit()
                     finish_terminal(row)
                     return
+
                 repository.mark_running(row)
+                started_run_ids.add(row.run_id)
                 session.commit()
+
                 identity = row_identity(row, model)
-                snapshot_payload = pinned.model_dump(mode="json") if hasattr(pinned, "model_dump") else pinned
+
+                snapshot_payload: dict[str, Any] = pinned.model_dump(
+                    mode="json"
+                    )
+
                 try:
                     future = executor.submit(
                         _report_worker,
@@ -556,76 +745,148 @@ class ServiceRunner:
                         },
                     )
                 except Exception as exc:
-                    fail_submission(row, identity, exc)
+                    fail_submission(
+                        row,
+                        identity,
+                        exc,
+                    )
                     return
-                futures[future] = _ReportTask(row.run_id, identity, snapshot_payload)
 
-            def submit_generated_profile(profile_id: str) -> None:
+                futures[future] = _ReportTask(
+                    row.run_id,
+                    identity,
+                    snapshot_payload,
+                )
+
+            def submit_generated_profile(
+                profile_id: str,
+            ) -> None:
                 """Queue a dataset-triggered profile once its snapshot is complete."""
                 model = profile_models[profile_id]
+
                 try:
                     snapshot = resolve_snapshot(
                         open_blob_store(self.data_store),
                         model.datasets,
                         pointer_registry=repository.pointer_registry,
                     )
+
                 except ValueError as exc:
-                    if str(exc).startswith("no pointer exists for dataset"):
+                    if str(exc).startswith(
+                        "no pointer exists for dataset"
+                    ):
                         logger.info(
-                            "profile fanout blocked profile={} reason={}",
+                            "profile fanout blocked "
+                            "profile={} reason={}",
                             profile_id,
                             exc,
                         )
                         return
-                    logger.error("profile fanout failed profile={} reason={}", profile_id, exc)
+
+                    logger.error(
+                        "profile fanout failed "
+                        "profile={} reason={}",
+                        profile_id,
+                        exc,
+                    )
                     return
+
                 except Exception as exc:
-                    logger.error("profile fanout failed profile={} reason={}", profile_id, exc)
+                    logger.error(
+                        "profile fanout failed "
+                        "profile={} reason={}",
+                        profile_id,
+                        exc,
+                    )
                     return
+
                 row = repository.queue_run(
                     kind="profile",
                     target_id=profile_id,
                     slot=snapshot.watermark,
                     trigger="dataset",
                     force=False,
-                    config=profile_revision_by_id[profile_id],
+                    config=profile_revision_by_id[
+                        profile_id
+                    ],
                 )
+
                 session.commit()
-                submit_report(row, snapshot=snapshot)
+                submit_report(
+                    row,
+                    snapshot=snapshot,
+                )
 
-            def settle_source(source_id: str) -> None:
+            def settle_source(
+                source_id: str,
+            ) -> None:
                 """Release profiles whose participating source dependencies settled."""
-                for profile_id in sorted(profiles_by_source.get(source_id, ())):
-                    remaining = remaining_dependencies[profile_id]
+                for profile_id in sorted(
+                    profiles_by_source.get(
+                        source_id,
+                        (),
+                    )
+                ):
+                    remaining = remaining_dependencies[
+                        profile_id
+                    ]
                     remaining.discard(source_id)
-                    if not remaining:
-                        submit_generated_profile(profile_id)
 
-            def start_next_source(source_id: str) -> None:
+                    if not remaining:
+                        submit_generated_profile(
+                            profile_id
+                        )
+
+            def start_next_source(
+                source_id: str,
+            ) -> None:
                 """Submit the next ordered run for one source pipeline."""
                 rows = source_rows[source_id]
+
                 while rows:
                     row = rows.popleft()
                     model = source_models[row.run_id]
+
                     if not row.force and repository.successful(
                         row.kind,
                         row.target_id,
                         row.slot,
                         row.config_hash,
                     ):
-                        repository.finish(row, status="skipped", reason="identity already succeeded")
+                        repository.finish(
+                            row,
+                            status="skipped",
+                            reason="identity already succeeded",
+                        )
                         session.commit()
                         finish_terminal(row)
                         continue
+
                     try:
-                        pointer_ids = [binding.dataset_id for binding in model.datasets.values()]
-                        pointers = repository.pointer_registry.get(pointer_ids)
-                        store = open_blob_store(self.data_store)
-                        watermarks, _tickers = load_previous_append_state(
-                            store,
-                            model,
-                            pointers,
+                        pointer_ids = [
+                            binding.dataset_id
+                            for binding
+                            in model.datasets.values()
+                        ]
+
+                        pointers = (
+                            repository.pointer_registry.get(
+                                pointer_ids
+                            )
                         )
+
+                        store = open_blob_store(
+                            self.data_store
+                        )
+
+                        watermarks, _tickers = (
+                            load_previous_append_state(
+                                store,
+                                model,
+                                pointers,
+                            )
+                        )
+
                     except Exception as exc:
                         identity = RunLogIdentity(
                             run_id=row.run_id,
@@ -633,134 +894,350 @@ class ServiceRunner:
                             target_id=model.source_id,
                             slot=_aware_utc(row.slot),
                         )
-                        log_ref = write_failure_log(self.data_store, identity, exc)
+
+                        log_ref = write_failure_log(
+                            self.data_store,
+                            identity,
+                            exc,
+                        )
+
                         outcome = {
                             "status": "failed",
                             "reason": str(exc),
                             "log_ref": log_ref,
                         }
-                        repository.finish(row, status="failed", outcome=outcome, reason=str(exc))
+
+                        repository.finish(
+                            row,
+                            status="failed",
+                            outcome=outcome,
+                            reason=str(exc),
+                        )
                         session.commit()
                         finish_terminal(row)
                         continue
+
                     repository.mark_running(row)
+                    started_run_ids.add(row.run_id)
                     session.commit()
+
                     run_slot = _aware_utc(row.slot)
+
                     identity = RunLogIdentity(
                         run_id=row.run_id,
                         kind="source",
                         target_id=model.source_id,
                         slot=run_slot,
                     )
+
                     try:
                         future = executor.submit(
                             _source_worker,
-                            model.model_dump(mode="json"),
+                            model.model_dump(
+                                mode="json"
+                            ),
                             run_slot.isoformat(),
                             self.data_store,
-                            {key: value.isoformat() for key, value in watermarks.items()},
-                            {key: _pointer_payload(value) for key, value in pointers.items()},
+                            {
+                                key: value.isoformat()
+                                for key, value
+                                in watermarks.items()
+                            },
+                            {
+                                key: _pointer_payload(value)
+                                for key, value
+                                in pointers.items()
+                            },
                             {
                                 "run_id": identity.run_id,
                                 "kind": identity.kind,
-                                "target_id": identity.target_id,
-                                "slot": identity.slot.isoformat(),
+                                "target_id": (
+                                    identity.target_id
+                                ),
+                                "slot": (
+                                    identity.slot.isoformat()
+                                ),
                             },
                         )
+
                     except Exception as exc:
-                        fail_submission(row, identity, exc)
+                        fail_submission(
+                            row,
+                            identity,
+                            exc,
+                        )
                         continue
-                    futures[future] = _SourceTask(row.run_id, model, pointers, identity)
+
+                    futures[future] = _SourceTask(
+                        row.run_id,
+                        model,
+                        pointers,
+                        identity,
+                    )
+
                     return
+
                 settle_source(source_id)
 
-            for row in profile_roots:
-                submit_report(row)
-            for source_id in sorted(source_rows):
-                start_next_source(source_id)
+            try:
+                for row in profile_roots:
+                    submit_report(row)
 
-            while futures:
-                done, _pending = wait(tuple(futures), return_when=FIRST_COMPLETED)
-                for future in done:
-                    task = futures.pop(future)
-                    task_row = repository.get_run(task.run_id)
-                    if task_row is None:  # pragma: no cover - run rows are not deleted
+                for source_id in sorted(
+                    source_rows
+                ):
+                    start_next_source(source_id)
+
+                while futures:
+                    done, _pending = wait(
+                        tuple(futures),
+                        timeout=30,
+                        return_when=FIRST_COMPLETED,
+                    )
+
+                    if not done:
+                        logger.warning(
+                            "runner waiting on workers active={}",
+                            [
+                                task.run_id
+                                for task in futures.values()
+                            ],
+                        )
                         continue
-                    row = task_row
-                    if isinstance(task, _ReportTask):
+
+                    for future in done:
+                        task = futures.pop(future)
+
+                        task_row = repository.get_run(
+                            task.run_id
+                        )
+
+                        if task_row is None:
+                            # Run rows are not deleted.
+                            continue
+
+                        row = task_row
+
+                        if isinstance(
+                            task,
+                            _ReportTask,
+                        ):
+                            try:
+                                result = future.result()
+                                result["snapshot"] = (
+                                    task.snapshot
+                                )
+
+                                repository.finish(
+                                    row,
+                                    status=result[
+                                        "status"
+                                    ],
+                                    outcome=result,
+                                    reason=result.get(
+                                        "reason"
+                                    ),
+                                )
+
+                            except Exception as exc:
+                                logger.exception(
+                                    "report worker failed "
+                                    "run_id={}",
+                                    row.run_id,
+                                )
+
+                                log_ref = (
+                                    write_failure_log(
+                                        self.data_store,
+                                        task.identity,
+                                        exc,
+                                        incomplete=True,
+                                    )
+                                )
+
+                                result = {
+                                    "status": "failed",
+                                    "reason": str(exc),
+                                    "log_ref": log_ref,
+                                    "snapshot": (
+                                        task.snapshot
+                                    ),
+                                }
+
+                                repository.finish(
+                                    row,
+                                    status="failed",
+                                    outcome=result,
+                                    reason=str(exc),
+                                )
+
+                            session.commit()
+                            finish_terminal(row)
+                            continue
+
+                        source_id = (
+                            task.config.source_id
+                        )
+
                         try:
                             result = future.result()
-                            result["snapshot"] = task.snapshot
-                            repository.finish(
-                                row,
-                                status=result["status"],
-                                outcome=result,
-                                reason=result.get("reason"),
-                            )
+
+                            if (
+                                result["status"]
+                                != "success"
+                            ):
+                                repository.finish(
+                                    row,
+                                    status=result[
+                                        "status"
+                                    ],
+                                    outcome=result,
+                                    reason=result.get(
+                                        "reason"
+                                    ),
+                                )
+                            else:
+                                updates = tuple(
+                                    DatasetPointerUpdate(
+                                        dataset_id=item[
+                                            "dataset_id"
+                                        ],
+                                        manifest_ref=item[
+                                            "manifest_ref"
+                                        ],
+                                        watermark=(
+                                            datetime.fromisoformat(
+                                                item[
+                                                    "watermark"
+                                                ]
+                                            )
+                                        ),
+                                        published_at=(
+                                            datetime.fromisoformat(
+                                                item[
+                                                    "published_at"
+                                                ]
+                                            )
+                                        ),
+                                    )
+                                    for item
+                                    in result.get(
+                                        "pointer_updates",
+                                        (),
+                                    )
+                                )
+
+                                with session.begin_nested():
+                                    (
+                                        repository
+                                        .pointer_registry
+                                        .publish(
+                                            source_id=(
+                                                source_id
+                                            ),
+                                            source_run_id=(
+                                                row.run_id
+                                            ),
+                                            updates=updates,
+                                        )
+                                    )
+
+                                    repository.finish(
+                                        row,
+                                        status="success",
+                                        outcome=result,
+                                    )
+
                         except Exception as exc:
-                            logger.exception("report worker failed run_id={}", row.run_id)
+                            logger.exception(
+                                "source worker failed "
+                                "run_id={}",
+                                row.run_id,
+                            )
+
                             log_ref = write_failure_log(
                                 self.data_store,
                                 task.identity,
                                 exc,
                                 incomplete=True,
                             )
+
                             result = {
+                                "source_id": source_id,
+                                "slot": slot_key(
+                                    _aware_utc(
+                                        row.slot
+                                    )
+                                ),
                                 "status": "failed",
+                                "datasets": None,
                                 "reason": str(exc),
                                 "log_ref": log_ref,
-                                "snapshot": task.snapshot,
                             }
-                            repository.finish(row, status="failed", outcome=result, reason=str(exc))
-                        session.commit()
-                        finish_terminal(row)
-                        continue
 
-                    source_id = task.config.source_id
-                    try:
-                        result = future.result()
-                        if result["status"] != "success":
                             repository.finish(
                                 row,
-                                status=result["status"],
+                                status="failed",
                                 outcome=result,
-                                reason=result.get("reason"),
+                                reason=str(exc),
                             )
-                        else:
-                            updates = tuple(
-                                DatasetPointerUpdate(
-                                    dataset_id=item["dataset_id"],
-                                    manifest_ref=item["manifest_ref"],
-                                    watermark=datetime.fromisoformat(item["watermark"]),
-                                    published_at=datetime.fromisoformat(item["published_at"]),
-                                )
-                                for item in result.get("pointer_updates", ())
-                            )
-                            with session.begin_nested():
-                                repository.pointer_registry.publish(
-                                    source_id=source_id,
-                                    source_run_id=row.run_id,
-                                    updates=updates,
-                                )
-                                repository.finish(row, status="success", outcome=result)
-                    except Exception as exc:
-                        logger.exception("source worker failed run_id={}", row.run_id)
-                        log_ref = write_failure_log(self.data_store, task.identity, exc, incomplete=True)
-                        result = {
-                            "source_id": source_id,
-                            "slot": slot_key(_aware_utc(row.slot)),
-                            "status": "failed",
-                            "datasets": None,
-                            "reason": str(exc),
-                            "log_ref": log_ref,
-                        }
-                        repository.finish(row, status="failed", outcome=result, reason=str(exc))
-                    session.commit()
-                    finish_terminal(row)
-                    start_next_source(source_id)
 
-        ordered = sorted(terminal, key=lambda item: (_aware_utc(item[0]), item[1]))
-        return [outcome for _requested_at, _run_id, outcome in ordered]
+                        session.commit()
+                        finish_terminal(row)
+                        start_next_source(source_id)
+
+            except KeyboardInterrupt:
+                logger.warning(
+                    "service runner interrupted; "
+                    "failing active runs count={}",
+                    len(started_run_ids),
+                )
+
+                # Persist run state before leaving the executor context.
+                # ProcessPoolExecutor shutdown may otherwise block while
+                # workers are still unwinding.
+                for run_id in tuple(started_run_ids):
+                    row = repository.get_run(
+                        run_id
+                    )
+
+                    if (
+                        row is None
+                        or row.status != "running"
+                    ):
+                        continue
+
+                    repository.finish(
+                        row,
+                        status="failed",
+                        reason=(
+                            "service runner interrupted"
+                        ),
+                    )
+
+                session.commit()
+
+                # Cancel work which has not begun. Running process-pool
+                # jobs generally cannot be cancelled here, but their
+                # persisted run state is already terminal.
+                for future in futures:
+                    future.cancel()
+
+                raise
+
+        ordered = sorted(
+            terminal,
+            key=lambda item: (
+                _aware_utc(item[0]),
+                item[1],
+            ),
+        )
+
+        return [
+            outcome
+            for _requested_at, _run_id, outcome
+            in ordered
+        ]
 
     @staticmethod
     def _outcome(row: Run) -> dict[str, Any]:
