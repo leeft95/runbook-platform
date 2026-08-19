@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from runbook.data.config import ScheduleSpec
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -18,7 +17,6 @@ class ReportProfile(BaseModel):
     report_id: str
     title: str | None = None
     enabled: bool = True
-    schedule: ScheduleSpec
     datasets: dict[str, str] = Field(min_length=1)
     params: dict[str, Any] = Field(default_factory=dict)
     layout: dict[str, Any] = Field(default_factory=dict)
@@ -28,12 +26,7 @@ class ReportProfile(BaseModel):
     @classmethod
     def validate_datasets(cls, value: dict[str, str]) -> dict[str, str]:
         for alias, dataset_id in value.items():
-            if (
-                not isinstance(alias, str)
-                or not _ID.fullmatch(alias)
-                or not isinstance(dataset_id, str)
-                or not _ID.fullmatch(dataset_id)
-            ):
+            if not isinstance(alias, str) or not _ID.fullmatch(alias) or not isinstance(dataset_id, str) or not _ID.fullmatch(dataset_id):
                 raise ValueError(f"invalid dataset binding: {alias!r} -> {dataset_id!r}")
         return value
 

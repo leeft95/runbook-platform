@@ -30,7 +30,7 @@ where = ["src"]
 include = ["runbook.services*"]
 
 [tool.setuptools.package-data]
-"runbook.services" = ["assets/*.css", "migrations/*.ini", "migrations/*.py", "migrations/versions/*.py"]
+"runbook.services" = ["assets/*.css", "assets/*.js", "migrations/*.ini", "migrations/*.py", "migrations/versions/*.py"]
 
 [build-system]
 requires = ["setuptools>=68"]

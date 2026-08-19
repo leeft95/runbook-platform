@@ -19,7 +19,7 @@ from runbook.data.ingest import (
 )
 from runbook.data.pointers import DatasetPointer, DatasetPointerUpdate
 from runbook.services import runner as runner_module
-from runbook.services.dash.dashboard import _attention_table, _elapsed
+from runbook.services.dash.dashboard import _attention_row, _elapsed
 from runbook.services.dash.run_logs import _bounded_log, _run_id_from_path
 from runbook.services.logging import (
     RunLogIdentity,
@@ -394,28 +394,18 @@ def test_dashboard_repository_queries_and_elapsed_serialization() -> None:
     assert _elapsed(row, now) == "0:01:00"
 
     finished = datetime(2026, 1, 2, 3, 1, tzinfo=timezone.utc)
-    table = _attention_table(
-        [
-            SimpleNamespace(
-                run_id="run-2",
-                kind="profile",
-                target_id="profile-1",
-                status="failed",
-                finished_at=finished,
-                updated_at=now,
-                requested_at=now,
-                reason="boom",
-            )
-        ]
+    attention = _attention_row(
+        SimpleNamespace(
+            run_id="run-2",
+            kind="profile",
+            target_id="profile-1",
+            status="failed",
+            finished_at=finished,
+            updated_at=now,
+            requested_at=now,
+            reason="boom",
+        )
     )
-    assert [cell.children for cell in table.children[0].children.children] == [
-        "Run",
-        "Kind",
-        "Target",
-        "Status",
-        "Finished (UTC)",
-        "Reason",
-    ]
-    assert table.children[1].children[0].children[4].children == finished.isoformat()
-    empty = _attention_table([])
-    assert empty.children[1].children[0].children[0].colSpan == 6
+    assert attention["run_link"] == "[run-2](/ui/runs/run-2)"
+    assert attention["finished_at"] == finished.isoformat()
+    assert attention["reason"] == "boom"

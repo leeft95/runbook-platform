@@ -36,7 +36,6 @@ def test_report_execution_is_shared_and_cache_is_type_stable(tmp_path, pointer_r
     profile = ReportProfile(
         profile_id="vol_dev",
         report_id="vol_report",
-        schedule={"cron": "0 * * * *", "timezone": "UTC"},
         datasets={"prices": "prices"},
         params={"vol_window": 2},
     )

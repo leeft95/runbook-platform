@@ -3,7 +3,6 @@
     "report_id": "snapshot_report",
     "title": "Timeseries Daily + Intraday Snapshot",
     "enabled": true,
-    "schedule": {"cron": "15 0 * * *", "timezone": "UTC"},
     "datasets": {
       "daily_prices": "demo_daily_prices",
       "intraday_bars": "demo_intraday_bars"
@@ -15,7 +14,6 @@
     "report_id": "vol_report",
     "title": "Synthetic Volatility Demo",
     "enabled": true,
-    "schedule": {"cron": "15 0 * * *", "timezone": "UTC"},
     "datasets": {"prices": "demo_daily_prices"},
     "params": {"price_col": "close", "vol_window": 20},
     "layout": {"plot_width": 700, "plot_height": 360}

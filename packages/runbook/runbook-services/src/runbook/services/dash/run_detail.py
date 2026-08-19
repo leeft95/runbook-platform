@@ -49,7 +49,6 @@ def register(dash_app: Any, sessions: Any) -> None:
             html.A(
                 "Open diagnostic logs",
                 href=f"/ui/runs/{row.run_id}/logs",
-                target="_blank",
             ),
             html.H3("Pinned configuration and provenance"),
             html.Pre(json.dumps(payload, default=str, indent=2, sort_keys=True)),

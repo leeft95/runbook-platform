@@ -7,6 +7,7 @@ from threading import Barrier
 from types import SimpleNamespace
 
 import dash
+import dash_ag_grid as dag
 import httpx
 import pytest
 import uvicorn
@@ -32,7 +33,7 @@ from runbook.services import cli
 from runbook.services import runner as runner_module
 from runbook.services.app import create_app, version_payload
 from runbook.services.dash import runs
-from runbook.services.dash._config import _config_skeleton, register_config_page
+from runbook.services.dash._config import _profile_new_row, _source_new_row, register_config_page
 from runbook.services.db import sync_sessions, upgrade_with_metadata
 from runbook.services.logging import RunLogIdentity, read_log_tail
 from runbook.services.models import Base
@@ -142,30 +143,17 @@ def test_serve_reload_uses_uvicorn_factory(monkeypatch) -> None:
     }
 
 
-def test_id_selectors_are_database_backed_dropdowns() -> None:
+def test_config_pages_use_grid_editors() -> None:
     create_app(database="postgresql+psycopg://postgres:postgres@localhost:5432/runbook")
 
-    expected = {
-        "runbook.services.dash.sources": [
-            "runbook-ui-sources-config-id",
-            "runbook-ui-sources-revision",
-            "runbook-ui-sources-trigger-id",
-        ],
-        "runbook.services.dash.profiles": [
-            "runbook-ui-profiles-config-id",
-            "runbook-ui-profiles-revision",
-            "runbook-ui-profiles-trigger-id",
-        ],
-    }
-    for module, component_ids in expected.items():
+    expected = {"runbook.services.dash.sources": "source", "runbook.services.dash.profiles": "profile"}
+    for module, kind in expected.items():
         children = dash.page_registry[module]["layout"].children
         components = {component.id: component for component in children if getattr(component, "id", None)}
-        for component_id in component_ids:
-            assert isinstance(components[component_id], dcc.Dropdown)
-            assert components[component_id].options == []
-        if module.endswith(("sources", "profiles")):
-            kind = module.rsplit(".", 1)[-1][:-1]
-            assert isinstance(components[f"runbook-ui-{kind}s-new"], html.Button)
+        prefix = f"runbook-ui-{kind}s"
+        assert isinstance(components[f"{prefix}-grid"], dag.AgGrid)
+        for button in ("new", "validate", "save", "run", "disable", "refresh"):
+            assert f"{prefix}-{button}" in str(dash.page_registry[module]["layout"])
 
     callback_app = dash.Dash(__name__, use_pages=True, pages_folder="")
     register_config_page(
@@ -188,14 +176,10 @@ def test_id_selectors_are_database_backed_dropdowns() -> None:
     )
     runs.register(callback_app, None)
     callback_keys = "\n".join(callback_app.callback_map)
-    assert "runbook-ui-sources-config-id.options" in callback_keys
-    assert "runbook-ui-sources-trigger-id.options" in callback_keys
-    assert "runbook-ui-sources-revision.options" in callback_keys
-    assert "runbook-ui-sources-revision.value" in callback_keys
-    assert "runbook-ui-profiles-config-id.options" in callback_keys
-    assert "runbook-ui-profiles-trigger-id.options" in callback_keys
-    assert "runbook-ui-profiles-revision.options" in callback_keys
-    assert "runbook-ui-profiles-revision.value" in callback_keys
+    assert "runbook-ui-sources-grid.rowData" in callback_keys
+    assert "runbook-ui-sources-result.children" in callback_keys
+    assert "runbook-ui-profiles-grid.rowData" in callback_keys
+    assert "runbook-ui-profiles-result.children" in callback_keys
     assert "runbook-ui-runs-url.pathname" not in callback_keys
     assert not any(any(item["id"] == "runbook-ui-runs-grid" and item["property"] == "cellClicked" for item in callback["inputs"]) for callback in callback_app.callback_map.values())
     assert "runbook-ui-runs-run-id.options" not in callback_keys
@@ -226,24 +210,33 @@ def test_id_selectors_are_database_backed_dropdowns() -> None:
     assert serialized["run_link"] == "[run-1](/ui/runs/run-1)"
 
 
-def test_new_config_skeletons_are_complete_and_disabled() -> None:
-    source = _config_skeleton("source")
-    assert source == {
-        "source_id": "",
-        "enabled": False,
-        "schedule": {"cron": "0 0 * * *", "timezone": "UTC"},
-        "adapter": "",
-        "datasets": {
-            "dataset_alias": {
-                "dataset_id": "",
-                "schema_version": "v1",
-                "partition_keys": [],
-                "parser_id": "",
-                "update_mode": "append",
-            }
-        },
-        "params": {},
-    }
+def test_new_config_rows_are_complete_and_disabled() -> None:
+    source = _source_new_row()
+    assert source["config_id"] == ""
+    assert source["enabled"] is False
+    assert source["adapter"] == ""
+    assert source["schedule"] == {"cron": "0 0 * * *", "timezone": "UTC"}
+    assert source["datasets"] == {}
+    assert source["params"] == {}
+    assert source["revision"] is None
+    assert source["_new"] is True
+    assert source["_status"] == "draft"
+    assert source["_row_key"].startswith("draft:")
+
+    profile = _profile_new_row()
+    assert profile["config_id"] == ""
+    assert profile["enabled"] is False
+    assert profile["report_id"] == ""
+    assert profile["title"] == ""
+    assert profile["datasets"] == {}
+    assert profile["params"] == {}
+    assert profile["layout"] == {}
+    assert profile["extensions"] == {}
+    assert profile["revision"] is None
+    assert profile["_new"] is True
+    assert profile["_status"] == "draft"
+    assert profile["_row_key"].startswith("draft:")
+    assert "schedule" not in profile
 
 
 def test_service_runner_validates_workers_and_ignores_profile_cron(tmp_path) -> None:
@@ -260,7 +253,6 @@ def test_service_runner_validates_workers_and_ignores_profile_cron(tmp_path) -> 
                 {
                     "report_id": "unused_report",
                     "enabled": True,
-                    "schedule": {"cron": "* * * * *", "timezone": "UTC"},
                     "datasets": {"prices": "prices"},
                 },
             )
@@ -329,19 +321,6 @@ def test_tick_orders_persisted_and_newly_scheduled_rows(monkeypatch, tmp_path) -
         earlier.isoformat(),
         current.isoformat(),
     ]
-    assert _config_skeleton("profile") == {
-        "profile_id": "",
-        "enabled": False,
-        "schedule": {"cron": "0 0 * * *", "timezone": "UTC"},
-        "report_id": "",
-        "title": "",
-        "datasets": {"dataset_alias": ""},
-        "params": {},
-        "layout": {},
-        "extensions": {},
-    }
-
-
 def test_config_revisions_are_immutable_and_compare_and_swap() -> None:
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
@@ -352,8 +331,8 @@ def test_config_revisions_are_immutable_and_compare_and_swap() -> None:
                 "profile",
                 "demo",
                 {
+                    "title": "Demo",
                     "report_id": "demo_report",
-                    "schedule": {"cron": "0 * * * *", "timezone": "UTC"},
                     "datasets": {"prices": "demo_prices"},
                 },
             )
@@ -363,8 +342,8 @@ def test_config_revisions_are_immutable_and_compare_and_swap() -> None:
                 "profile",
                 "demo",
                 {
+                    "title": "Demo",
                     "report_id": "demo_report",
-                    "schedule": {"cron": "0 * * * *", "timezone": "UTC"},
                     "datasets": {"prices": "demo_prices"},
                 },
                 expected_revision=1,
@@ -375,8 +354,8 @@ def test_config_revisions_are_immutable_and_compare_and_swap() -> None:
                 "profile",
                 "demo",
                 {
+                    "title": "Demo 2",
                     "report_id": "demo_report",
-                    "schedule": {"cron": "15 * * * *", "timezone": "UTC"},
                     "datasets": {"prices": "demo_prices"},
                 },
                 expected_revision=1,
@@ -390,8 +369,8 @@ def test_config_revisions_are_immutable_and_compare_and_swap() -> None:
                     "profile",
                     "demo",
                     {
+                        "title": "Demo 2",
                         "report_id": "demo_report",
-                        "schedule": {"cron": "15 * * * *", "timezone": "UTC"},
                         "datasets": {"prices": "demo_prices"},
                     },
                     expected_revision=99,
@@ -466,7 +445,6 @@ def test_run_queue_reuses_active_identity() -> None:
                 "demo",
                 {
                     "report_id": "demo_report",
-                    "schedule": {"cron": "0 * * * *", "timezone": "UTC"},
                     "datasets": {"prices": "demo_prices"},
                 },
             )
@@ -529,7 +507,6 @@ def test_service_runner_persists_report_artifact_references(monkeypatch, tmp_pat
                 "demo",
                 {
                     "report_id": "demo_report",
-                    "schedule": {"cron": "0 * * * *", "timezone": "UTC"},
                     "datasets": {"prices": "demo_prices"},
                 },
             )
@@ -594,7 +571,6 @@ def test_service_runner_fans_out_ready_dataset_to_report(tmp_path) -> None:
                 {
                     "report_id": "vol_report",
                     "enabled": True,
-                    "schedule": {"cron": "30 0 * * *", "timezone": "UTC"},
                     "datasets": {"prices": "prices"},
                     "params": {"price_col": "close", "vol_window": 2},
                 },
@@ -734,7 +710,6 @@ def test_curation_failure_uses_previous_complete_snapshot_only(
                 "dependent",
                 {
                     "report_id": "unused_report",
-                    "schedule": {"cron": "0 * * * *", "timezone": "UTC"},
                     "datasets": {"prices": "prices"},
                 },
             )
