@@ -1079,13 +1079,13 @@ class ServiceRunner:
                 # ProcessPoolExecutor shutdown may otherwise block while
                 # workers are still unwinding.
                 for run_id in tuple(started_run_ids):
-                    row = repository.get_run(run_id)
+                    started_row = repository.get_run(run_id)
 
-                    if row is None or row.status != "running":
+                    if started_row is None or started_row.status != "running":
                         continue
 
                     repository.finish(
-                        row,
+                        started_row,
                         status="failed",
                         reason=("service runner interrupted"),
                     )

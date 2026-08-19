@@ -468,11 +468,16 @@ class AsyncRunRepository:
             ).all()
         )
 
-    async def list_pointers(self) -> list[dict[str, Any]]:
+    async def list_pointers(self, limit: int | None = None) -> list[dict[str, Any]]:
         """Return current dataset pointers for the operations dashboard."""
         from runbook.data.pointers import dataset_pointers
 
-        rows = (await self.session.execute(select(dataset_pointers).order_by(dataset_pointers.c.dataset_id))).mappings()
+        query = select(dataset_pointers).order_by(dataset_pointers.c.dataset_id)
+        if limit is not None:
+            if limit < 1 or limit > 500:
+                raise ValueError("limit must be between 1 and 500")
+            query = query.limit(limit)
+        rows = (await self.session.execute(query)).mappings()
         return [dict(row) for row in rows]
 
     async def queue_run(self, **kwargs: Any) -> Run:
