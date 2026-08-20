@@ -264,7 +264,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/f9/1c/01bfd571a64e7f270e6bab5e33777debe0edc56759233ce84f27dec92d14/tqdm-4.70.0-py3-none-any.whl
       - pypi: ./packages/runbook/runbook-core
       - pypi: ./packages/runbook/runbook-data
-      - pypi: ./packages/runbook/runbook-platform
       - pypi: ./packages/runbook/runbook-sdk
       - pypi: ./packages/runbook/runbook-services
       - pypi: ./packages/runbook/runbook-worker
@@ -517,7 +516,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/f9/1c/01bfd571a64e7f270e6bab5e33777debe0edc56759233ce84f27dec92d14/tqdm-4.70.0-py3-none-any.whl
       - pypi: ./packages/runbook/runbook-core
       - pypi: ./packages/runbook/runbook-data
-      - pypi: ./packages/runbook/runbook-platform
       - pypi: ./packages/runbook/runbook-sdk
       - pypi: ./packages/runbook/runbook-services
       - pypi: ./packages/runbook/runbook-worker
@@ -763,7 +761,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/f9/1c/01bfd571a64e7f270e6bab5e33777debe0edc56759233ce84f27dec92d14/tqdm-4.70.0-py3-none-any.whl
       - pypi: ./packages/runbook/runbook-core
       - pypi: ./packages/runbook/runbook-data
-      - pypi: ./packages/runbook/runbook-platform
       - pypi: ./packages/runbook/runbook-sdk
       - pypi: ./packages/runbook/runbook-services
       - pypi: ./packages/runbook/runbook-worker
@@ -7037,16 +7034,6 @@ packages:
   - runbook-core
   - boto3 ; extra == 's3'
   requires_python: '>=3.11'
-- pypi: ./packages/runbook/runbook-platform
-  name: runbook-platform
-  version: 0.0.2
-  sha256: ea537e17cb2c836c97aafcc89f7cecb3067c4b8a66b7e445988315315fdf077b
-  requires_dist:
-  - runbook-data
-  - runbook-sdk
-  - croniter
-  - loguru
-  requires_python: '>=3.11'
 - pypi: ./packages/runbook/runbook-sdk
   name: runbook-sdk
   version: 0.0.2
@@ -7063,12 +7050,10 @@ packages:
 - pypi: ./packages/runbook/runbook-services
   name: runbook-services
   version: 0.0.2
-  sha256: 5edb95bd05dd02be13eb69329dfaa8dc53eb7fe64debf365354d91b827bc7f21
+  sha256: a12bc1fefad71a5aea981655de21c1918209ce32b9d97fcbaa5b2e76d3928c1a
   requires_dist:
   - runbook-core
-  - runbook-data
-  - runbook-sdk
-  - runbook-platform
+  - croniter
   - fastapi>=0.115,<1
   - dash[fastapi]>=4.2,<5
   - dash-ag-grid>=35,<36
@@ -7081,13 +7066,12 @@ packages:
 - pypi: ./packages/runbook/runbook-worker
   name: runbook-worker
   version: 0.0.2
-  sha256: 3126c204c905c588709282ce607a88e7d0c8595c1b181b76d44ed559cfda5105
+  sha256: b1431231bad2008ee60a7d3f848dd9fd6831639409a96b4ba4f57d5ec6889f3d
   requires_dist:
   - runbook-core
   - runbook-data
   - runbook-sdk
   - runbook-services
-  - runbook-platform
   requires_python: '>=3.11'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/s2n-1.7.5-h7e3ee7f_1.conda
   sha256: 7369ac21f3561e2203f5b1600ef0671270057380783ca4b9e15f679ba25db575

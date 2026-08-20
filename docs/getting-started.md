@@ -52,7 +52,7 @@ contract and {doc}`operations` for production service setup.
 | `packages/runbook/runbook-core` | Contracts, deterministic utilities, tables, and plots. |
 | `packages/runbook/runbook-data` | Acquisition, curation, manifests, pointers, and blob storage. |
 | `packages/runbook/runbook-sdk` | Report authoring, execution, preview, and HTML rendering. |
-| `packages/runbook/runbook-platform` | Scheduling and snapshot-pinned execution helpers. |
+| `packages/runbook/runbook-worker` | One-process-per-run source and report execution. |
 | `packages/runbook/runbook-services` | PostgreSQL control plane, API, CLI, and operations UI. |
 | `reports/` | External report templates selected by profile. |
 | `data/contract/` | Source and report profile configuration. |

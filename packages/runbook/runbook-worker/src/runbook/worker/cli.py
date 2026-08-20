@@ -4,6 +4,7 @@ import argparse
 
 
 def parser() -> argparse.ArgumentParser:
+    """Build the worker command-line parser."""
     result = argparse.ArgumentParser(
         prog="runbook-worker",
         description="Execute one Runbook run.",
@@ -13,8 +14,9 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """Execute one durable run and return its process status."""
     args = parser().parse_args()
 
-    # Execution is wired in during Phase B Day 5.
-    print(f"runbook-worker run_id={args.run_id}")
-    return 0
+    from .execution import execute_run
+
+    return execute_run(args.run_id)

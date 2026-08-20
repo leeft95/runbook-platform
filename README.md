@@ -11,11 +11,12 @@ calculations, and HTML artifacts.
   snapshots, and local/S3 blob storage.
 - `runbook-sdk`: report authoring, deterministic execution, preview, caching,
   and HTML rendering.
-- `runbook-platform`: scheduling and snapshot-pinned execution helpers.
 - `runbook-services`: the PostgreSQL control plane, bounded local run
   execution, worker diagnostics, and a Dash operations UI.
+- `runbook-worker`: one-process-per-run source and report execution.
 
-The dependency direction is `core <- data <- sdk <- platform <- services`.
+The dependency direction is `core -> data`, `core -> sdk`, `core -> services`,
+and `services -> worker` only at process launch time.
 Reports are external templates selected with `--reports-root`; they do not
 call source systems.
 

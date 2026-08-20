@@ -336,6 +336,7 @@ class ServiceRunner:
             "kind": row.kind,
             "target_id": row.target_id,
             "slot": _aware_utc(row.slot).isoformat(),
+            "requested_at": _aware_utc(row.requested_at).isoformat(),
             "status": row.status,
             "reason": row.reason,
             "artifact_id": row.artifact_id,

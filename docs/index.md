@@ -64,8 +64,8 @@ python -m pip install -r docs/requirements.txt
 python -m pip install -e packages/runbook/runbook-core \
   -e packages/runbook/runbook-data \
   -e packages/runbook/runbook-sdk \
-  -e packages/runbook/runbook-platform \
-  -e packages/runbook/runbook-services
+  -e packages/runbook/runbook-services \
+  -e packages/runbook/runbook-worker
 sphinx-build -W --keep-going -b html docs docs/_build/html
 ```
 
@@ -78,7 +78,7 @@ for pull requests and is published to
 The repository is a small dependency chain:
 
 ```text
-runbook-core <- runbook-data <- runbook-sdk <- runbook-platform <- runbook-services
+runbook-core -> runbook-data / runbook-sdk / runbook-services -> runbook-worker
 ```
 
 Use the package APIs documented in the reference section rather than relying

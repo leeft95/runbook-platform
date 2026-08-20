@@ -2,14 +2,13 @@
 name = "runbook-worker"
 version = "0.0.2"
 requires-python = ">=3.11"
-description = "PostgreSQL-backed API and Dash operations UI for Runbook."
+description = "One-process-per-run source and report execution for Runbook."
 license = "Apache-2.0"
 dependencies = [
     "runbook-core",
     "runbook-data",
     "runbook-sdk",
     "runbook-services",
-    "runbook-platform",
 ]
 
 [project.scripts]

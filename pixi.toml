@@ -41,7 +41,6 @@ furo = ">=2024.8"
 [pypi-dependencies]
 runbook-core = { path = "packages/runbook/runbook-core", editable = true }
 runbook-data = { path = "packages/runbook/runbook-data", editable = true }
-runbook-platform = { path = "packages/runbook/runbook-platform", editable = true }
 runbook-sdk = { path = "packages/runbook/runbook-sdk", editable = true }
 runbook-services = { path = "packages/runbook/runbook-services", editable = true }
 runbook-worker = { path = "packages/runbook/runbook-worker", editable = true }

@@ -26,8 +26,8 @@ The package responsibilities are deliberately narrow:
 runbook-core       contracts, canonical identities, snapshots, PDL
 runbook-data       acquisition, curation, manifests, pointers, datasets
 runbook-sdk        profile validation, execution, caching, HTML rendering
-runbook-platform   small scheduling and snapshot-pinned helpers
 runbook-services   PostgreSQL control plane, queue, API, and Dash UI
+runbook-worker     one-process-per-run source and report execution
 ```
 
 PostgreSQL is authoritative for configuration revisions, current dataset

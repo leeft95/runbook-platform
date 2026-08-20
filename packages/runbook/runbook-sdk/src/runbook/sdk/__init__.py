@@ -1,3 +1,4 @@
+from runbook.core import BlobStore, DatasetBinding, ScheduleSpec, SourceConfig
 from runbook.core.plotting.line import plot_line
 from runbook.core.table import highlight
 from runbook.sdk.authoring import RequiredAliases, report, required_aliases
@@ -9,6 +10,10 @@ from runbook.sdk.ui import flex_grid, grid, manifest, plot, table, text
 
 __all__ = [
     "ReportProfile",
+    "BlobStore",
+    "DatasetBinding",
+    "ScheduleSpec",
+    "SourceConfig",
     "ReportResult",
     "Ctx",
     "RequiredAliases",

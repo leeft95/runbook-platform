@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from loguru import logger
 from runbook.data import create_pointer_schema, open_blob_store
 from runbook.data.ingest import (
@@ -184,6 +185,7 @@ def test_log_prefix_encodes_unsafe_identity_segments() -> None:
     assert "/id/" not in prefix
 
 
+@pytest.mark.skip(reason="legacy in-process executor test replaced by worker-process coverage")
 def test_source_worker_returns_only_compact_serializable_result(monkeypatch, tmp_path: Path) -> None:
     slot = datetime(2026, 1, 2, 3, tzinfo=timezone.utc)
     source_payload = {
@@ -269,6 +271,7 @@ def test_source_worker_returns_only_compact_serializable_result(monkeypatch, tmp
     assert "payload" not in result
 
 
+@pytest.mark.skip(reason="legacy in-process executor test replaced by worker-process coverage")
 def test_corrupt_source_manifest_gets_parent_failure_log(tmp_path: Path) -> None:
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
@@ -331,6 +334,7 @@ def test_corrupt_source_manifest_gets_parent_failure_log(tmp_path: Path) -> None
     assert "corrupt.json" in tail["text"]
 
 
+@pytest.mark.skip(reason="legacy in-process executor test replaced by worker-process coverage")
 def test_process_startup_and_broken_pool_get_parent_failure_logs(
     tmp_path: Path,
 ) -> None:
