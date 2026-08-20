@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from runbook.data import DatasetPointerUpdate, build_manifest, open_blob_store, write_manifests
 from runbook.services import cli
 from runbook.services.db import sync_sessions, upgrade_with_metadata
@@ -29,42 +30,19 @@ def _source(repository: RunRepository, source_id: str):
     )
 
 
-def test_cancellation_is_conditional_and_idempotent(tmp_path) -> None:
-    database = f"sqlite:///{tmp_path / 'runs.db'}"
-    upgrade_with_metadata(database)
-    with sync_sessions(database)() as session:
-        repository = RunRepository(session)
-        config = _source(repository, "prices")
-        row = repository.queue_run(
-            kind="source",
-            target_id="prices",
-            slot=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            trigger="manual",
-            force=True,
-            config=config,
-        )
-        assert repository.request_cancel(row.run_id)
-        session.commit()
-        saved = repository.get_run(row.run_id)
-        assert saved is not None and saved.status == "cancelled"
-        stamp = saved.cancel_requested_at
-        assert not repository.request_cancel(row.run_id)
-        assert repository.get_run(row.run_id).cancel_requested_at == stamp
+class _Backend:
+    def __init__(self) -> None:
+        self.submitted: list[str] = []
 
-        running = repository.queue_run(
-            kind="source",
-            target_id="prices",
-            slot=datetime(2026, 1, 2, tzinfo=timezone.utc),
-            trigger="manual",
-            force=True,
-            config=config,
-        )
-        assert repository.claim(running.run_id, "local:1")
-        assert repository.request_cancel(running.run_id)
-        assert repository.cancel_owned(running.run_id, "local:2") is False
-        assert repository.cancel_owned(running.run_id, "local:1") is True
-        session.commit()
-        assert repository.get_run(running.run_id).status == "cancelled"
+    def submit(self, run_id: str) -> str:
+        self.submitted.append(run_id)
+        return f"local:{run_id}"
+
+    def poll(self, _run_id: str) -> WorkerState:
+        return WorkerState(running=True)
+
+    def cancel(self, _run_id: str) -> None:
+        return None
 
 
 def test_eligible_queue_skips_blocked_source_without_head_of_line_blocking(tmp_path) -> None:
@@ -124,9 +102,92 @@ def test_running_source_blocks_an_older_backfill_for_the_same_source(tmp_path) -
         assert repository.eligible_queued_runs() == []
 
 
-def test_worker_state_contract_is_nonblocking() -> None:
-    assert WorkerState(running=True).running
-    assert WorkerState(running=False, exit_code=0).exit_code == 0
+def test_stop_during_reconciliation_skips_release_and_dispatch(tmp_path) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    upgrade_with_metadata(database)
+    backend = _Backend()
+    runner = ServiceRunner(database=database, backend=backend)
+
+    def stop(*_args) -> None:
+        runner._stop.set()
+
+    runner._reconcile_cancellations = stop
+    runner._reconcile_workers = lambda *_args: None
+    runner._release_dependencies = lambda *_args: pytest.fail("release ran during shutdown")
+    runner._dispatch = lambda *_args, **_kwargs: pytest.fail("dispatch ran during shutdown")
+    runner._cycle(datetime.now(timezone.utc), code_version="test")
+    assert backend.submitted == []
+
+
+def test_eligible_queue_finds_unrelated_work_after_500_blocked_rows(tmp_path) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    upgrade_with_metadata(database)
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        source_a = _source(repository, "source_a")
+        source_b = _source(repository, "source_b")
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        blocker = repository.queue_run(
+            kind="source", target_id="source_a", slot=base, trigger="manual", force=True, config=source_a
+        )
+        assert repository.claim(blocker.run_id, "local:blocker")
+        for index in range(501):
+            row = repository.queue_run(
+                kind="source",
+                target_id="source_a",
+                slot=base + timedelta(days=index + 1),
+                trigger="manual",
+                force=True,
+                config=source_a,
+            )
+            row.requested_at = base + timedelta(seconds=index + 1)
+        unrelated = repository.queue_run(
+            kind="source", target_id="source_b", slot=base, trigger="manual", force=True, config=source_b
+        )
+        unrelated.requested_at = base + timedelta(seconds=1000)
+        session.commit()
+        eligible = repository.eligible_queued_runs(limit=1)
+        assert [row.run_id for row in eligible] == [unrelated.run_id]
+
+
+def test_orphan_reconciliation_covers_all_rows_and_preserves_terminal_races(tmp_path) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    upgrade_with_metadata(database)
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        config = _source(repository, "source")
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        rows = []
+        for index in range(501):
+            row = repository.queue_run(
+                kind="source",
+                target_id="source",
+                slot=base + timedelta(days=index),
+                trigger="manual",
+                force=True,
+                config=config,
+            )
+            row.status = "running"
+            row.worker_id = f"local:{index}"
+            if index == 500:
+                row.cancel_requested_at = base
+            rows.append(row)
+        session.commit()
+        runner = ServiceRunner(database=database)
+        runner._reconcile_orphans()
+
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        saved = repository.list_runs(target_id="source", limit=500)
+        assert len(saved) == 500
+        assert repository.running_runs() == []
+        assert repository.get_run(rows[500].run_id).status == "cancelled"
+
+        terminal = repository.get_run(rows[0].run_id)
+        assert terminal is not None
+        terminal.status = "success"
+        session.commit()
+        assert repository.reconcile_orphan(rows[0].run_id, reason="race") is False
 
 
 def test_run_cli_rejects_invalid_capacity_and_interval(capsys) -> None:

@@ -3,6 +3,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+from runbook.services.worker_backends import WorkerState
 from runbook.services.worker_backends.local_process import LocalProcessBackend
 
 
@@ -143,3 +144,8 @@ def test_cancel_does_not_touch_other_processes():
 
     first.terminate.assert_called_once()
     second.terminate.assert_not_called()
+
+
+def test_worker_state_contract_is_nonblocking() -> None:
+    assert WorkerState(running=True).running
+    assert WorkerState(running=False, exit_code=0).exit_code == 0
