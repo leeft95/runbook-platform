@@ -21,6 +21,7 @@ from runbook.services import cli
 from runbook.services.app import create_app, version_payload
 from runbook.services.dash import runs
 from runbook.services.dash._config import _profile_new_row, _source_new_row, register_config_page
+from runbook.services.dash.runs import _cancel_state
 from runbook.services.db import sync_sessions, upgrade_with_metadata
 from runbook.services.logging import RunLogIdentity, read_log_tail
 from runbook.services.models import Base
@@ -166,6 +167,12 @@ def test_config_pages_use_grid_editors() -> None:
         for callback in callback_app.callback_map.values()
     )
     assert "runbook-ui-runs-run-id.options" not in callback_keys
+    assert "runbook-ui-runs-cancel.disabled" in callback_keys
+    assert "runbook-ui-runs-cancel-result.children" in callback_keys
+    assert _cancel_state(None) == (True, "Select a queued or running run to cancel.")
+    assert _cancel_state(SimpleNamespace(status="success", cancel_requested_at=None))[0] is True
+    assert _cancel_state(SimpleNamespace(status="running", cancel_requested_at=datetime.now(timezone.utc)))[0] is True
+    assert _cancel_state(SimpleNamespace(status="queued", cancel_requested_at=None)) == (False, "")
     run_page = dash.page_registry["runbook.services.dash.runs"]["layout"]
     grid = next(child for child in run_page.children if getattr(child, "id", None) == "runbook-ui-runs-grid")
     assert grid.columnDefs[0] == {

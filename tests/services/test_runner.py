@@ -34,13 +34,14 @@ class _Backend:
     def __init__(self) -> None:
         self.submitted: list[str] = []
         self.cancelled: list[str] = []
+        self.terminal: set[str] = set()
 
     def submit(self, run_id: str) -> str:
         self.submitted.append(run_id)
         return f"local:{run_id}"
 
-    def poll(self, _run_id: str) -> WorkerState:
-        return WorkerState(running=True)
+    def poll(self, run_id: str) -> WorkerState:
+        return WorkerState(running=run_id not in self.terminal, exit_code=0 if run_id in self.terminal else None)
 
     def cancel(self, _run_id: str) -> None:
         self.cancelled.append(_run_id)
@@ -233,6 +234,78 @@ def test_dispatch_commit_failure_cleans_only_spawned_worker_and_preserves_queue(
         assert saved is not None
         assert saved.status == "queued"
         assert saved.worker_id is None
+
+
+def test_dispatch_capacity_is_durable_and_releases_after_exit(tmp_path) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    upgrade_with_metadata(database)
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        source_a = _source(repository, "capacity_a")
+        source_b = _source(repository, "capacity_b")
+        slot = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        first = repository.queue_run(
+            kind="source", target_id="capacity_a", slot=slot, trigger="manual", force=True, config=source_a
+        )
+        second = repository.queue_run(
+            kind="source", target_id="capacity_b", slot=slot, trigger="manual", force=True, config=source_b
+        )
+        session.commit()
+        backend = _Backend()
+        runner = ServiceRunner(database=database, backend=backend, workers=1)
+
+        runner._dispatch(session, repository, code_version="test")
+        assert backend.submitted == [first.run_id]
+        assert len(runner._active) == 1
+        assert repository.get_run(second.run_id).status == "queued"
+
+        runner._dispatch(session, repository, code_version="test")
+        assert backend.submitted == [first.run_id]
+        backend.terminal.add(first.run_id)
+        runner._reconcile_workers(session, repository)
+        assert runner._active == {}
+        assert repository.get_run(first.run_id).status == "failed"
+
+        runner._dispatch(session, repository, code_version="test")
+        assert backend.submitted == [first.run_id, second.run_id]
+        assert repository.get_run(second.run_id).status == "running"
+
+
+def test_cancellation_reconciliation_targets_only_local_owner(tmp_path) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    upgrade_with_metadata(database)
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        config = _source(repository, "cancel-owner")
+        local = repository.queue_run(
+            kind="source",
+            target_id="cancel-owner",
+            slot=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            trigger="manual",
+            force=True,
+            config=config,
+        )
+        other = repository.queue_run(
+            kind="source",
+            target_id="cancel-owner",
+            slot=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            trigger="manual",
+            force=True,
+            config=config,
+        )
+        assert repository.claim(local.run_id, "local:1")
+        assert repository.claim(other.run_id, "local:2")
+        assert repository.request_cancel(local.run_id)
+        assert repository.request_cancel(other.run_id)
+        session.commit()
+        backend = _Backend()
+        runner = ServiceRunner(database=database, backend=backend, workers=1)
+        runner._active[local.run_id] = "local:1"
+        runner._reconcile_cancellations(session, repository)
+        assert backend.cancelled == [local.run_id]
+        assert runner._active == {}
+        assert repository.get_run(local.run_id).status == "cancelled"
+        assert repository.get_run(other.run_id).status == "running"
 
 
 def test_dependency_release_waits_for_all_required_producers_and_is_idempotent(tmp_path) -> None:
