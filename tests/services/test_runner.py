@@ -33,6 +33,7 @@ def _source(repository: RunRepository, source_id: str):
 class _Backend:
     def __init__(self) -> None:
         self.submitted: list[str] = []
+        self.cancelled: list[str] = []
 
     def submit(self, run_id: str) -> str:
         self.submitted.append(run_id)
@@ -42,7 +43,7 @@ class _Backend:
         return WorkerState(running=True)
 
     def cancel(self, _run_id: str) -> None:
-        return None
+        self.cancelled.append(_run_id)
 
 
 def test_eligible_queue_skips_blocked_source_without_head_of_line_blocking(tmp_path) -> None:
@@ -194,6 +195,44 @@ def test_run_cli_rejects_invalid_capacity_and_interval(capsys) -> None:
     assert cli.main(["run", "--workers", "0"]) == 1
     assert cli.main(["run", "--poll-interval", "0"]) == 1
     assert "poll interval" in capsys.readouterr().out
+
+
+def test_dispatch_commit_failure_cleans_only_spawned_worker_and_preserves_queue(tmp_path, monkeypatch) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    upgrade_with_metadata(database)
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        config = _source(repository, "commit_failure")
+        row = repository.queue_run(
+            kind="source",
+            target_id="commit_failure",
+            slot=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            trigger="manual",
+            force=True,
+            config=config,
+        )
+        session.commit()
+        worker = _Backend()
+        runner = ServiceRunner(database=database, backend=worker, workers=1)
+        original_commit = session.commit
+
+        def fail_commit() -> None:
+            raise RuntimeError("injected claim commit failure")
+
+        monkeypatch.setattr(session, "commit", fail_commit)
+        with pytest.raises(RuntimeError, match="injected claim commit failure"):
+            runner._dispatch(session, repository, code_version="test")
+        monkeypatch.setattr(session, "commit", original_commit)
+        session.rollback()
+        assert worker.submitted == [row.run_id]
+        assert worker.cancelled == [row.run_id]
+
+    assert worker.submitted == [row.run_id]
+    with sync_sessions(database)() as session:
+        saved = RunRepository(session).get_run(row.run_id)
+        assert saved is not None
+        assert saved.status == "queued"
+        assert saved.worker_id is None
 
 
 def test_dependency_release_waits_for_all_required_producers_and_is_idempotent(tmp_path) -> None:

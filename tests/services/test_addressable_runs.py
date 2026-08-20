@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
 from runbook.services.db import sync_sessions, upgrade_with_metadata
 from runbook.services.repository import RunRepository
 from runbook.services.runner import ServiceRunner
+from runbook.worker.execution import wait_for_claim
 
 
 def _source_config():
@@ -73,6 +76,70 @@ def test_cancelled_run_cannot_be_claimed(tmp_path) -> None:
         assert not repository.claim(row.run_id, "local:101")
         session.commit()
         assert row.status == "cancelled"
+
+
+def test_worker_handshake_accepts_only_its_committed_claim(tmp_path, monkeypatch) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    upgrade_with_metadata(database)
+    monkeypatch.setenv("RUNBOOK_DATABASE_URL", database)
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        config = repository.save_config("source", "handshake", _source_config())
+        success = repository.queue_run(
+            kind="source",
+            target_id="handshake",
+            slot=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            trigger="manual",
+            force=True,
+            config=config,
+        )
+        expected = f"local:{os.getpid()}"
+        assert repository.claim(success.run_id, expected)
+        session.commit()
+    assert wait_for_claim(success.run_id, timeout=0.01) == expected
+
+
+def test_worker_handshake_waits_for_claim_then_times_out_monotonically(tmp_path, monkeypatch) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    upgrade_with_metadata(database)
+    monkeypatch.setenv("RUNBOOK_DATABASE_URL", database)
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        config = repository.save_config("source", "handshake", _source_config())
+        queued = repository.queue_run(
+            kind="source",
+            target_id="handshake",
+            slot=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            trigger="manual",
+            force=True,
+            config=config,
+        )
+        session.commit()
+
+    clock = iter((100.0, 110.01))
+    monkeypatch.setattr("runbook.worker.execution.time.monotonic", lambda: next(clock))
+    assert wait_for_claim(queued.run_id, timeout=10.0) is None
+
+
+@pytest.mark.parametrize("status", ["success", "failed", "cancelled"])
+def test_worker_handshake_rejects_terminal_rows_without_executing(tmp_path, monkeypatch, status) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    upgrade_with_metadata(database)
+    monkeypatch.setenv("RUNBOOK_DATABASE_URL", database)
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        config = repository.save_config("source", "handshake", _source_config())
+        row = repository.queue_run(
+            kind="source",
+            target_id="handshake",
+            slot=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            trigger="manual",
+            force=True,
+            config=config,
+        )
+        row.status = status
+        session.commit()
+    assert wait_for_claim(row.run_id, timeout=10.0) is None
 
 
 def test_tick_executes_a_source_in_a_fresh_worker_process(tmp_path) -> None:

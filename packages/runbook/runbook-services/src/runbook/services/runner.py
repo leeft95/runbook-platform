@@ -84,6 +84,7 @@ class ServiceRunner:
             if not acquired:
                 logger.info("tick skipped: runner lock is held")
                 return [{"status": "skipped", "reason": "another tick is running"}]
+            logger.info("tick lock acquired")
             self._reconcile_orphans()
             first = True
             while first or self._active:
@@ -100,7 +101,8 @@ class ServiceRunner:
         with tick_lock(sync_engine(self.database)) as acquired:
             if not acquired:
                 logger.info("runner skipped: runner lock is held")
-                return {"status": "skipped", "reason": "another tick is running"}
+                return {"status": "skipped", "reason": "another runner is running"}
+            logger.info("runner lock acquired")
             logger.info("runner started workers={} poll_interval={}", self.workers, self.poll_interval)
             try:
                 previous = {name: signal.getsignal(name) for name in (signal.SIGINT, signal.SIGTERM)}
@@ -122,15 +124,18 @@ class ServiceRunner:
 
     def _cycle(self, current: datetime, *, code_version: str | None) -> None:
         """Execute one explicit schedule -> cancel -> poll -> release -> dispatch cycle."""
+        logger.info("cycle started active={} now={}", len(self._active), current.isoformat())
         with sync_sessions(self.database)() as session:
             repository = RunRepository(session)
             source_configs = repository.list_latest_configs("source")
             profile_configs = repository.list_latest_configs("profile", enabled_only=True)
             producer_by_dataset = self._producer_map(source_configs)
             self._import_legacy_pointers(repository, source_configs, current)
+            scheduled = 0
             if not self._stop.is_set():
-                self._schedule_sources(repository, source_configs, current)
+                scheduled = self._schedule_sources(repository, source_configs, current)
             session.commit()
+            logger.info("cycle scheduled={} active={}", scheduled, len(self._active))
 
             self._reconcile_cancellations(session, repository)
             self._reconcile_workers(session, repository)
@@ -153,17 +158,29 @@ class ServiceRunner:
             for row in repository.running_runs():
                 if row.run_id in self._active:
                     continue
+                write_failure_log(
+                    self.data_store,
+                    self._log_identity(repository, row),
+                    RuntimeError("worker ownership lost / runner restarted"),
+                    incomplete=True,
+                )
                 repository.reconcile_orphan(
                     row.run_id,
                     reason="worker ownership lost / runner restarted",
                 )
+                logger.warning(
+                    "orphan reconciled run_id={} status={}",
+                    row.run_id,
+                    "cancelled" if row.cancel_requested_at else "failed",
+                )
             session.commit()
 
-    def _schedule_sources(self, repository: RunRepository, configs: list[ConfigRevision], current: datetime) -> None:
+    def _schedule_sources(self, repository: RunRepository, configs: list[ConfigRevision], current: datetime) -> int:
         """Queue one idempotent scheduled run for each enabled source."""
+        count = 0
         for config in configs:
             if self._stop.is_set():
-                return
+                return count
             model = self._model(config)
             if not isinstance(model, SourceConfig) or not model.enabled:
                 continue
@@ -171,6 +188,8 @@ class ServiceRunner:
             repository.queue_run(
                 kind="source", target_id=config.config_id, slot=slot, trigger="schedule", force=False, config=config
             )
+            count += 1
+        return count
 
     def _producer_map(self, configs: list[ConfigRevision]) -> dict[str, str]:
         """Build the one-source-per-dataset ownership map."""
@@ -248,6 +267,12 @@ class ServiceRunner:
             row = repository.get_run(run_id)
             if row is None or row.status != "running" or row.cancel_requested_at is None:
                 continue
+            write_failure_log(
+                self.data_store,
+                self._log_identity(repository, row),
+                RuntimeError("worker cancellation requested"),
+                incomplete=True,
+            )
             try:
                 backend.cancel(run_id)
             except KeyError:
@@ -255,6 +280,7 @@ class ServiceRunner:
             cancelled = repository.cancel_owned(run_id, worker_id)
             if cancelled:
                 self._outcomes.append(self._outcome(repository.get_run(run_id) or row))
+                logger.info("worker cancelled run_id={} worker_id={}", run_id, worker_id)
             self._active.pop(run_id, None)
         session.commit()
 
@@ -272,27 +298,30 @@ class ServiceRunner:
             row = repository.get_run(run_id)
             if row is not None and row.status == "running" and row.worker_id == worker_id:
                 if row.cancel_requested_at is not None:
+                    write_failure_log(
+                        self.data_store,
+                        self._log_identity(repository, row),
+                        RuntimeError("worker exited after cancellation request"),
+                        incomplete=True,
+                    )
                     repository.cancel_owned(run_id, worker_id)
                 else:
                     write_failure_log(
                         self.data_store,
-                        RunLogIdentity(
-                            run_id=run_id,
-                            kind=row.kind,
-                            target_id=row.target_id,
-                            slot=_aware_utc(row.slot),
-                        ),
+                        self._log_identity(repository, row),
                         RuntimeError("worker exited without terminal outcome"),
                         incomplete=True,
                     )
                     repository.finish_owned(
                         run_id, worker_id, status="failed", reason="worker exited without terminal outcome"
                     )
+                    logger.warning("worker exited without outcome run_id={} worker_id={}", run_id, worker_id)
             if row is not None:
                 row = repository.get_run(run_id) or row
                 if row.status not in {"queued", "running"}:
                     self._outcomes.append(self._outcome(row))
             self._active.pop(run_id, None)
+            logger.info("worker handle released run_id={} exit_code={}", run_id, state.exit_code)
         session.commit()
 
     def _release_dependencies(
@@ -321,7 +350,12 @@ class ServiceRunner:
                 continue
             all_represented = True
             for config, profile, producers in affected:
-                if None in producers or repository.has_queued_or_running_source({item for item in producers if item}):
+                if not self._producer_settled(
+                    repository,
+                    profile,
+                    producers,
+                    source_row.slot,
+                ):
                     all_represented = False
                     continue
                 try:
@@ -348,8 +382,45 @@ class ServiceRunner:
                         context_hash=build_context_hash(profile.execution_config()),
                         code_version=code_version or os.environ.get("RUNBOOK_CODE_VERSION") or "local",
                     )
+                    logger.info(
+                        "dependency release profile={} snapshot={} source_run_id={}",
+                        profile.profile_id,
+                        snapshot.snapshot_id,
+                        source_row.run_id,
+                    )
             if all_represented:
                 source_row.dependencies_released_at = datetime.now(timezone.utc)
+
+    def _producer_settled(
+        self,
+        repository: RunRepository,
+        profile: ReportProfile,
+        producers: set[str | None],
+        slot: datetime,
+    ) -> bool:
+        """Require one successful, current producer attempt per dataset.
+
+        A pointer left behind by an older or failed attempt is not a settled
+        refresh generation.  This explicit source->dataset rule avoids
+        releasing a profile from a mixed old/new snapshot without introducing
+        a general dependency graph.
+        """
+        if None in producers:
+            return False
+        if repository.has_queued_or_running_source({item for item in producers if item}):
+            return False
+        pointers = repository.pointer_registry.get(profile.datasets.values())
+        for dataset_id in profile.datasets.values():
+            pointer = pointers.get(dataset_id)
+            if pointer is None or pointer.source_id not in producers:
+                return False
+            producer = pointer.source_id
+            attempts = repository.source_runs_since(producer, slot)
+            if not any(attempt.status == "success" for attempt in attempts):
+                return False
+            if _aware_utc(pointer.watermark) < _aware_utc(slot):
+                return False
+        return True
 
     def _dispatch(self, session: Any, repository: RunRepository, *, code_version: str | None) -> None:
         """Claim and spawn no more than the configured local capacity."""
@@ -378,25 +449,46 @@ class ServiceRunner:
                 self._fail_preflight(repository, row, str(exc))
                 self._outcomes.append(self._outcome(row))
                 continue
+            # Spawn failures are ordinary preflight failures.  Once a process
+            # exists, however, a claim/commit error is a database failure: the
+            # row must remain queued and the original exception must escape.
+            # Treating that error as a worker preflight failure loses the
+            # distinction between an unclaimed row and a failed run.
             try:
                 worker_id = backend.submit(row.run_id)
-                if not repository.claim(row.run_id, worker_id):
-                    backend.cancel(row.run_id)
-                    session.rollback()
-                    continue
-                session.commit()
             except Exception as exc:
+                self._fail_preflight(repository, row, str(exc))
+                self._outcomes.append(self._outcome(row))
+                continue
+
+            try:
+                claimed = repository.claim(row.run_id, worker_id)
+            except Exception:
+                session.rollback()
+                try:
+                    backend.cancel(row.run_id)
+                except Exception:  # preserve the original database error
+                    pass
+                raise
+            if not claimed:
                 session.rollback()
                 try:
                     backend.cancel(row.run_id)
                 except KeyError:
                     pass
-                row = repository.get_run(row.run_id) or row
-                self._fail_preflight(repository, row, str(exc))
-                self._outcomes.append(self._outcome(row))
-                session.commit()
                 continue
+
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                try:
+                    backend.cancel(row.run_id)
+                except Exception:  # preserve the original database error
+                    pass
+                raise
             self._active[row.run_id] = worker_id
+            logger.info("worker dispatched run_id={} worker_id={}", row.run_id, worker_id)
 
     def _shutdown(self) -> None:
         """Durably cancel and terminate only this runner's workers."""
@@ -410,11 +502,18 @@ class ServiceRunner:
                     self._active.pop(run_id, None)
                     continue
                 repository.request_cancel(run_id)
+                write_failure_log(
+                    self.data_store,
+                    self._log_identity(repository, row),
+                    RuntimeError("runner shutdown"),
+                    incomplete=True,
+                )
                 try:
                     self._backend().cancel(run_id)
                 except KeyError:
                     pass
                 repository.cancel_owned(run_id, worker_id, reason="runner shutdown")
+                logger.info("worker cancelled for shutdown run_id={} worker_id={}", run_id, worker_id)
                 self._active.pop(run_id, None)
             session.commit()
 
@@ -441,3 +540,23 @@ class ServiceRunner:
             "artifact_id": row.artifact_id,
             "log_ref": (row.result or {}).get("log_ref"),
         }
+
+    def _log_identity(self, repository: RunRepository, row: Run) -> RunLogIdentity:
+        """Use the same report-aware log path as the worker when available."""
+        report_id = None
+        if row.kind == "profile":
+            config = repository.get_config(row.kind, row.target_id, row.config_revision)
+            if config is not None:
+                try:
+                    model = self._model(config)
+                except Exception:
+                    model = None
+                if isinstance(model, ReportProfile):
+                    report_id = model.report_id
+        return RunLogIdentity(
+            run_id=row.run_id,
+            kind=row.kind,
+            target_id=row.target_id,
+            slot=_aware_utc(row.slot),
+            report_id=report_id,
+        )

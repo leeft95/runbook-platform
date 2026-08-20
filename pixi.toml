@@ -48,6 +48,7 @@ prophet = "*"
 
 [tasks]
 test = "pytest -q"
+test-postgres = "python scripts/run_postgres_tests.py"
 test-cov = "pytest -q --cov=runbook --cov-report=term-missing"
 lint = "ruff check ."
 format-check = "ruff format --check ."

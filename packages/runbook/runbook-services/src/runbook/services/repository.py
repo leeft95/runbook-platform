@@ -354,6 +354,16 @@ class RunRepository:
             or 0
         ) > 0
 
+    def source_runs_since(self, source_id: str, slot: datetime) -> list[Run]:
+        """Return producer attempts for one refresh opportunity in order."""
+        return list(
+            self.session.scalars(
+                select(Run)
+                .where(Run.kind == "source", Run.target_id == source_id, Run.slot >= slot)
+                .order_by(Run.slot, Run.requested_at, Run.run_id)
+            ).all()
+        )
+
     def running_runs(self) -> list[Run]:
         """Return every running row for startup reconciliation."""
         return list(self.session.scalars(select(Run).where(Run.status == "running")).all())
