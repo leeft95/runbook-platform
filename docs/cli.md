@@ -1,6 +1,7 @@
 # CLI reference
 
-The SDK and service packages install two commands.
+The workspace installs the report preview, service, and per-run worker
+commands.
 
 ## `runbook-preview`
 
@@ -36,6 +37,7 @@ runbook-services [--database URL] run [--store URI] [--reports-root PATH]
 runbook-services [--database URL] serve [--host HOST] [--port PORT]
                                       [--store URI] [--reports-root PATH]
                                       [--reload]
+runbook-worker --run-id RUN_ID
 ```
 
 `run` requires `--workers >= 1` and `--poll-interval > 0`; it runs until
@@ -44,3 +46,9 @@ SIGINT/SIGTERM and exits cleanly if another runner holds the advisory lock.
 idle. `--now` must be an ISO timestamp with a timezone. `--reload` is for local
 development. Run `runbook-services COMMAND --help` for argparse's current
 option descriptions.
+
+`runbook-worker` accepts only a durable run ID; it loads its pinned
+configuration and snapshot from PostgreSQL. The service never serializes
+source-specific execution state into the worker command. `pixi run
+test-postgres` runs the opt-in PostgreSQL release gate and requires
+`RUNBOOK_TEST_DATABASE_URL` to name a disposable database.

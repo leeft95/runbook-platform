@@ -28,10 +28,36 @@ The default data store is `file:.runbook`. It can be changed with
 `--store s3://bucket/prefix` argument. S3 support is optional; install
 `runbook-data[s3]` when using it.
 
-Run one externally scheduled service tick:
+For a bounded compatibility run, use one externally scheduled service tick:
 
 ```bash
 runbook-services tick --workers 4
+```
+
+For continuous local operation, run the API/UI and durable polling runner as
+separate processes:
+
+```bash
+runbook-services serve
+runbook-services run --workers 2 --poll-interval 1
+```
+
+The runner keeps the PostgreSQL queue authoritative, launches one
+`runbook-worker --run-id ...` process per admitted run, and leaves excess work
+queued. Cancellation is durable intent through the API; only the runner
+terminates its own local process handles. The checked-in optional demo configs
+include local append, HTTP CSV, slow, 404, and 500 cases and are disabled by
+default. Start their standard-library fixture server with:
+
+```bash
+python scripts/demo_http_server.py
+```
+
+The disposable PostgreSQL release suite is opt-in and fails closed without an
+explicit URL:
+
+```bash
+RUNBOOK_TEST_DATABASE_URL=postgresql+psycopg://... pixi run test-postgres
 ```
 
 For a local report preview, use the SDK command with a profile from

@@ -15,8 +15,9 @@ calculations, and HTML artifacts.
   worker diagnostics, and a Dash operations UI.
 - `runbook-worker`: one-process-per-run source and report execution.
 
-The dependency direction is `core -> data`, `core -> sdk`, `core -> services`,
-and `services -> worker` only at process launch time.
+The package DAG is `core -> data/sdk/services`; the SDK retains its
+developer-facing `sdk -> data` edge, and `worker` composes core, data, SDK, and
+services at the per-run process boundary. Services never imports worker code.
 Reports are external templates selected with `--reports-root`; they do not
 call source systems.
 

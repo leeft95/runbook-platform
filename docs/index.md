@@ -78,7 +78,9 @@ for pull requests and is published to
 The repository is a small dependency chain:
 
 ```text
-runbook-core -> runbook-data / runbook-sdk / runbook-services -> runbook-worker
+runbook-core -> runbook-data / runbook-sdk / runbook-services
+runbook-sdk -> runbook-data
+runbook-worker -> runbook-core / runbook-data / runbook-sdk / runbook-services
 ```
 
 Use the package APIs documented in the reference section rather than relying

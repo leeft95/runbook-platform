@@ -1,8 +1,8 @@
 # Platform architecture north star
 
-This is the small, opinionated direction for Runbook's generic control plane.
-It is adapted from the platform north-star planning note while describing the
-current repository and explicitly separating Phase A from future Phase B work.
+This is the small, opinionated architecture for Runbook's generic control
+plane. It describes the current repository and keeps the execution boundary
+small enough for a later backend implementation.
 
 ## The boundary
 
@@ -71,18 +71,18 @@ The local rules are:
 - local execution remains a small polling control plane, not a general DAG
   engine.
 
-## Future evolution
+## Backend evolution
 
 The local backend is intentionally the first `ExecutionBackend` implementation.
-The future extension is a Kubernetes Job/Pod backend with an immutable code
-revision and independently bounded resources. Kubernetes is not part of this
-local implementation.
+The next backend can be a Kubernetes Job/Pod backend with an immutable code
+revision and independently bounded resources. Kubernetes is intentionally not
+implemented here.
 - **Repository split:** formalize a physical split between the generic
   platform/control plane and data/execution repositories after the package
   contracts are stable. Do not duplicate orchestration logic or introduce a
   cyclic dependency while doing so.
 
-When Phase B begins, a useful progression is:
+The intended progression is:
 
 ```text
 one addressable local process per run

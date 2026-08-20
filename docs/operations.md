@@ -30,7 +30,7 @@ aliases, and report file discovery before writing revisions.
 
 ## Polling runner and compatibility tick
 
-Run one tick from an external scheduler such as cron:
+Run the API/UI and long-lived polling runner as separate processes:
 
 ```bash
 runbook-services run --workers 4 --poll-interval 5
@@ -72,8 +72,16 @@ boundary before exposing it to a network. See the repository [security
 policy](https://github.com/redcombojnr/runbook-platform/blob/main/SECURITY.md).
 
 The local process backend is the first `ExecutionBackend` implementation;
-Kubernetes is a future backend. No retries, priority queue, heartbeat, broker,
-or PID adoption is performed.
+Kubernetes is the next backend direction. No retries, priority queue,
+heartbeat, broker, or PID adoption is performed.
+
+For deterministic local source checks, run `python scripts/demo_http_server.py`
+and enable one of the optional `demo_http_*` configurations. The server uses
+only checked-in CSV fixtures and exposes CSV, slow, 404, and 500 routes. The
+standard suite uses SQLite and must have zero skips. The PostgreSQL release
+suite is explicit: set `RUNBOOK_TEST_DATABASE_URL` to a disposable database
+and run `pixi run test-postgres`; it fails immediately when the URL is absent
+and never drops the database.
 
 ## Failure and recovery
 

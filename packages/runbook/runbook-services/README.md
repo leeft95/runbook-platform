@@ -14,13 +14,14 @@ run-scoped log page. Worker diagnostics are stored as small immutable chunks
 in the configured blob store rather than PostgreSQL. The log page polls only
 newly available chunks and stops after observing the terminal manifest.
 
-The service mode is externally scheduled. Run `runbook-services tick` from
-cron after applying `runbook-services db upgrade`. Each tick uses bounded
-local process execution and commits source outcomes before dataset-triggered
-profiles are released. PostgreSQL is the sole control-plane ledger for
-production runs; blob storage retains immutable data, manifests, report
-artifacts, and worker logs. Profiles are manual or dataset-triggered; only
-source schedules create scheduled roots.
+The API/UI and polling runner are separate long-lived processes. After applying
+`runbook-services db upgrade`, start `runbook-services serve` and
+`runbook-services run --workers 2 --poll-interval 5`. The compatibility
+`runbook-services tick` command uses the same bounded local process execution
+and drains locally owned work before exiting. PostgreSQL is the sole
+control-plane ledger for production runs; blob storage retains immutable data,
+manifests, report artifacts, and worker logs. Profiles are manual or
+dataset-triggered; only source schedules create scheduled roots.
 
 For local development, enable Uvicorn auto-reload with:
 
