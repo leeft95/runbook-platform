@@ -92,6 +92,7 @@ class ServiceRunner:
                 self._cycle(current, code_version=code_version)
                 if self._active:
                     time.sleep(0.02)
+        logger.info("tick lock released")
         return sorted(self._outcomes, key=lambda item: (item.get("requested_at", ""), item["run_id"]))
 
     def run(self, *, code_version: str | None = None) -> dict[str, Any]:
@@ -120,6 +121,7 @@ class ServiceRunner:
             finally:
                 for name, handler in previous.items():
                     signal.signal(name, handler)
+        logger.info("runner lock released")
         return {"status": "stopped", "outcomes": sorted(self._outcomes, key=lambda item: item["run_id"])}
 
     def _cycle(self, current: datetime, *, code_version: str | None) -> None:

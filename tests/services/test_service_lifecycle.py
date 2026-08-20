@@ -177,6 +177,26 @@ def test_tick_and_run_share_cycle_and_lock_refusal_is_structured(tmp_path, monke
     ]
 
 
+def test_lifecycle_diagnostics_include_cycle_and_lock_release(tmp_path, monkeypatch) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    upgrade_with_metadata(database)
+    messages: list[str] = []
+
+    class _Logger:
+        def info(self, message: str, *_args) -> None:
+            messages.append(message)
+
+        def warning(self, *_args) -> None:
+            pass
+
+    monkeypatch.setattr(runner_module, "logger", _Logger())
+    ServiceRunner(database=database).tick(now=datetime(2026, 1, 1, tzinfo=timezone.utc), code_version="test")
+    assert "tick lock acquired" in messages
+    assert "cycle started active={} now={}" in messages
+    assert "cycle scheduled={} active={}" in messages
+    assert "tick lock released" in messages
+
+
 def test_dependency_release_requires_current_pointer_for_each_successful_producer(tmp_path: Path) -> None:
     database = f"sqlite:///{tmp_path / 'runs.db'}"
     store_uri = f"file:{tmp_path / 'store'}"
