@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -9,7 +9,6 @@ from typing import Iterator
 
 from sqlalchemy import Column, DateTime, MetaData, String, Table, create_engine, func, select
 from sqlalchemy.engine import Connection, Engine
-
 
 DEFAULT_DATABASE_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/runbook"
 
@@ -75,15 +74,20 @@ class DatabasePointerRegistry:
             with self.bind.connect() as connection:
                 yield connection
 
-    def get(self, dataset_ids: Iterable[str]) -> dict[str, DatasetPointer]:
+    def get(self, dataset_ids: Iterable[str], *, for_update: bool = False) -> dict[str, DatasetPointer]:
         """Load the current pointer for each requested dataset that exists."""
         requested = sorted(set(dataset_ids))
         if not requested:
             return {}
         with self._connection() as connection:
-            rows = connection.execute(
-                select(dataset_pointers).where(dataset_pointers.c.dataset_id.in_(requested))
-            ).mappings()
+            statement = (
+                select(dataset_pointers)
+                .where(dataset_pointers.c.dataset_id.in_(requested))
+                .order_by(dataset_pointers.c.dataset_id)
+            )
+            if for_update:
+                statement = statement.with_for_update()
+            rows = connection.execute(statement).mappings()
             return {row["dataset_id"]: DatasetPointer(**dict(row)) for row in rows}
 
     def all(self) -> dict[str, DatasetPointer]:
@@ -105,9 +109,14 @@ class DatabasePointerRegistry:
         source_run_id: str,
         updates: Iterable[DatasetPointerUpdate],
         updated_at: datetime | None = None,
+        expected_source_run_ids: Mapping[str, str | None] | None = None,
     ) -> None:
-        """Atomically publish one source's current dataset pointers."""
-        prepared = list(updates)
+        """Atomically publish one source's current dataset pointers.
+
+        When supplied, ``expected_source_run_ids`` makes publication a small
+        compare-and-set operation for workers that loaded prior pointers.
+        """
+        prepared = sorted(updates, key=lambda item: item.dataset_id)
         if len({item.dataset_id for item in prepared}) != len(prepared):
             raise ValueError("pointer publication contains duplicate dataset ids")
         stamp = _utc(updated_at or datetime.now(timezone.utc))
@@ -123,7 +132,7 @@ class DatabasePointerRegistry:
             for item in prepared
         }
         with self._connection(write=True) as connection:
-            existing = self._get_with_connection(connection, [item.dataset_id for item in prepared])
+            existing = self._get_with_connection(connection, [item.dataset_id for item in prepared], for_update=True)
             conflicts = {
                 dataset_id: pointer.source_id
                 for dataset_id, pointer in existing.items()
@@ -132,6 +141,23 @@ class DatabasePointerRegistry:
             if conflicts:
                 details = ", ".join(f"{dataset_id}={owner}" for dataset_id, owner in sorted(conflicts.items()))
                 raise ValueError(f"datasets already belong to another source: {details}")
+            if expected_source_run_ids is not None:
+                changed = {
+                    item.dataset_id: (
+                        expected_source_run_ids[item.dataset_id],
+                        existing[item.dataset_id].source_run_id if item.dataset_id in existing else None,
+                    )
+                    for item in prepared
+                    if item.dataset_id in expected_source_run_ids
+                    and expected_source_run_ids[item.dataset_id]
+                    != (existing[item.dataset_id].source_run_id if item.dataset_id in existing else None)
+                }
+                if changed:
+                    details = ", ".join(
+                        f"{dataset_id}: expected={expected!r}, actual={actual!r}"
+                        for dataset_id, (expected, actual) in sorted(changed.items())
+                    )
+                    raise ValueError(f"pointer compare-and-set conflict: {details}")
             for item in prepared:
                 values = values_by_dataset[item.dataset_id]
                 if item.dataset_id in existing:
@@ -144,14 +170,24 @@ class DatabasePointerRegistry:
                     connection.execute(dataset_pointers.insert().values(dataset_id=item.dataset_id, **values))
 
     @staticmethod
-    def _get_with_connection(connection: Connection, dataset_ids: Iterable[str]) -> dict[str, DatasetPointer]:
+    def _get_with_connection(
+        connection: Connection,
+        dataset_ids: Iterable[str],
+        *,
+        for_update: bool = False,
+    ) -> dict[str, DatasetPointer]:
         """Load requested pointers without changing transaction ownership."""
         requested = sorted(set(dataset_ids))
         if not requested:
             return {}
-        rows = connection.execute(
-            select(dataset_pointers).where(dataset_pointers.c.dataset_id.in_(requested))
-        ).mappings()
+        statement = (
+            select(dataset_pointers)
+            .where(dataset_pointers.c.dataset_id.in_(requested))
+            .order_by(dataset_pointers.c.dataset_id)
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        rows = connection.execute(statement).mappings()
         return {row["dataset_id"]: DatasetPointer(**dict(row)) for row in rows}
 
 

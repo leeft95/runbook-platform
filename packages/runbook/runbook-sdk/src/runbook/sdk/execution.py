@@ -14,10 +14,10 @@ from typing import Any
 from loguru import logger
 from plotly.utils import PlotlyJSONEncoder
 from pydantic import BaseModel, ConfigDict, Field
+from runbook.core import BlobStore
 from runbook.core.keying import build_context_hash
 from runbook.core.pdl.models import PDLManifest, PDLSourceType, PDLStyle
 from runbook.core.utils.hashing import sha256_json
-from runbook.data import BlobStore
 from runbook.sdk.context import Ctx
 from runbook.sdk.discovery import discover_report_definition
 from runbook.sdk.html import DEFAULT_GRID_CSS, DEFAULT_GRID_CSS_REF, render_html

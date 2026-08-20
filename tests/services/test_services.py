@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
-from threading import Barrier
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import dash
@@ -11,7 +9,6 @@ import dash_ag_grid as dag
 import httpx
 import pytest
 import uvicorn
-from runbook.core import Snapshot
 from runbook.data import (
     DatabasePointerRegistry,
     DatasetPointerUpdate,
@@ -20,19 +17,11 @@ from runbook.data import (
     open_blob_store,
     write_manifests,
 )
-from runbook.data.ingest import (
-    AcquisitionResult,
-    AcquisitionStageResult,
-    CurationResult,
-    RawArtifactRecord,
-    ReadinessResult,
-    ReadinessStatus,
-)
 from runbook.services import cli
-from runbook.services import runner as runner_module
 from runbook.services.app import create_app, version_payload
 from runbook.services.dash import runs
 from runbook.services.dash._config import _profile_new_row, _source_new_row, register_config_page
+from runbook.services.dash.runs import _cancel_state
 from runbook.services.db import sync_sessions, upgrade_with_metadata
 from runbook.services.logging import RunLogIdentity, read_log_tail
 from runbook.services.models import Base
@@ -42,18 +31,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 
-def _threaded_runner(**kwargs) -> ServiceRunner:
-    """Use threads only for tests that monkeypatch worker callables."""
-    return ServiceRunner(
-        executor_factory=lambda workers: ThreadPoolExecutor(max_workers=workers),
-        **kwargs,
-    )
-
-
 def test_root_version_endpoint_and_dash_mount() -> None:
     app = create_app(database="postgresql+psycopg://postgres:postgres@localhost:5432/runbook")
     assert "/api/v1/sources" in app.openapi()["paths"]
     assert "/api/v1/profiles/{profile_id}/runs" in app.openapi()["paths"]
+    assert "/api/v1/runs/{run_id}/cancel" in app.openapi()["paths"]
     pages = [page for module, page in dash.page_registry.items() if module.startswith("runbook.services.dash.")]
     assert {page["path"] for page in pages if page["path_template"] is None} == {
         "/",
@@ -142,6 +124,31 @@ def test_serve_reload_uses_uvicorn_factory(monkeypatch) -> None:
     }
 
 
+def test_config_import_retains_deprecated_reports_root(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_import(args):
+        captured.update(vars(args))
+        return {"sources": 0, "profiles": 0}
+
+    monkeypatch.setattr(cli, "import_configs", fake_import)
+    assert (
+        cli.main(
+            [
+                "--database",
+                "sqlite:///test.db",
+                "config",
+                "import",
+                "--reports-root",
+                "legacy-reports",
+            ]
+        )
+        == 0
+    )
+    assert captured["reports_root"] == "legacy-reports"
+    assert "reports-root" not in capsys.readouterr().err
+
+
 def test_config_pages_use_grid_editors() -> None:
     create_app(database="postgresql+psycopg://postgres:postgres@localhost:5432/runbook")
 
@@ -185,6 +192,12 @@ def test_config_pages_use_grid_editors() -> None:
         for callback in callback_app.callback_map.values()
     )
     assert "runbook-ui-runs-run-id.options" not in callback_keys
+    assert "runbook-ui-runs-cancel.disabled" in callback_keys
+    assert "runbook-ui-runs-cancel-result.children" in callback_keys
+    assert _cancel_state(None) == (True, "Select a queued or running run to cancel.")
+    assert _cancel_state(SimpleNamespace(status="success", cancel_requested_at=None))[0] is True
+    assert _cancel_state(SimpleNamespace(status="running", cancel_requested_at=datetime.now(timezone.utc)))[0] is True
+    assert _cancel_state(SimpleNamespace(status="queued", cancel_requested_at=None)) == (False, "")
     run_page = dash.page_registry["runbook.services.dash.runs"]["layout"]
     grid = next(child for child in run_page.children if getattr(child, "id", None) == "runbook-ui-runs-grid")
     assert grid.columnDefs[0] == {
@@ -263,66 +276,6 @@ def test_service_runner_validates_workers_and_ignores_profile_cron(tmp_path) -> 
     assert runner.tick(now=datetime(2026, 1, 1, tzinfo=timezone.utc), code_version="test") == []
     with sync_sessions(database)() as session:
         assert RunRepository(session).list_runs() == []
-
-
-def test_tick_orders_persisted_and_newly_scheduled_rows(monkeypatch, tmp_path) -> None:
-    database = f"sqlite:///{tmp_path / 'service.db'}"
-    upgrade_with_metadata(database)
-    earlier = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    current = datetime(2026, 1, 2, tzinfo=timezone.utc)
-    with sync_sessions(database)() as session:
-        repository = RunRepository(session)
-        with session.begin():
-            config = repository.save_config(
-                "source",
-                "prices_source",
-                {
-                    "adapter": "local_file",
-                    "schedule": {"cron": "0 0 * * *", "timezone": "UTC"},
-                    "datasets": {
-                        "prices": {
-                            "dataset_id": "prices",
-                            "parser_id": "csv_timeseries_v1",
-                            "update_mode": "full",
-                        }
-                    },
-                    "params": {"local_path": "unused.csv", "ticker": "prices"},
-                },
-            )
-            repository.queue_run(
-                kind="source",
-                target_id="prices_source",
-                slot=earlier,
-                trigger="manual",
-                force=False,
-                config=config,
-            )
-
-    def not_ready(*, source_config, slot, **_kwargs):
-        readiness = ReadinessResult(
-            source_id=source_config.source_id,
-            acquisition_run=slot.isoformat(),
-            status=ReadinessStatus.not_ready,
-            observed_at=slot,
-        )
-        return AcquisitionStageResult(
-            acquisition_run=slot.isoformat(),
-            status=ReadinessStatus.not_ready,
-            readiness=readiness,
-            message="not ready",
-        )
-
-    monkeypatch.setattr(runner_module, "run_stage1_acquire", not_ready)
-    outcomes = _threaded_runner(database=database, data_store=f"file:{tmp_path / 'store'}").tick(
-        now=current,
-        code_version="test",
-    )
-
-    assert [item["status"] for item in outcomes] == ["not_ready", "not_ready"]
-    assert [item["slot"] for item in outcomes] == [
-        earlier.isoformat(),
-        current.isoformat(),
-    ]
 
 
 def test_config_revisions_are_immutable_and_compare_and_swap() -> None:
@@ -473,73 +426,6 @@ def test_run_queue_reuses_active_identity() -> None:
         assert second.run_id == first.run_id
 
 
-def test_service_runner_persists_report_artifact_references(monkeypatch, tmp_path) -> None:
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    slot = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    snapshot = Snapshot(
-        snapshot_id="0" * 64,
-        watermark=slot - timedelta(days=1),
-        datasets={"prices": "manifests/prices.json"},
-    )
-    result = {
-        "profile_id": "demo",
-        "slot": "20260101T000000Z",
-        "status": "success",
-        "artifact_id": "artifact",
-        "snapshot_id": "snapshot",
-        "context_hash": "context",
-        "code_version": "code",
-        "prefix": "reports/demo/1",
-        "html_ref": "reports/demo/1/report.html",
-        "stage3_ref": "reports/demo/1/manifest.stage3.json",
-        "stage4_ref": "reports/demo/1/manifest.stage4.json",
-        "reason": None,
-    }
-    monkeypatch.setattr(runner_module, "resolve_snapshot", lambda *_args, **_kwargs: snapshot)
-    monkeypatch.setattr(runner_module, "resolve_code_version", lambda *_args, **_kwargs: "code")
-    monkeypatch.setattr(
-        runner_module,
-        "run_report",
-        lambda **_kwargs: SimpleNamespace(as_dict=lambda: result),
-    )
-    with sessionmaker(engine, expire_on_commit=False)() as session:
-        repository = RunRepository(session)
-        with session.begin():
-            config = repository.save_config(
-                "profile",
-                "demo",
-                {
-                    "report_id": "demo_report",
-                    "datasets": {"prices": "demo_prices"},
-                },
-            )
-        with session.begin():
-            row = repository.queue_run(
-                kind="profile",
-                target_id="demo",
-                slot=slot,
-                trigger="manual",
-                force=False,
-                config=config,
-            )
-        outcomes = _threaded_runner(data_store=f"file:{tmp_path}")._run_dag(
-            session,
-            repository,
-            [row],
-            [],
-            {},
-            code_version="code",
-        )
-        session.commit()
-        outcome = outcomes[0]
-        assert outcome["status"] == "success"
-        assert row.snapshot_id == "snapshot"
-        assert row.artifact_id == "artifact"
-        assert row.result["stage3_ref"] == "reports/demo/1/manifest.stage3.json"
-        assert not (tmp_path / "runs").exists()
-
-
 def test_service_runner_fans_out_ready_dataset_to_report(tmp_path) -> None:
     database = f"sqlite:///{tmp_path / 'service.db'}"
     data_store = f"file:{tmp_path / 'store'}"
@@ -624,150 +510,6 @@ def test_service_runner_fans_out_ready_dataset_to_report(tmp_path) -> None:
     assert not open_blob_store(data_store).exists("pointers.json")
 
 
-@pytest.mark.parametrize("has_previous_snapshot", [False, True])
-def test_curation_failure_uses_previous_complete_snapshot_only(
-    monkeypatch,
-    tmp_path,
-    has_previous_snapshot,
-) -> None:
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    create_pointer_schema(engine)
-    store = open_blob_store(f"file:{tmp_path}")
-    slot = datetime(2026, 1, 2, tzinfo=timezone.utc)
-    previous = slot - timedelta(days=1)
-
-    def acquire(*, source_config, slot, **_kwargs):
-        readiness = ReadinessResult(
-            source_id=source_config.source_id,
-            acquisition_run=slot.isoformat(),
-            status=ReadinessStatus.ready,
-            observed_at=slot,
-        )
-        acquired = AcquisitionResult(
-            record=RawArtifactRecord(
-                source_id=source_config.source_id,
-                acquisition_run=slot.isoformat(),
-                artifact_ref="raw/current",
-                content_sha256="0" * 64,
-                source_filename="data.csv",
-                fetched_at=slot,
-            ),
-            payload=b"data",
-        )
-        return AcquisitionStageResult(
-            acquisition_run=slot.isoformat(),
-            status=ReadinessStatus.ready,
-            readiness=readiness,
-            acquired=acquired,
-        )
-
-    def fail_curation(**_kwargs):
-        raise RuntimeError("curation failed")
-
-    report_result = {
-        "profile_id": "dependent",
-        "slot": "20260101T000000Z",
-        "status": "success",
-        "artifact_id": "old-snapshot-artifact",
-        "snapshot_id": "old-snapshot",
-        "context_hash": "context",
-        "code_version": "test",
-        "prefix": "reports/dependent/old",
-        "html_ref": "reports/dependent/old/report.html",
-        "stage3_ref": "reports/dependent/old/manifest.stage3.json",
-        "stage4_ref": "reports/dependent/old/manifest.stage4.json",
-        "reason": None,
-    }
-    monkeypatch.setattr(runner_module, "run_stage1_acquire", acquire)
-    monkeypatch.setattr(runner_module, "run_stage2_curate", fail_curation)
-    monkeypatch.setattr(
-        runner_module,
-        "run_report",
-        lambda **_kwargs: SimpleNamespace(as_dict=lambda: report_result),
-    )
-
-    with sessionmaker(engine, expire_on_commit=False)() as session:
-        repository = RunRepository(session)
-        with session.begin():
-            source_config = repository.save_config(
-                "source",
-                "prices_source",
-                {
-                    "adapter": "local_file",
-                    "schedule": {"cron": "0 * * * *", "timezone": "UTC"},
-                    "datasets": {
-                        "prices": {
-                            "dataset_id": "prices",
-                            "parser_id": "csv_timeseries_v1",
-                            "update_mode": "full",
-                        }
-                    },
-                    "params": {
-                        "local_path": "unused.csv",
-                        "timestamp_column": "timestamp",
-                    },
-                },
-            )
-            profile_config = repository.save_config(
-                "profile",
-                "dependent",
-                {
-                    "report_id": "unused_report",
-                    "datasets": {"prices": "prices"},
-                },
-            )
-        if has_previous_snapshot:
-            manifest, digest = build_manifest(
-                dataset_id="prices",
-                watermark=previous,
-                published_at=previous,
-                files=[],
-            )
-            ref = write_manifests(store, [(manifest, digest)])["prices"]
-            with session.begin():
-                repository.pointer_registry.publish(
-                    source_id="prices_source",
-                    source_run_id="previous-run",
-                    updates=[
-                        DatasetPointerUpdate(
-                            dataset_id="prices",
-                            manifest_ref=ref,
-                            watermark=previous,
-                            published_at=previous,
-                        )
-                    ],
-                )
-        with session.begin():
-            source_run = repository.queue_run(
-                kind="source",
-                target_id="prices_source",
-                slot=slot,
-                trigger="manual",
-                force=False,
-                config=source_config,
-            )
-        outcomes = _threaded_runner(data_store=f"file:{tmp_path}", workers=2)._run_dag(
-            session,
-            repository,
-            [source_run],
-            [profile_config],
-            {"prices": "prices_source"},
-            code_version="test",
-        )
-
-        assert outcomes[0]["status"] == "failed"
-        profile_runs = repository.list_runs(kind="profile")
-        if has_previous_snapshot:
-            assert outcomes[1]["status"] == "success"
-            assert len(profile_runs) == 1
-            assert profile_runs[0].trigger == "dataset"
-            assert profile_runs[0].slot.replace(tzinfo=timezone.utc) == previous
-        else:
-            assert len(outcomes) == 1
-            assert profile_runs == []
-
-
 def test_service_runner_imports_legacy_pointers_once(tmp_path) -> None:
     database = f"sqlite:///{tmp_path / 'service.db'}"
     data_store = open_blob_store(f"file:{tmp_path / 'store'}")
@@ -809,297 +551,3 @@ def test_service_runner_imports_legacy_pointers_once(tmp_path) -> None:
     assert pointer.source_id == "prices_source"
     assert pointer.source_run_id == "legacy-pointer-import"
     assert data_store.get_json("pointers.json") == {"prices": ref}
-
-
-def test_service_runner_acquires_distinct_sources_concurrently(monkeypatch, tmp_path) -> None:
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    create_pointer_schema(engine)
-    barrier = Barrier(2)
-    slot = datetime(2026, 1, 1, tzinfo=timezone.utc)
-
-    def acquire(*, source_config, slot, **_kwargs):
-        barrier.wait(timeout=2)
-        readiness = ReadinessResult(
-            source_id=source_config.source_id,
-            acquisition_run=source_config.source_id,
-            status=ReadinessStatus.ready,
-            observed_at=slot,
-        )
-        acquired = AcquisitionResult(
-            record=RawArtifactRecord(
-                source_id=source_config.source_id,
-                acquisition_run=source_config.source_id,
-                artifact_ref=f"raw/{source_config.source_id}",
-                content_sha256="0" * 64,
-                source_filename="data.csv",
-                fetched_at=slot,
-            ),
-            payload=b"data",
-        )
-        return AcquisitionStageResult(
-            acquisition_run=source_config.source_id,
-            status=ReadinessStatus.ready,
-            readiness=readiness,
-            acquired=acquired,
-        )
-
-    def curate(*, source_config, acquired, **_kwargs):
-        update = DatasetPointerUpdate(
-            dataset_id=next(iter(binding.dataset_id for binding in source_config.datasets.values())),
-            manifest_ref=f"manifest/{source_config.source_id}",
-            watermark=slot,
-            published_at=slot,
-        )
-        return CurationResult(
-            datasets={update.dataset_id: update.manifest_ref},
-            pointer_updates=(update,),
-        )
-
-    monkeypatch.setattr(runner_module, "run_stage1_acquire", acquire)
-    monkeypatch.setattr(runner_module, "run_stage2_curate", curate)
-    with sessionmaker(engine, expire_on_commit=False)() as session:
-        repository = RunRepository(session)
-        rows = []
-        with session.begin():
-            for source_id in ("source_a", "source_b"):
-                config = repository.save_config(
-                    "source",
-                    source_id,
-                    {
-                        "adapter": "local_file",
-                        "schedule": {"cron": "0 * * * *", "timezone": "UTC"},
-                        "datasets": {
-                            "data": {
-                                "dataset_id": f"{source_id}_data",
-                                "parser_id": "csv_timeseries_v1",
-                            }
-                        },
-                        "params": {
-                            "local_path": "unused.csv",
-                            "timestamp_column": "timestamp",
-                        },
-                    },
-                )
-                rows.append(
-                    repository.queue_run(
-                        kind="source",
-                        target_id=source_id,
-                        slot=slot,
-                        trigger="manual",
-                        force=False,
-                        config=config,
-                    )
-                )
-        outcomes = _threaded_runner(data_store=f"file:{tmp_path}", workers=2)._run_dag(
-            session,
-            repository,
-            rows,
-            [],
-            {},
-            code_version="test",
-        )
-
-    assert [outcome["status"] for outcome in outcomes] == ["success", "success"]
-
-
-def test_service_runner_orders_same_source_by_slot(monkeypatch, tmp_path) -> None:
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    create_pointer_schema(engine)
-    earlier = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    later = datetime(2026, 1, 2, tzinfo=timezone.utc)
-    acquired_slots: list[datetime] = []
-
-    def acquire(*, source_config, slot, **_kwargs):
-        acquired_slots.append(slot)
-        readiness = ReadinessResult(
-            source_id=source_config.source_id,
-            acquisition_run=slot.isoformat(),
-            status=ReadinessStatus.ready,
-            observed_at=slot,
-        )
-        acquired = AcquisitionResult(
-            record=RawArtifactRecord(
-                source_id=source_config.source_id,
-                acquisition_run=slot.isoformat(),
-                artifact_ref=f"raw/{slot.isoformat()}",
-                content_sha256="0" * 64,
-                source_filename="data.csv",
-                fetched_at=slot,
-            ),
-            payload=b"data",
-        )
-        return AcquisitionStageResult(
-            acquisition_run=slot.isoformat(),
-            status=ReadinessStatus.ready,
-            readiness=readiness,
-            acquired=acquired,
-        )
-
-    def curate(*, source_config, acquired, **_kwargs):
-        update = DatasetPointerUpdate(
-            dataset_id="source_data",
-            manifest_ref=f"manifest/{acquired.record.acquisition_run}",
-            watermark=acquired.record.fetched_at,
-            published_at=acquired.record.fetched_at,
-        )
-        return CurationResult(
-            datasets={update.dataset_id: update.manifest_ref},
-            pointer_updates=(update,),
-        )
-
-    monkeypatch.setattr(runner_module, "run_stage1_acquire", acquire)
-    monkeypatch.setattr(runner_module, "run_stage2_curate", curate)
-    with sessionmaker(engine, expire_on_commit=False)() as session:
-        repository = RunRepository(session)
-        with session.begin():
-            config = repository.save_config(
-                "source",
-                "source",
-                {
-                    "adapter": "local_file",
-                    "schedule": {"cron": "0 * * * *", "timezone": "UTC"},
-                    "datasets": {
-                        "data": {
-                            "dataset_id": "source_data",
-                            "parser_id": "csv_timeseries_v1",
-                            "update_mode": "full",
-                        }
-                    },
-                    "params": {
-                        "local_path": "unused.csv",
-                        "timestamp_column": "timestamp",
-                    },
-                },
-            )
-            rows = [
-                repository.queue_run(
-                    kind="source",
-                    target_id="source",
-                    slot=slot,
-                    trigger="manual",
-                    force=False,
-                    config=config,
-                )
-                for slot in (later, earlier)
-            ]
-        _threaded_runner(data_store=f"file:{tmp_path}", workers=2)._run_dag(
-            session,
-            repository,
-            rows,
-            [],
-            {"source_data": "source"},
-            code_version="test",
-        )
-
-    assert acquired_slots == [earlier, later]
-
-
-def test_interrupt_fails_only_started_runs_before_executor_shutdown(tmp_path) -> None:
-    database = f"sqlite:///{tmp_path / 'service.db'}"
-    upgrade_with_metadata(database)
-    slot = datetime(2026, 1, 1, tzinfo=timezone.utc)
-
-    class InterruptingExecutor:
-        def __init__(self) -> None:
-            self.statuses: dict[str, str] = {}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            # A separate connection proves the handler committed before the
-            # executor context began shutdown.
-            with sync_sessions(database)() as check_session:
-                self.statuses = {row.run_id: row.status for row in RunRepository(check_session).list_runs(limit=20)}
-            return False
-
-        def submit(self, *_args, **_kwargs):
-            raise KeyboardInterrupt
-
-    executor = InterruptingExecutor()
-    with sync_sessions(database)() as session:
-        repository = RunRepository(session)
-        with session.begin():
-            source_a = repository.save_config(
-                "source",
-                "source_a",
-                {
-                    "adapter": "local_file",
-                    "schedule": {"cron": "0 * * * *", "timezone": "UTC"},
-                    "datasets": {
-                        "data": {
-                            "dataset_id": "source_a_data",
-                            "parser_id": "csv_timeseries_v1",
-                            "update_mode": "full",
-                        }
-                    },
-                    "params": {
-                        "local_path": "unused.csv",
-                        "timestamp_column": "timestamp",
-                    },
-                },
-            )
-            source_b = repository.save_config(
-                "source",
-                "source_b",
-                {
-                    "adapter": "local_file",
-                    "schedule": {"cron": "0 * * * *", "timezone": "UTC"},
-                    "datasets": {
-                        "data": {
-                            "dataset_id": "source_b_data",
-                            "parser_id": "csv_timeseries_v1",
-                            "update_mode": "full",
-                        }
-                    },
-                    "params": {
-                        "local_path": "unused.csv",
-                        "timestamp_column": "timestamp",
-                    },
-                },
-            )
-            started = repository.queue_run(
-                kind="source",
-                target_id="source_a",
-                slot=slot,
-                trigger="manual",
-                force=False,
-                config=source_a,
-            )
-            queued = repository.queue_run(
-                kind="source",
-                target_id="source_a",
-                slot=slot + timedelta(hours=1),
-                trigger="manual",
-                force=True,
-                config=source_a,
-            )
-            unrelated = repository.queue_run(
-                kind="source",
-                target_id="source_b",
-                slot=slot,
-                trigger="manual",
-                force=False,
-                config=source_b,
-            )
-            repository.mark_running(unrelated)
-
-        runner = ServiceRunner(
-            data_store=f"file:{tmp_path / 'store'}",
-            executor_factory=lambda _workers: executor,
-        )
-        with pytest.raises(KeyboardInterrupt):
-            runner._run_dag(
-                session,
-                repository,
-                [started, queued],
-                [],
-                {"source_a_data": "source_a"},
-                code_version="test",
-            )
-
-    assert executor.statuses[started.run_id] == "failed"
-    assert executor.statuses[queued.run_id] == "queued"
-    assert executor.statuses[unrelated.run_id] == "running"

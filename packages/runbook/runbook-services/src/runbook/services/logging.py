@@ -8,14 +8,20 @@ import traceback
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from multiprocessing import current_process
 from threading import Event, Lock, Thread, current_thread
 from typing import Any, Iterator
 from urllib.parse import quote
 
 from loguru import logger
-from runbook.data import BlobStore, open_blob_store
-from runbook.data.pipeline import slot_key
+from runbook.core import BlobStore, open_blob_store
+
+
+def slot_key(value: datetime) -> str:
+    """Format one run slot as a stable UTC key."""
+    if value.tzinfo is None:
+        raise ValueError("slot must be timezone-aware")
+    return value.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
 
 _ORDINARY_BYTES = 96 * 1024
 _EXCEPTION_BYTES = 32 * 1024
@@ -195,7 +201,7 @@ class _Capture:
         """Append a full standard traceback using reserved exception capacity."""
         payload = (
             f"{_utc_now().isoformat(timespec='milliseconds').replace('+00:00', 'Z')} level=ERROR "
-            f"pid={os.getpid()} process={current_process().name} worker failure: {exc}\n"
+            f"pid={os.getpid()} worker failure: {exc}\n"
             + "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         ).encode("utf-8", errors="replace")
         self.add(payload, exception=True)

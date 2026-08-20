@@ -2,7 +2,7 @@
 name = "runbook-platform"
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64", "win-64"]
-version = "0.0.2"
+version = "0.1.0"
 
 [dependencies]
 python = "3.11.*"
@@ -41,13 +41,14 @@ furo = ">=2024.8"
 [pypi-dependencies]
 runbook-core = { path = "packages/runbook/runbook-core", editable = true }
 runbook-data = { path = "packages/runbook/runbook-data", editable = true }
-runbook-platform = { path = "packages/runbook/runbook-platform", editable = true }
 runbook-sdk = { path = "packages/runbook/runbook-sdk", editable = true }
 runbook-services = { path = "packages/runbook/runbook-services", editable = true }
+runbook-worker = { path = "packages/runbook/runbook-worker", editable = true }
 prophet = "*"
 
 [tasks]
 test = "pytest -q"
+test-postgres = "python scripts/run_postgres_tests.py"
 test-cov = "pytest -q --cov=runbook --cov-report=term-missing"
 lint = "ruff check ."
 format-check = "ruff format --check ."

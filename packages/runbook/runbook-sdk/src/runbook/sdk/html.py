@@ -5,8 +5,8 @@ from html import escape
 
 import pandas as pd
 import plotly.io as pio
+from runbook.core import BlobStore
 from runbook.core.pdl.models import PDLManifest
-from runbook.data import BlobStore
 
 DEFAULT_GRID_CSS_REF = "styles/grid.css"
 DEFAULT_GRID_CSS = """.rb-page {

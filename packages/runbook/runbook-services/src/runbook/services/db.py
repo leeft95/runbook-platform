@@ -43,9 +43,8 @@ def upgrade_with_metadata(url: str | None = None) -> None:
     checkout usable for local smoke tests and is safe because it only creates
     service-owned tables.
     """
-    from runbook.data import create_pointer_schema
-
     from .models import Base
+    from .pointers import create_pointer_schema
 
     engine = sync_engine(url)
     Base.metadata.create_all(engine)

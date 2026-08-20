@@ -9,12 +9,11 @@ repos:
       - id: ruff-format
         args:
           - --line-length=120
-  - repo: local
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.3.1
     hooks:
       - id: mypy
         name: mypy
-        language: system
-        entry: mypy
         files: \.pyi?$
         exclude: ^(\.gitignore|README\.md|pixi\.lock|data/|var/|\.pixi/|packages/.*/LICENSE)$
         args:

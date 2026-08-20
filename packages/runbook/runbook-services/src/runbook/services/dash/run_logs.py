@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from dash import Input, Output, State, dcc, html, register_page
-from runbook.data import open_blob_store
+from runbook.core import open_blob_store
 
 from ..logging import RunLogIdentity, read_log_tail
 from ..repository import AsyncRunRepository

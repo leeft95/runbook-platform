@@ -39,6 +39,8 @@ class RunView(BaseModel):
     config_revision: int
     config_hash: str
     status: str
+    worker_id: str | None = None
+    cancel_requested_at: datetime | None = None
     identity_key: str | None = None
     snapshot_id: str | None = None
     context_hash: str | None = None
@@ -54,4 +56,3 @@ class RunView(BaseModel):
 
 class VersionView(BaseModel):
     ui_version: str
-    runbook_platform_version: str

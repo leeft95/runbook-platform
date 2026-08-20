@@ -9,6 +9,8 @@ and may change without notice.
 ```{eval-rst}
 .. automodule:: runbook.core.data
    :members:
+   :exclude-members: BlobStore, DatasetBinding, ReportProfile, ScheduleSpec,
+                     SourceConfig, load_profiles, load_source_configs, open_blob_store
 
 .. automodule:: runbook.core.keying
    :members: build_context_hash
@@ -27,12 +29,15 @@ and may change without notice.
 ```{eval-rst}
 .. automodule:: runbook.data
    :members:
+   :no-index:
 
 .. automodule:: runbook.data.config
    :members:
+   :no-index:
 
 .. automodule:: runbook.data.ingest
    :members:
+   :no-index:
 
 .. automodule:: runbook.data.ingest.adapters
    :members:
@@ -60,6 +65,7 @@ The extension protocols are described in {doc}`source-adapters-and-curation`.
 
 .. automodule:: runbook.sdk.profiles
    :members: ReportProfile, load_profiles, resolve_report_path
+   :no-index:
 
 .. automodule:: runbook.sdk.ui
    :members: flex_grid, grid, manifest, plot, table, text
@@ -67,15 +73,19 @@ The extension protocols are described in {doc}`source-adapters-and-curation`.
 
 ## Platform helpers
 
+Runs are durable PostgreSQL records. The API returns `worker_id` and
+`cancel_requested_at`; the dashboard derives its `cancelling` display state.
+`POST
+/api/v1/runs/{run_id}/cancel` returns HTTP 202 and changes queued runs to
+`cancelled`; for running rows it only records cancellation intent. The API
+never reaches into the polling runner's local process registry.
+
 ```{eval-rst}
-.. automodule:: runbook.platform.schedule
+.. automodule:: runbook.services.schedule
    :members: latest_due_slot
 
-.. automodule:: runbook.platform.source_run
-   :members: SourceOutcome, run_source
-
-.. automodule:: runbook.platform.report_run
-   :members: ReportOutcome, run_report
+.. automodule:: runbook.worker.execution
+   :members: execute_run, wait_for_claim
 ```
 
 ## Service entry points

@@ -264,9 +264,9 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/f9/1c/01bfd571a64e7f270e6bab5e33777debe0edc56759233ce84f27dec92d14/tqdm-4.70.0-py3-none-any.whl
       - pypi: ./packages/runbook/runbook-core
       - pypi: ./packages/runbook/runbook-data
-      - pypi: ./packages/runbook/runbook-platform
       - pypi: ./packages/runbook/runbook-sdk
       - pypi: ./packages/runbook/runbook-services
+      - pypi: ./packages/runbook/runbook-worker
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/_openmp_mutex-4.5-7_kmp_llvm.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_3.conda
@@ -516,9 +516,9 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/f9/1c/01bfd571a64e7f270e6bab5e33777debe0edc56759233ce84f27dec92d14/tqdm-4.70.0-py3-none-any.whl
       - pypi: ./packages/runbook/runbook-core
       - pypi: ./packages/runbook/runbook-data
-      - pypi: ./packages/runbook/runbook-platform
       - pypi: ./packages/runbook/runbook-sdk
       - pypi: ./packages/runbook/runbook-services
+      - pypi: ./packages/runbook/runbook-worker
       win-64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_3.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/accessible-pygments-0.0.5-pyhd8ed1ab_1.conda
@@ -761,9 +761,9 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/f9/1c/01bfd571a64e7f270e6bab5e33777debe0edc56759233ce84f27dec92d14/tqdm-4.70.0-py3-none-any.whl
       - pypi: ./packages/runbook/runbook-core
       - pypi: ./packages/runbook/runbook-data
-      - pypi: ./packages/runbook/runbook-platform
       - pypi: ./packages/runbook/runbook-sdk
       - pypi: ./packages/runbook/runbook-services
+      - pypi: ./packages/runbook/runbook-worker
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
   build_number: 20
@@ -7003,8 +7003,8 @@ packages:
   timestamp: 1786151875428
 - pypi: ./packages/runbook/runbook-core
   name: runbook-core
-  version: 0.0.2
-  sha256: 35d0b5abb26589267e65dfe25ca88f39dd3eb8d37d2ada288075d9213d5b6c55
+  version: 0.1.0
+  sha256: 3d74bd967be1ba89efc309feec96c372d3c026a49bd4ec3dafa3c3fffb5fe8a5
   requires_dist:
   - pandas
   - numpy
@@ -7021,8 +7021,8 @@ packages:
   requires_python: '>=3.11'
 - pypi: ./packages/runbook/runbook-data
   name: runbook-data
-  version: 0.0.2
-  sha256: fcdbcb26afdccaa527b39676a710480bc7f6d56b60323e590fd043fe179824a8
+  version: 0.1.0
+  sha256: c4035f5ac4ed6caddf8927ce880ea0506b6646f1e5ba7f8b86ffb48041c06be3
   requires_dist:
   - pandas
   - pyarrow
@@ -7034,20 +7034,10 @@ packages:
   - runbook-core
   - boto3 ; extra == 's3'
   requires_python: '>=3.11'
-- pypi: ./packages/runbook/runbook-platform
-  name: runbook-platform
-  version: 0.0.2
-  sha256: ea537e17cb2c836c97aafcc89f7cecb3067c4b8a66b7e445988315315fdf077b
-  requires_dist:
-  - runbook-data
-  - runbook-sdk
-  - croniter
-  - loguru
-  requires_python: '>=3.11'
 - pypi: ./packages/runbook/runbook-sdk
   name: runbook-sdk
-  version: 0.0.2
-  sha256: c720ea0e0550f9f4ede4f435710b7b911b5c653d10c2653f2b4225c5744c4954
+  version: 0.1.0
+  sha256: f4da4f1bd898a9a63cd59cfc60e7c47e7ea61ec802b278e63cfdf9921b4c8b62
   requires_dist:
   - pandas
   - pyarrow
@@ -7059,13 +7049,11 @@ packages:
   requires_python: '>=3.11'
 - pypi: ./packages/runbook/runbook-services
   name: runbook-services
-  version: 0.0.2
-  sha256: 5edb95bd05dd02be13eb69329dfaa8dc53eb7fe64debf365354d91b827bc7f21
+  version: 0.1.0
+  sha256: c61cc7f54387910d94dd34fc211438adfa7641d3d2e491f607caf180c627f777
   requires_dist:
   - runbook-core
-  - runbook-data
-  - runbook-sdk
-  - runbook-platform
+  - croniter
   - fastapi>=0.115,<1
   - dash[fastapi]>=4.2,<5
   - dash-ag-grid>=35,<36
@@ -7074,6 +7062,16 @@ packages:
   - alembic>=1,<2
   - uvicorn>=0.30,<1
   - loguru
+  requires_python: '>=3.11'
+- pypi: ./packages/runbook/runbook-worker
+  name: runbook-worker
+  version: 0.1.0
+  sha256: 8e97d86413f0464f2575ed99c3e1065f99a3755966b6ee4af8e6dc63ae9b6fe9
+  requires_dist:
+  - runbook-core
+  - runbook-data
+  - runbook-sdk
+  - runbook-services
   requires_python: '>=3.11'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/s2n-1.7.5-h7e3ee7f_1.conda
   sha256: 7369ac21f3561e2203f5b1600ef0671270057380783ca4b9e15f679ba25db575

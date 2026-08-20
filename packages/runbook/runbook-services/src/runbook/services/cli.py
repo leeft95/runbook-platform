@@ -7,11 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from runbook.data import load_source_configs
-from runbook.sdk import load_profiles
-from runbook.sdk.discovery import discover_report_definition
-from runbook.sdk.execution import load_report_module
-from runbook.sdk.profiles import resolve_report_path
+from runbook.core import load_profiles, load_source_configs
 
 from .config import database_url
 from .db import sync_sessions, upgrade_with_metadata
@@ -46,13 +42,6 @@ def import_configs(args: argparse.Namespace) -> dict[str, int]:
         unknown = set(profile.datasets.values()) - known_datasets
         if unknown:
             raise ValueError(f"profile {profile.profile_id!r} references unknown datasets: {sorted(unknown)}")
-        definition = discover_report_definition(
-            load_report_module(resolve_report_path(profile.report_id, args.reports_root))
-        )
-        if sorted(profile.datasets) != definition.aliases:
-            raise ValueError(
-                f"report aliases do not match profile {profile.profile_id!r}: required={definition.aliases}, configured={sorted(profile.datasets)}"
-            )
     with sync_sessions(args.database)() as session:
         repository = RunRepository(session)
         with session.begin():
@@ -109,7 +98,11 @@ def main(argv: list[str] | None = None) -> int:
     config_import = config_sub.add_parser("import")
     config_import.add_argument("--source-config", default="data/contract/source_configs.json")
     config_import.add_argument("--profiles", default="data/contract/report_profiles.json")
-    config_import.add_argument("--reports-root", default="reports")
+    config_import.add_argument(
+        "--reports-root",
+        default=None,
+        help="Deprecated compatibility option; report validation is performed by workers.",
+    )
     config_sub.add_parser("export").add_argument("--output-dir", required=True)
     tick = sub.add_parser("tick")
     tick.add_argument("--now")
@@ -117,6 +110,12 @@ def main(argv: list[str] | None = None) -> int:
     tick.add_argument("--reports-root", default=None)
     tick.add_argument("--code-version", default=None)
     tick.add_argument("--workers", type=int, default=4)
+    run = sub.add_parser("run")
+    run.add_argument("--store", default=None)
+    run.add_argument("--reports-root", default=None)
+    run.add_argument("--code-version", default=None)
+    run.add_argument("--workers", type=int, default=4)
+    run.add_argument("--poll-interval", type=float, default=5.0)
     serve = sub.add_parser("serve")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8050)
@@ -143,6 +142,18 @@ def main(argv: list[str] | None = None) -> int:
                     workers=args.workers,
                 ).tick(now=_time(args.now), code_version=args.code_version)
             }
+        elif args.command == "run":
+            if args.workers < 1:
+                raise ValueError("workers must be at least 1")
+            if args.poll_interval <= 0:
+                raise ValueError("poll interval must be greater than 0")
+            result = ServiceRunner(
+                database=args.database,
+                data_store=args.store,
+                report_root=args.reports_root,
+                workers=args.workers,
+                poll_interval=args.poll_interval,
+            ).run(code_version=args.code_version)
         else:
             import uvicorn
 

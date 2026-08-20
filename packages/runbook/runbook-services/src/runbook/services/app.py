@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
-from runbook.sdk.profiles import ReportProfile
+from runbook.core import ReportProfile
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -23,15 +23,12 @@ def _version(distribution_name: str) -> str:
     try:
         return importlib.metadata.version(distribution_name)
     except importlib.metadata.PackageNotFoundError:
-        return "0.0.2"
+        return "0.1.0"
 
 
 def version_payload() -> dict[str, str]:
     """Return the stable root version response."""
-    return {
-        "ui_version": _version("runbook-services"),
-        "runbook_platform_version": _version("runbook-platform"),
-    }
+    return {"ui_version": _version("runbook-services")}
 
 
 def _config_view(row: Any) -> ConfigView:
@@ -122,20 +119,6 @@ def create_app(
                 profile = validate_config(kind, config_id, body.config).model
                 if not isinstance(profile, ReportProfile):
                     raise ValueError("profile configuration has an invalid model")
-                try:
-                    from runbook.sdk.discovery import discover_report_definition
-                    from runbook.sdk.execution import load_report_module
-                    from runbook.sdk.profiles import resolve_report_path
-
-                    definition = discover_report_definition(
-                        load_report_module(resolve_report_path(profile.report_id, reports_root(report_root)))
-                    )
-                except Exception as exc:
-                    raise ValueError(f"profile report validation failed: {exc}") from exc
-                if sorted(profile.datasets) != definition.aliases:
-                    raise ValueError(
-                        f"report aliases do not match profile {config_id!r}: required={definition.aliases}, configured={sorted(profile.datasets)}"
-                    )
             async with session.begin():
                 row = await AsyncRunRepository(session).save_config(
                     kind,
@@ -241,6 +224,23 @@ def create_app(
         row = await AsyncRunRepository(session).get_run(run_id)
         if row is None:
             raise HTTPException(status_code=404, detail="unknown run")
+        return _run_view(row)
+
+    @api.post(
+        "/runs/{run_id}/cancel",
+        response_model=RunView,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def cancel_run(run_id: str, session: AsyncSession = Depends(get_session)) -> RunView:
+        """Record durable cancellation intent; the polling runner owns processes."""
+        repository = AsyncRunRepository(session)
+        async with session.begin():
+            row = await repository.get_run(run_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="unknown run")
+            await repository.request_cancel(run_id)
+        row = await repository.get_run(run_id)
+        assert row is not None
         return _run_view(row)
 
     app.include_router(api)

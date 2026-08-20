@@ -17,6 +17,8 @@ def _run_row(row: Any) -> dict[str, Any]:
         "kind",
         "target_id",
         "status",
+        "worker_id",
+        "cancel_requested_at",
         "slot",
         "trigger",
         "reason",
@@ -25,10 +27,22 @@ def _run_row(row: Any) -> dict[str, Any]:
         "code_version",
         "artifact_id",
     ):
-        value = getattr(row, name)
+        value = getattr(row, name, None)
         result[name] = value.isoformat() if isinstance(value, datetime) else value
     result["run_link"] = f"[{result['run_id']}](/ui/runs/{result['run_id']})"
+    result["cancelling"] = result["status"] == "running" and result["cancel_requested_at"] is not None
     return result
+
+
+def _cancel_state(row: Any | None) -> tuple[bool, str]:
+    """Return button state from the durable row, never from UI-only state."""
+    if row is None:
+        return True, "Select a queued or running run to cancel."
+    if row.status not in {"queued", "running"}:
+        return True, f"Run is already {row.status}."
+    if row.cancel_requested_at is not None:
+        return True, "Cancellation requested."
+    return False, ""
 
 
 def register(dash_app: Any, sessions: Any) -> None:
@@ -62,6 +76,8 @@ def register(dash_app: Any, sessions: Any) -> None:
                         for value in (
                             "queued",
                             "running",
+                            "cancelling",
+                            "cancelled",
                             "success",
                             "failed",
                             "waiting",
@@ -83,6 +99,8 @@ def register(dash_app: Any, sessions: Any) -> None:
                     type="text",
                     style={"width": "180px"},
                 ),
+                html.Button("Cancel", id=f"{prefix}-cancel", disabled=True),
+                html.Span(id=f"{prefix}-cancel-result"),
                 dag.AgGrid(
                     id=f"{prefix}-grid",
                     rowData=[],
@@ -99,6 +117,9 @@ def register(dash_app: Any, sessions: Any) -> None:
                                 "kind",
                                 "target_id",
                                 "status",
+                                "worker_id",
+                                "cancelling",
+                                "cancel_requested_at",
                                 "slot",
                                 "trigger",
                                 "reason",
@@ -128,6 +149,31 @@ def register(dash_app: Any, sessions: Any) -> None:
         """Refresh the recent-runs grid and summary."""
         async with sessions() as session:
             rows = await AsyncRunRepository(session).list_runs(
-                kind=kind, status=status, target_id=target_id or None, limit=100
+                kind=kind,
+                status="running" if status == "cancelling" else status,
+                target_id=target_id or None,
+                limit=100,
             )
+        if status == "cancelling":
+            rows = [row for row in rows if row.cancel_requested_at is not None]
         return [_run_row(row) for row in rows], f"{len(rows)} recent runs"
+
+    @dash_app.callback(
+        Output(f"{prefix}-cancel", "disabled"),
+        Output(f"{prefix}-cancel-result", "children"),
+        Input(f"{prefix}-refresh", "n_intervals"),
+        Input(f"{prefix}-cancel", "n_clicks"),
+        Input(f"{prefix}-grid", "selectedRows"),
+    )
+    async def cancel(_interval: int, n_clicks: int | None, selected_rows: list[dict[str, Any]] | None):
+        """Request cancellation from the database-backed selected run."""
+        run_id = selected_rows[0].get("run_id") if selected_rows else None
+        if not isinstance(run_id, str):
+            return _cancel_state(None)
+        async with sessions() as session:
+            repository = AsyncRunRepository(session)
+            if n_clicks:
+                async with session.begin():
+                    await repository.request_cancel(run_id)
+            row = await repository.get_run(run_id)
+        return _cancel_state(row)
