@@ -10,7 +10,6 @@ from typing import Iterator
 from sqlalchemy import Column, DateTime, MetaData, String, Table, create_engine, func, select
 from sqlalchemy.engine import Connection, Engine
 
-
 DEFAULT_DATABASE_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/runbook"
 
 pointer_metadata = MetaData()
