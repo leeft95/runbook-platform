@@ -30,11 +30,17 @@ runbook-services [--database URL] config export --output-dir PATH
 runbook-services [--database URL] tick [--now ISO] [--store URI]
                                       [--reports-root PATH]
                                       [--code-version VALUE] [--workers N]
+runbook-services [--database URL] run [--store URI] [--reports-root PATH]
+                                      [--code-version VALUE] [--workers N]
+                                      [--poll-interval SECONDS]
 runbook-services [--database URL] serve [--host HOST] [--port PORT]
                                       [--store URI] [--reports-root PATH]
                                       [--reload]
 ```
 
-`--now` must be an ISO timestamp with a timezone. `--reload` is for local
+`run` requires `--workers >= 1` and `--poll-interval > 0`; it runs until
+SIGINT/SIGTERM and exits cleanly if another runner holds the advisory lock.
+`tick` uses the same reconciliation cycle and exits once locally owned work is
+idle. `--now` must be an ISO timestamp with a timezone. `--reload` is for local
 development. Run `runbook-services COMMAND --help` for argparse's current
 option descriptions.

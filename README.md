@@ -11,8 +11,8 @@ calculations, and HTML artifacts.
   snapshots, and local/S3 blob storage.
 - `runbook-sdk`: report authoring, deterministic execution, preview, caching,
   and HTML rendering.
-- `runbook-services`: the PostgreSQL control plane, bounded local run
-  execution, worker diagnostics, and a Dash operations UI.
+- `runbook-services`: the PostgreSQL control plane, local polling runner,
+  worker diagnostics, and a Dash operations UI.
 - `runbook-worker`: one-process-per-run source and report execution.
 
 The dependency direction is `core -> data`, `core -> sdk`, `core -> services`,
@@ -55,20 +55,23 @@ as the deterministic append key and watermark.
 
 Production control uses PostgreSQL for configuration revisions, current
 dataset pointers, and the run ledger. Apply migrations, import validated
-configs, and invoke one externally scheduled tick process:
+configs, then run the API/UI and polling runner as separate processes:
 
 ```bash
 runbook-services db upgrade
 runbook-services config import
-runbook-services tick --workers 4
+runbook-services serve
+runbook-services run --workers 4 --poll-interval 5
 ```
 
-Each tick runs a bounded local process DAG: source acquisition, source
-curation, then profiles whose complete dataset snapshots are ready. Profiles
-are manual or dataset-triggered; source schedules are the only scheduled
-roots. The dashboard exposes run history, provenance, status, and immutable
-worker log chunks without making the service a daemon or a general workflow
-engine.
+`runbook-services tick` remains a bounded compatibility/debugging cycle. The
+long-lived runner schedules due sources, dispatches at most `--workers`
+addressable `runbook-worker` processes, polls them non-blockingly, and releases
+settled profile snapshots. PostgreSQL is the durable FIFO-among-eligible queue;
+same-source source runs serialize while unrelated sources continue. Excess
+work stays queued, and `POST /api/v1/runs/{run_id}/cancel` records durable
+cancellation intent. The local backend owns only its transient `Popen`
+handles; restart treats unowned running rows as failed/cancelled orphans.
 
 `runbook-services serve` binds to `127.0.0.1` by default and has no
 authentication. Do not expose it directly to an untrusted network; place it

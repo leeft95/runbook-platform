@@ -35,47 +35,48 @@ pointers, queued/running/terminal runs, outcomes, and identities. Blob storage
 holds immutable raw and curated products, manifests, report artifacts, and
 per-run log chunks. Historical run rows are not reused for reruns.
 
-## Phase A: current platform
+## Local control plane
 
-The current service is externally scheduled. A tick recovers stale rows,
-processes queued manual work, queues the latest due source slots, executes
-distinct sources in a bounded local process pool, commits successful pointer
-updates, and releases profiles whose dataset watermark is ready. Profiles are
-manual or dataset-triggered; only source schedules create scheduled roots.
+`runbook-services serve` and `runbook-services run` are separate processes.
+The runner holds a PostgreSQL advisory lock and repeats one explicit cycle:
+schedule due sources, observe durable cancellation, poll/reconcile only local
+`Popen` handles, release settled source dependencies, and dispatch eligible
+queued work. PostgreSQL remains authoritative; `LocalProcessBackend` stores
+only transient `run_id -> Popen` ownership, and `runbook-worker` is one process
+per run. Capacity is enforced before spawn, FIFO is among eligible work, and
+same-source source runs serialize without head-of-line blocking other sources.
+
+`tick` is a bounded compatibility operation using this same cycle. Profiles
+are pinned to immutable snapshots before dispatch. A multi-source profile waits
+until all relevant producers settle, then generated identity includes profile
+revision/hash and snapshot ID so dependency release is durable and idempotent.
+Cancellation is a PostgreSQL intent: queued rows become terminal `cancelled`,
+running rows are guarded-cancelled after the owning runner stops the local
+process. Restart never adopts PIDs; unowned running rows become failed or
+cancelled with an ownership-lost reason. SIGINT/SIGTERM stop new scheduling
+and dispatch and cancel only locally owned workers.
 
 The operations dashboard is an operational surface for the durable ledger. It
 shows run status, provenance, elapsed time, and immutable worker log chunks.
 Stage 2 emits progress checkpoints so a slow or failed curation run remains
 diagnosable without a separate stage-state table.
 
-The Phase A rules are:
+The local rules are:
 
 - runs are snapshot-pinned and deterministic;
 - reports never acquire sources or publish pointers;
 - a missing append predecessor is a hard recovery error;
 - a stale full-refresh predecessor is recoverable and replaced;
-- a KeyboardInterrupt fails only runs started by that invocation, commits
-  before executor shutdown, and leaves queued/unrelated rows untouched; and
-- local execution is bounded to the tick and is not a daemon or general DAG
+- cancellation and shutdown touch only locally owned workers; and
+- local execution remains a small polling control plane, not a general DAG
   engine.
 
-## Phase B: future evolution
+## Future evolution
 
-The following are intentionally future Phase B work, not requirements hidden
-inside the Phase A implementation:
-
-- **Addressable workers:** introduce a small worker contract and a stable
-  `worker_id`, with one independently observable worker per run. The current
-  bounded process pool is a Phase A implementation detail.
-- **Cancellation:** add a first-class `cancelled` state and cancel one run
-  without killing the service or unrelated work.
-- **Long-lived reconciliation:** evolve the externally scheduled tick toward a
-  continuously reconciling service only when operations require it; preserve
-  PostgreSQL as the source of truth and keep executor capacity honest.
-- **Execution backends and Kubernetes:** add the smallest backend interface
-  needed by the service, then a Kubernetes Job/Pod backend with an immutable
-  code revision and independently bounded resources. Kubernetes is not part
-  of Phase A.
+The local backend is intentionally the first `ExecutionBackend` implementation.
+The future extension is a Kubernetes Job/Pod backend with an immutable code
+revision and independently bounded resources. Kubernetes is not part of this
+local implementation.
 - **Repository split:** formalize a physical split between the generic
   platform/control plane and data/execution repositories after the package
   contracts are stable. Do not duplicate orchestration logic or introduce a
@@ -84,8 +85,7 @@ inside the Phase A implementation:
 When Phase B begins, a useful progression is:
 
 ```text
-bounded local pool
-    -> one addressable local process per run
+one addressable local process per run
     -> execution-backend contract
     -> Kubernetes Job/Pod with pinned code revision
 ```
