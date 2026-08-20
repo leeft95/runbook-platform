@@ -267,6 +267,7 @@ environments:
       - pypi: ./packages/runbook/runbook-platform
       - pypi: ./packages/runbook/runbook-sdk
       - pypi: ./packages/runbook/runbook-services
+      - pypi: ./packages/runbook/runbook-worker
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/_openmp_mutex-4.5-7_kmp_llvm.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_3.conda
@@ -519,6 +520,7 @@ environments:
       - pypi: ./packages/runbook/runbook-platform
       - pypi: ./packages/runbook/runbook-sdk
       - pypi: ./packages/runbook/runbook-services
+      - pypi: ./packages/runbook/runbook-worker
       win-64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_3.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/accessible-pygments-0.0.5-pyhd8ed1ab_1.conda
@@ -764,6 +766,7 @@ environments:
       - pypi: ./packages/runbook/runbook-platform
       - pypi: ./packages/runbook/runbook-sdk
       - pypi: ./packages/runbook/runbook-services
+      - pypi: ./packages/runbook/runbook-worker
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
   build_number: 20
@@ -7074,6 +7077,17 @@ packages:
   - alembic>=1,<2
   - uvicorn>=0.30,<1
   - loguru
+  requires_python: '>=3.11'
+- pypi: ./packages/runbook/runbook-worker
+  name: runbook-worker
+  version: 0.0.2
+  sha256: 3126c204c905c588709282ce607a88e7d0c8595c1b181b76d44ed559cfda5105
+  requires_dist:
+  - runbook-core
+  - runbook-data
+  - runbook-sdk
+  - runbook-services
+  - runbook-platform
   requires_python: '>=3.11'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/s2n-1.7.5-h7e3ee7f_1.conda
   sha256: 7369ac21f3561e2203f5b1600ef0671270057380783ca4b9e15f679ba25db575
