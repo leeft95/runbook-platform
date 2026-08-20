@@ -48,10 +48,18 @@ def register(dash_app: Any, sessions: Any) -> None:
         }
         return [
             html.Div(["Status: ", html.Span(row.status, className="runbook-status")]),
+            html.Div(f"Worker: {row.worker_id or '—'}"),
+            html.Div(f"Cancellation: {'requested' if row.cancel_requested_at else '—'}"),
             html.Div(f"Requested: {row.requested_at}"),
             html.Div(f"Started: {row.started_at or '—'}"),
             html.Div(f"Finished: {row.finished_at or '—'}"),
             html.Div(f"Reason: {row.reason or '—'}"),
+            html.Button(
+                "Cancel",
+                id=f"{prefix}-cancel",
+                n_clicks=0,
+                disabled=row.status not in {"queued", "running"} or row.cancel_requested_at is not None,
+            ),
             html.A(
                 "Open diagnostic logs",
                 href=f"/ui/runs/{row.run_id}/logs",

@@ -37,17 +37,20 @@ class LocalProcessBackend:
         """Poll one process without blocking."""
         process = self._processes[run_id]
         exit_code = process.poll()
-
-        return WorkerState(
+        state = WorkerState(
             running=exit_code is None,
             exit_code=exit_code,
         )
+        if not state.running:
+            self._processes.pop(run_id, None)
+        return state
 
     def cancel(self, run_id: str) -> None:
         """Terminate only the selected process, escalating after five seconds."""
         process = self._processes[run_id]
 
         if process.poll() is not None:
+            self._processes.pop(run_id, None)
             return
 
         process.terminate()
@@ -58,3 +61,4 @@ class LocalProcessBackend:
             if process.poll() is None:
                 process.kill()
                 process.wait()
+        self._processes.pop(run_id, None)

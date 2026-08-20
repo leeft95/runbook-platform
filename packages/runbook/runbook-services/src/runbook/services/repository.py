@@ -21,6 +21,11 @@ def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _aware(value: datetime) -> datetime:
+    """Normalize a database timestamp for deterministic comparisons."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 def _config_payload(row: ConfigRevision) -> dict[str, Any]:
     """Copy a stored configuration payload."""
     return dict(row.payload)
@@ -219,12 +224,23 @@ class RunRepository:
         trigger: str,
         force: bool,
         config: ConfigRevision,
+        identity_key: str | None = None,
+        snapshot_id: str | None = None,
+        snapshot_payload: dict[str, Any] | None = None,
+        context_hash: str | None = None,
+        code_version: str | None = None,
     ) -> Run:
         """Queue a manual or scheduled run, reusing an active duplicate."""
         if slot.tzinfo is None:
             raise ValueError("slot must include a timezone")
-        identity_key = f"{kind}:{target_id}:{slot.astimezone(timezone.utc).isoformat()}:{config.config_hash}"
-        if not force:
+        identity_key = (
+            identity_key or f"{kind}:{target_id}:{slot.astimezone(timezone.utc).isoformat()}:{config.config_hash}"
+        )
+        if not force and trigger == "schedule":
+            existing = self.session.scalar(select(Run).where(Run.identity_key == identity_key).limit(1))
+            if existing is not None:
+                return existing
+        elif not force:
             existing = self.session.scalar(
                 select(Run)
                 .where(
@@ -251,6 +267,10 @@ class RunRepository:
             config_hash=config.config_hash,
             status="queued",
             identity_key=identity_key,
+            snapshot_id=snapshot_id,
+            snapshot_payload=snapshot_payload,
+            context_hash=context_hash,
+            code_version=code_version,
             requested_at=stamp,
             updated_at=stamp,
         )
@@ -265,6 +285,64 @@ class RunRepository:
                 select(Run).where(Run.status == "queued").order_by(Run.requested_at, Run.run_id).limit(limit)
             ).all()
         )
+
+    def eligible_queued_runs(self, limit: int = 100) -> list[Run]:
+        """Return FIFO work not blocked by an earlier queued/running source."""
+        if limit < 1 or limit > 500:
+            raise ValueError("limit must be between 1 and 500")
+        queued = list(
+            self.session.scalars(
+                select(Run).where(Run.status == "queued").order_by(Run.requested_at, Run.run_id).limit(500)
+            ).all()
+        )
+        source_rows = list(self.session.scalars(select(Run).where(Run.status.in_(["queued", "running"]))).all())
+        eligible: list[Run] = []
+        for row in queued:
+            if row.kind == "source":
+                key = (_aware(row.slot), _aware(row.requested_at), row.run_id)
+                if any(
+                    other.run_id != row.run_id
+                    and other.kind == "source"
+                    and other.target_id == row.target_id
+                    and (_aware(other.slot), _aware(other.requested_at), other.run_id) < key
+                    for other in source_rows
+                ):
+                    continue
+            eligible.append(row)
+            if len(eligible) >= limit:
+                break
+        return eligible
+
+    def get_identity(self, identity_key: str) -> Run | None:
+        """Return the run with an exact effective identity, in any lifecycle state."""
+        return self.session.scalar(select(Run).where(Run.identity_key == identity_key).limit(1))
+
+    def unreleased_successful_sources(self) -> list[Run]:
+        """Return successful source roots whose durable release marker is unset."""
+        return list(
+            self.session.scalars(
+                select(Run)
+                .where(
+                    Run.kind == "source",
+                    Run.status == "success",
+                    Run.dependencies_released_at.is_(None),
+                )
+                .order_by(Run.finished_at, Run.run_id)
+            ).all()
+        )
+
+    def has_queued_or_running_source(self, source_ids: set[str]) -> bool:
+        """Return whether any named source still has durable active work."""
+        if not source_ids:
+            return False
+        return (
+            self.session.scalar(
+                select(func.count())
+                .select_from(Run)
+                .where(Run.kind == "source", Run.target_id.in_(source_ids), Run.status.in_(["queued", "running"]))
+            )
+            or 0
+        ) > 0
 
     def claim(self, run_id: str, worker_id: str) -> bool:
         """Atomically claim a queued run for one worker process."""
@@ -282,10 +360,37 @@ class RunRepository:
     def request_cancel(self, run_id: str) -> bool:
         """Persist cancellation intent for a queued or running run."""
         stamp = now_utc()
+        queued = self.session.execute(
+            update(Run)
+            .where(Run.run_id == run_id, Run.status == "queued", Run.cancel_requested_at.is_(None))
+            .values(
+                cancel_requested_at=stamp,
+                status="cancelled",
+                finished_at=stamp,
+                reason="cancel requested before worker start",
+                updated_at=stamp,
+            )
+        )
+        running = self.session.execute(
+            update(Run)
+            .where(Run.run_id == run_id, Run.status == "running", Run.cancel_requested_at.is_(None))
+            .values(cancel_requested_at=stamp, updated_at=stamp)
+        )
+        self.session.flush()
+        return int(getattr(queued, "rowcount", 0)) + int(getattr(running, "rowcount", 0)) == 1
+
+    def cancel_owned(self, run_id: str, worker_id: str, *, reason: str = "cancel requested") -> bool:
+        """Terminalize only an owned running row with durable cancellation intent."""
+        stamp = now_utc()
         result = self.session.execute(
             update(Run)
-            .where(Run.run_id == run_id, Run.status.in_(["queued", "running"]), Run.cancel_requested_at.is_(None))
-            .values(cancel_requested_at=stamp, updated_at=stamp)
+            .where(
+                Run.run_id == run_id,
+                Run.status == "running",
+                Run.worker_id == worker_id,
+                Run.cancel_requested_at.is_not(None),
+            )
+            .values(status="cancelled", finished_at=stamp, updated_at=stamp, reason=reason)
         )
         self.session.flush()
         return int(getattr(result, "rowcount", 0)) == 1
@@ -489,18 +594,41 @@ class AsyncRunRepository:
 
     async def request_cancel(self, run_id: str) -> Run | None:
         """Persist cancellation intent without touching a worker process."""
-        row = await self.session.get(Run, run_id)
-        if row is None:
-            return None
-        if row.status in {"queued", "running"}:
-            row.cancel_requested_at = now_utc()
-            row.updated_at = row.cancel_requested_at
-            if row.status == "queued":
-                row.status = "cancelled"
-                row.finished_at = row.cancel_requested_at
-                row.reason = "cancel requested before worker start"
-            await self.session.flush()
-        return row
+        stamp = now_utc()
+        await self.session.execute(
+            update(Run)
+            .where(Run.run_id == run_id, Run.status == "queued", Run.cancel_requested_at.is_(None))
+            .values(
+                cancel_requested_at=stamp,
+                status="cancelled",
+                finished_at=stamp,
+                reason="cancel requested before worker start",
+                updated_at=stamp,
+            )
+        )
+        await self.session.execute(
+            update(Run)
+            .where(Run.run_id == run_id, Run.status == "running", Run.cancel_requested_at.is_(None))
+            .values(cancel_requested_at=stamp, updated_at=stamp)
+        )
+        await self.session.flush()
+        return await self.session.get(Run, run_id, populate_existing=True)
+
+    async def cancel_owned(self, run_id: str, worker_id: str, *, reason: str = "cancel requested") -> bool:
+        """Terminalize only an owned running row with durable cancellation intent."""
+        stamp = now_utc()
+        result = await self.session.execute(
+            update(Run)
+            .where(
+                Run.run_id == run_id,
+                Run.status == "running",
+                Run.worker_id == worker_id,
+                Run.cancel_requested_at.is_not(None),
+            )
+            .values(status="cancelled", finished_at=stamp, updated_at=stamp, reason=reason)
+        )
+        await self.session.flush()
+        return int(getattr(result, "rowcount", 0)) == 1
 
     async def list_runs(self, **kwargs: Any) -> list[Run]:
         """List runs asynchronously."""

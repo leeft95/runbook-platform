@@ -17,6 +17,8 @@ def _run_row(row: Any) -> dict[str, Any]:
         "kind",
         "target_id",
         "status",
+        "worker_id",
+        "cancel_requested_at",
         "slot",
         "trigger",
         "reason",
@@ -25,9 +27,10 @@ def _run_row(row: Any) -> dict[str, Any]:
         "code_version",
         "artifact_id",
     ):
-        value = getattr(row, name)
+        value = getattr(row, name, None)
         result[name] = value.isoformat() if isinstance(value, datetime) else value
     result["run_link"] = f"[{result['run_id']}](/ui/runs/{result['run_id']})"
+    result["cancelling"] = result["status"] == "running" and result["cancel_requested_at"] is not None
     return result
 
 
@@ -62,6 +65,7 @@ def register(dash_app: Any, sessions: Any) -> None:
                         for value in (
                             "queued",
                             "running",
+                            "cancelled",
                             "success",
                             "failed",
                             "waiting",
@@ -99,6 +103,9 @@ def register(dash_app: Any, sessions: Any) -> None:
                                 "kind",
                                 "target_id",
                                 "status",
+                                "worker_id",
+                                "cancelling",
+                                "cancel_requested_at",
                                 "slot",
                                 "trigger",
                                 "reason",

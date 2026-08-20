@@ -23,7 +23,7 @@ def _version(distribution_name: str) -> str:
     try:
         return importlib.metadata.version(distribution_name)
     except importlib.metadata.PackageNotFoundError:
-        return "0.0.2"
+        return "0.1.0"
 
 
 def version_payload() -> dict[str, str]:
@@ -46,7 +46,9 @@ def _config_view(row: Any) -> ConfigView:
 
 def _run_view(row: Any) -> RunView:
     """Convert a run row to its API representation."""
-    return RunView.model_validate({name: getattr(row, name) for name in row.__table__.columns.keys()})
+    payload = {name: getattr(row, name) for name in row.__table__.columns.keys()}
+    payload["cancelling"] = row.status == "running" and row.cancel_requested_at is not None
+    return RunView.model_validate(payload)
 
 
 def create_app(
@@ -224,6 +226,23 @@ def create_app(
         row = await AsyncRunRepository(session).get_run(run_id)
         if row is None:
             raise HTTPException(status_code=404, detail="unknown run")
+        return _run_view(row)
+
+    @api.post(
+        "/runs/{run_id}/cancel",
+        response_model=RunView,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def cancel_run(run_id: str, session: AsyncSession = Depends(get_session)) -> RunView:
+        """Record durable cancellation intent; the polling runner owns processes."""
+        repository = AsyncRunRepository(session)
+        async with session.begin():
+            row = await repository.get_run(run_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="unknown run")
+            await repository.request_cancel(run_id)
+        row = await repository.get_run(run_id)
+        assert row is not None
         return _run_view(row)
 
     app.include_router(api)
