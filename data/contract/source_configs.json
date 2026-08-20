@@ -34,5 +34,114 @@
       "local_path": "data/fixtures/intraday_bars.csv",
       "timestamp_column": "timestamp"
     }
+  },
+  "demo_local_append": {
+    "adapter": "local_file",
+    "enabled": false,
+    "schedule": {"cron": "10 0 * * *", "timezone": "UTC"},
+    "datasets": {
+      "prices": {
+        "dataset_id": "demo_local_append",
+        "schema_version": "v1",
+        "partition_keys": [],
+        "parser_id": "csv_timeseries_v1",
+        "update_mode": "append"
+      }
+    },
+    "params": {
+      "local_path": "data/fixtures/daily_prices.csv",
+      "timestamp_column": "timestamp"
+    }
+  },
+  "demo_http_csv": {
+    "adapter": "http",
+    "enabled": false,
+    "schedule": {"cron": "15 0 * * *", "timezone": "UTC"},
+    "datasets": {
+      "prices": {
+        "dataset_id": "demo_http_csv",
+        "schema_version": "v1",
+        "partition_keys": [],
+        "parser_id": "csv_timeseries_v1",
+        "update_mode": "full"
+      }
+    },
+    "params": {
+      "url": "http://127.0.0.1:8766/fixtures/daily_prices.csv",
+      "timestamp_column": "timestamp"
+    }
+  },
+  "demo_http_slow": {
+    "adapter": "http",
+    "enabled": false,
+    "schedule": {"cron": "20 0 * * *", "timezone": "UTC"},
+    "datasets": {
+      "prices": {
+        "dataset_id": "demo_http_slow",
+        "schema_version": "v1",
+        "partition_keys": [],
+        "parser_id": "csv_timeseries_v1",
+        "update_mode": "full"
+      }
+    },
+    "params": {
+      "url": "http://127.0.0.1:8766/fixtures/slow.csv?delay=2",
+      "timestamp_column": "timestamp"
+    }
+  },
+  "demo_http_missing": {
+    "adapter": "http",
+    "enabled": false,
+    "schedule": {"cron": "25 0 * * *", "timezone": "UTC"},
+    "datasets": {
+      "prices": {
+        "dataset_id": "demo_http_missing",
+        "schema_version": "v1",
+        "partition_keys": [],
+        "parser_id": "csv_timeseries_v1",
+        "update_mode": "full"
+      }
+    },
+    "params": {
+      "url": "http://127.0.0.1:8766/fixtures/missing.csv",
+      "timestamp_column": "timestamp"
+    }
+  },
+  "demo_http_acquisition_failure": {
+    "adapter": "http",
+    "enabled": false,
+    "schedule": {"cron": "27 0 * * *", "timezone": "UTC"},
+    "datasets": {
+      "prices": {
+        "dataset_id": "demo_http_acquisition_failure",
+        "schema_version": "v1",
+        "partition_keys": [],
+        "parser_id": "csv_timeseries_v1",
+        "update_mode": "full"
+      }
+    },
+    "params": {
+      "readiness_url": "http://127.0.0.1:8766/healthz",
+      "download_url": "http://127.0.0.1:8766/fixtures/acquisition-missing.csv",
+      "timestamp_column": "timestamp"
+    }
+  },
+  "demo_http_failure": {
+    "adapter": "http",
+    "enabled": false,
+    "schedule": {"cron": "30 0 * * *", "timezone": "UTC"},
+    "datasets": {
+      "prices": {
+        "dataset_id": "demo_http_failure",
+        "schema_version": "v1",
+        "partition_keys": [],
+        "parser_id": "csv_timeseries_v1",
+        "update_mode": "full"
+      }
+    },
+    "params": {
+      "url": "http://127.0.0.1:8766/fixtures/failure.csv",
+      "timestamp_column": "timestamp"
+    }
   }
 }
