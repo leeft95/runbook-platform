@@ -1,6 +1,6 @@
 [project]
 name = "runbook-services"
-version = "0.0.2"
+version = "0.1.0"
 requires-python = ">=3.11"
 description = "PostgreSQL-backed API and Dash operations UI for Runbook."
 license = "Apache-2.0"

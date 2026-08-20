@@ -1,6 +1,6 @@
 [project]
 name = "runbook-data"
-version = "0.0.2"
+version = "0.1.0"
 description = "Generic source ingestion, immutable datasets, manifests, and blob storage."
 readme = "README.md"
 requires-python = ">=3.11"
