@@ -62,6 +62,29 @@ def test_pointer_publication_validates_every_update_before_writing() -> None:
     assert DatabasePointerRegistry(engine).all() == {}
 
 
+def test_pointer_publication_compare_and_set_rejects_stale_worker(pointer_registry) -> None:
+    stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    pointer_registry.publish(
+        source_id="source_a",
+        source_run_id="run-a",
+        updates=[_update("prices", "prices-v1", stamp)],
+    )
+    pointer_registry.publish(
+        source_id="source_a",
+        source_run_id="run-b",
+        updates=[_update("prices", "prices-v2", stamp + timedelta(days=1))],
+    )
+
+    with pytest.raises(ValueError, match="compare-and-set conflict"):
+        pointer_registry.publish(
+            source_id="source_a",
+            source_run_id="stale-run",
+            updates=[_update("prices", "prices-stale", stamp + timedelta(days=2))],
+            expected_source_run_ids={"prices": "run-a"},
+        )
+    assert pointer_registry.get(["prices"])["prices"].source_run_id == "run-b"
+
+
 def test_snapshot_uses_database_pointer_and_manifest_history(tmp_path, pointer_registry) -> None:
     store = open_blob_store(f"file:{tmp_path}")
     first_time = datetime(2026, 1, 1, tzinfo=timezone.utc)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -104,8 +104,13 @@ class DatabasePointerRegistry:
         source_run_id: str,
         updates: Iterable[DatasetPointerUpdate],
         updated_at: datetime | None = None,
+        expected_source_run_ids: Mapping[str, str | None] | None = None,
     ) -> None:
-        """Atomically publish one source's current dataset pointers."""
+        """Atomically publish one source's current dataset pointers.
+
+        When supplied, ``expected_source_run_ids`` makes publication a small
+        compare-and-set operation for workers that loaded prior pointers.
+        """
         prepared = list(updates)
         if len({item.dataset_id for item in prepared}) != len(prepared):
             raise ValueError("pointer publication contains duplicate dataset ids")
@@ -131,6 +136,23 @@ class DatabasePointerRegistry:
             if conflicts:
                 details = ", ".join(f"{dataset_id}={owner}" for dataset_id, owner in sorted(conflicts.items()))
                 raise ValueError(f"datasets already belong to another source: {details}")
+            if expected_source_run_ids is not None:
+                changed = {
+                    item.dataset_id: (
+                        expected_source_run_ids[item.dataset_id],
+                        existing[item.dataset_id].source_run_id if item.dataset_id in existing else None,
+                    )
+                    for item in prepared
+                    if item.dataset_id in expected_source_run_ids
+                    and expected_source_run_ids[item.dataset_id]
+                    != (existing[item.dataset_id].source_run_id if item.dataset_id in existing else None)
+                }
+                if changed:
+                    details = ", ".join(
+                        f"{dataset_id}: expected={expected!r}, actual={actual!r}"
+                        for dataset_id, (expected, actual) in sorted(changed.items())
+                    )
+                    raise ValueError(f"pointer compare-and-set conflict: {details}")
             for item in prepared:
                 values = values_by_dataset[item.dataset_id]
                 if item.dataset_id in existing:

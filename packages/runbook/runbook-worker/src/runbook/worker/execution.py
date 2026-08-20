@@ -62,13 +62,16 @@ def _identity(row, model: SourceConfig | ReportProfile) -> RunLogIdentity:
 def _source(row, config: SourceConfig, identity: RunLogIdentity) -> dict[str, Any]:
     """Execute source acquisition and curation, returning only JSON data."""
     store = open_blob_store(os.environ.get("RUNBOOK_DATA_STORE_URI"))
-    with sync_sessions(os.environ.get("RUNBOOK_DATABASE_URL"))() as session:
-        repository = RunRepository(session)
-        pointers = repository.pointer_registry.get(binding.dataset_id for binding in config.datasets.values())
-    watermarks, _state = load_previous_append_state(store, config, pointers)
-    slot = _utc(row.slot)
     with capture_worker_logs(os.environ.get("RUNBOOK_DATA_STORE_URI"), identity) as log:
         try:
+            with sync_sessions(os.environ.get("RUNBOOK_DATABASE_URL"))() as session:
+                repository = RunRepository(session)
+                pointers = repository.pointer_registry.get(binding.dataset_id for binding in config.datasets.values())
+            # Previous append state is execution state.  Keep its validation
+            # inside the worker log boundary so stale pointers produce a
+            # useful failed run instead of an unexplained process exit.
+            watermarks, _state = load_previous_append_state(store, config, pointers)
+            slot = _utc(row.slot)
             acquired = run_stage1_acquire(source_config=config, slot=slot, store=store, previous_watermarks=watermarks)
             if acquired.status.value != "ready" or acquired.acquired is None:
                 return {
@@ -97,6 +100,10 @@ def _source(row, config: SourceConfig, identity: RunLogIdentity) -> dict[str, An
                     }
                     for item in curated.pointer_updates
                 ],
+                "expected_pointer_source_runs": {
+                    item.dataset_id: (pointers[item.dataset_id].source_run_id if item.dataset_id in pointers else None)
+                    for item in curated.pointer_updates
+                },
                 "log_ref": log.log_ref,
             }
         except Exception as exc:
@@ -112,6 +119,8 @@ def _report(row, profile: ReportProfile, identity: RunLogIdentity) -> dict[str, 
             if not isinstance(payload, dict):
                 raise ValueError("report run has no pinned snapshot payload")
             snapshot = Snapshot.model_validate(payload)
+            if row.snapshot_id is not None and snapshot.snapshot_id != row.snapshot_id:
+                raise ValueError("report snapshot payload does not match the pinned snapshot ID")
             code_version = resolve_code_version(row.code_version)
             result = execute_report(
                 store=open_blob_store(os.environ.get("RUNBOOK_DATA_STORE_URI")),
@@ -151,7 +160,24 @@ def execute_run(run_id: str) -> int:
             repository.finish_owned(run_id, worker_id, status="failed", outcome=outcome, reason=outcome["reason"])
             session.commit()
             return 0
-        model = validate_config(row.kind, row.target_id, dict(config.payload)).model
+        try:
+            validated = validate_config(row.kind, row.target_id, dict(config.payload))
+            if validated.config_hash != row.config_hash:
+                raise ValueError("pinned configuration hash does not match the run")
+            model = validated.model
+        except Exception as exc:
+            identity = RunLogIdentity(
+                run_id=row.run_id,
+                kind=row.kind,
+                target_id=row.target_id,
+                slot=_utc(row.slot),
+            )
+            with capture_worker_logs(os.environ.get("RUNBOOK_DATA_STORE_URI"), identity) as log:
+                logger.exception("worker configuration validation failed run_id={}", run_id)
+                outcome = {"status": "failed", "reason": str(exc), "log_ref": log.log_ref}
+            repository.finish_owned(run_id, worker_id, status="failed", outcome=outcome, reason=outcome["reason"])
+            session.commit()
+            return 0
         identity = _identity(row, model)
     outcome = _source(row, model, identity) if isinstance(model, SourceConfig) else _report(row, model, identity)
     status = str(outcome.get("status", "failed"))
@@ -182,6 +208,12 @@ def execute_run(run_id: str) -> int:
                             published_at=datetime.fromisoformat(str(item["published_at"])),
                         )
                     )
-            repository.pointer_registry.publish(source_id=model.source_id, source_run_id=run_id, updates=updates)
+            expected = outcome.get("expected_pointer_source_runs")
+            repository.pointer_registry.publish(
+                source_id=model.source_id,
+                source_run_id=run_id,
+                updates=updates,
+                expected_source_run_ids=expected if isinstance(expected, dict) else None,
+            )
         session.commit()
     return 0

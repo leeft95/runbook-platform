@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import tomllib
+
 
 def _imports(root: Path) -> set[str]:
     names: set[str] = set()
@@ -34,3 +36,20 @@ def test_worker_is_the_only_control_plane_composition_root() -> None:
     assert any(name == "runbook.data" or name.startswith("runbook.data.") for name in imports)
     assert any(name == "runbook.sdk" or name.startswith("runbook.sdk.") for name in imports)
     assert not any(name == "runbook.platform" or name.startswith("runbook.platform.") for name in imports)
+
+
+def test_distribution_metadata_matches_the_runtime_dag() -> None:
+    dependencies = {}
+    for package in ("runbook-core", "runbook-data", "runbook-sdk", "runbook-services", "runbook-worker"):
+        payload = tomllib.loads((Path("packages/runbook") / package / "pyproject.toml").read_text())
+        dependencies[package] = set(payload["project"].get("dependencies", []))
+    assert not any(item.startswith("runbook-") for item in dependencies["runbook-core"])
+    assert "runbook-core" in dependencies["runbook-data"]
+    assert {"runbook-core", "runbook-data"} <= dependencies["runbook-sdk"]
+    assert dependencies["runbook-services"] & {"runbook-data", "runbook-sdk", "runbook-worker"} == set()
+    assert {"runbook-core", "runbook-data", "runbook-sdk", "runbook-services"} <= dependencies["runbook-worker"]
+
+
+def test_process_pool_executor_is_not_present() -> None:
+    root = Path("packages/runbook")
+    assert not any("ProcessPoolExecutor" in path.read_text(encoding="utf-8") for path in root.rglob("*.py"))
