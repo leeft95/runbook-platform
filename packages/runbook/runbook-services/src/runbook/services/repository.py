@@ -341,18 +341,36 @@ class RunRepository:
             ).all()
         )
 
-    def has_queued_or_running_source(self, source_ids: set[str]) -> bool:
-        """Return whether any named source still has durable active work."""
+    def has_queued_or_running_source(self, source_ids: set[str], *, slot: datetime | None = None) -> bool:
+        """Return whether named sources have durable active work for a generation."""
         if not source_ids:
             return False
-        return (
-            self.session.scalar(
-                select(func.count())
-                .select_from(Run)
-                .where(Run.kind == "source", Run.target_id.in_(source_ids), Run.status.in_(["queued", "running"]))
+        conditions = [
+            Run.kind == "source",
+            Run.target_id.in_(source_ids),
+            Run.status.in_(["queued", "running"]),
+        ]
+        if slot is not None:
+            normalized_slot = (
+                slot.replace(tzinfo=timezone.utc) if slot.tzinfo is None else slot.astimezone(timezone.utc)
             )
-            or 0
-        ) > 0
+            conditions.append(Run.slot == normalized_slot)
+        return (self.session.scalar(select(func.count()).select_from(Run).where(*conditions)) or 0) > 0
+
+    def source_runs_at(self, source_id: str, slot: datetime) -> list[Run]:
+        """Return producer attempts in one exact refresh generation."""
+        normalized_slot = slot.replace(tzinfo=timezone.utc) if slot.tzinfo is None else slot.astimezone(timezone.utc)
+        return list(
+            self.session.scalars(
+                select(Run)
+                .where(
+                    Run.kind == "source",
+                    Run.target_id == source_id,
+                    Run.slot == normalized_slot,
+                )
+                .order_by(Run.requested_at, Run.run_id)
+            ).all()
+        )
 
     def source_runs_since(self, source_id: str, slot: datetime) -> list[Run]:
         """Return producer attempts for one refresh opportunity in order."""

@@ -98,7 +98,11 @@ def main(argv: list[str] | None = None) -> int:
     config_import = config_sub.add_parser("import")
     config_import.add_argument("--source-config", default="data/contract/source_configs.json")
     config_import.add_argument("--profiles", default="data/contract/report_profiles.json")
-    config_import.add_argument("--reports-root", default="reports")
+    config_import.add_argument(
+        "--reports-root",
+        default=None,
+        help="Deprecated compatibility option; report validation is performed by workers.",
+    )
     config_sub.add_parser("export").add_argument("--output-dir", required=True)
     tick = sub.add_parser("tick")
     tick.add_argument("--now")

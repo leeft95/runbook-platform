@@ -74,15 +74,20 @@ class DatabasePointerRegistry:
             with self.bind.connect() as connection:
                 yield connection
 
-    def get(self, dataset_ids: Iterable[str]) -> dict[str, DatasetPointer]:
+    def get(self, dataset_ids: Iterable[str], *, for_update: bool = False) -> dict[str, DatasetPointer]:
         """Load the current pointer for each requested dataset that exists."""
         requested = sorted(set(dataset_ids))
         if not requested:
             return {}
         with self._connection() as connection:
-            rows = connection.execute(
-                select(dataset_pointers).where(dataset_pointers.c.dataset_id.in_(requested))
-            ).mappings()
+            statement = (
+                select(dataset_pointers)
+                .where(dataset_pointers.c.dataset_id.in_(requested))
+                .order_by(dataset_pointers.c.dataset_id)
+            )
+            if for_update:
+                statement = statement.with_for_update()
+            rows = connection.execute(statement).mappings()
             return {row["dataset_id"]: DatasetPointer(**dict(row)) for row in rows}
 
     def all(self) -> dict[str, DatasetPointer]:
@@ -111,7 +116,7 @@ class DatabasePointerRegistry:
         When supplied, ``expected_source_run_ids`` makes publication a small
         compare-and-set operation for workers that loaded prior pointers.
         """
-        prepared = list(updates)
+        prepared = sorted(updates, key=lambda item: item.dataset_id)
         if len({item.dataset_id for item in prepared}) != len(prepared):
             raise ValueError("pointer publication contains duplicate dataset ids")
         stamp = _utc(updated_at or datetime.now(timezone.utc))
@@ -127,7 +132,7 @@ class DatabasePointerRegistry:
             for item in prepared
         }
         with self._connection(write=True) as connection:
-            existing = self._get_with_connection(connection, [item.dataset_id for item in prepared])
+            existing = self._get_with_connection(connection, [item.dataset_id for item in prepared], for_update=True)
             conflicts = {
                 dataset_id: pointer.source_id
                 for dataset_id, pointer in existing.items()
@@ -165,14 +170,24 @@ class DatabasePointerRegistry:
                     connection.execute(dataset_pointers.insert().values(dataset_id=item.dataset_id, **values))
 
     @staticmethod
-    def _get_with_connection(connection: Connection, dataset_ids: Iterable[str]) -> dict[str, DatasetPointer]:
+    def _get_with_connection(
+        connection: Connection,
+        dataset_ids: Iterable[str],
+        *,
+        for_update: bool = False,
+    ) -> dict[str, DatasetPointer]:
         """Load requested pointers without changing transaction ownership."""
         requested = sorted(set(dataset_ids))
         if not requested:
             return {}
-        rows = connection.execute(
-            select(dataset_pointers).where(dataset_pointers.c.dataset_id.in_(requested))
-        ).mappings()
+        statement = (
+            select(dataset_pointers)
+            .where(dataset_pointers.c.dataset_id.in_(requested))
+            .order_by(dataset_pointers.c.dataset_id)
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        rows = connection.execute(statement).mappings()
         return {row["dataset_id"]: DatasetPointer(**dict(row)) for row in rows}
 
 

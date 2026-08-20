@@ -22,11 +22,13 @@ runbook-services db upgrade
 runbook-services config import \
   --source-config data/contract/source_configs.json \
   --profiles data/contract/report_profiles.json \
-  --reports-root reports
+  --reports-root reports  # retained deprecated compatibility option
 ```
 
-The config import validates source configs, profile dataset IDs, report
-aliases, and report file discovery before writing revisions.
+The config import validates source configs and profile dataset IDs before
+writing revisions. `--reports-root` is retained as a deprecated no-op for
+v0.1.0 compatibility; report aliases and report module discovery are validated
+by the worker at execution time, where the configured report root is available.
 
 ## Polling runner and compatibility tick
 
@@ -79,9 +81,11 @@ For deterministic local source checks, run `python scripts/demo_http_server.py`
 and enable one of the optional `demo_http_*` configurations. The server uses
 only checked-in CSV fixtures and exposes CSV, slow, 404, and 500 routes. The
 standard suite uses SQLite and must have zero skips. The PostgreSQL release
-suite is explicit: set `RUNBOOK_TEST_DATABASE_URL` to a disposable database
-and run `pixi run test-postgres`; it fails immediately when the URL is absent
-and never drops the database.
+suite is explicit: use
+`RUNBOOK_TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/runbook-platform-demo`
+for the disposable release database and run `pixi run test-postgres`. The
+harness fails immediately when the URL is absent or names the vendor database
+`runbook`; arbitrary disposable CI database names remain supported.
 
 ## Failure and recovery
 

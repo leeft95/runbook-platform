@@ -47,6 +47,10 @@ idle. `--now` must be an ISO timestamp with a timezone. `--reload` is for local
 development. Run `runbook-services COMMAND --help` for argparse's current
 option descriptions.
 
+The config-import `--reports-root` option is retained as a deprecated no-op for
+v0.1.0 compatibility. Workers, rather than config import, validate report
+aliases and module discovery.
+
 `runbook-worker` accepts only a durable run ID; it loads its pinned
 configuration and snapshot from PostgreSQL. The service never serializes
 source-specific execution state into the worker command. `pixi run

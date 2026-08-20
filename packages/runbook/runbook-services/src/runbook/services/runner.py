@@ -337,8 +337,12 @@ class ServiceRunner:
         """Durably release settled source dependencies and pin profile snapshots."""
         store = open_blob_store(self.data_store)
         for source_row in repository.unreleased_successful_sources():
+            if self._stop.is_set():
+                return
             affected: list[tuple[ConfigRevision, ReportProfile, set[str | None]]] = []
             for config in profile_configs:
+                if self._stop.is_set():
+                    return
                 profile = self._model(config)
                 if not isinstance(profile, ReportProfile):
                     continue
@@ -365,12 +369,16 @@ class ServiceRunner:
                 except ValueError:
                     all_represented = False
                     continue
+                if self._stop.is_set():
+                    return
                 identity = (
                     f"profile:{profile.profile_id}:revision={config.revision}:hash={config.config_hash}:"
                     f"snapshot={snapshot.snapshot_id}"
                 )
                 existing = repository.get_identity(identity)
                 if existing is None:
+                    if self._stop.is_set():
+                        return
                     repository.queue_run(
                         kind="profile",
                         target_id=profile.profile_id,
@@ -405,20 +413,25 @@ class ServiceRunner:
         A pointer left behind by an older or failed attempt is not a settled
         refresh generation.  This explicit source->dataset rule avoids
         releasing a profile from a mixed old/new snapshot without introducing
-        a general dependency graph.
+        a general dependency graph.  Pointer rows stay locked until the
+        caller commits the queued snapshot.
         """
         if None in producers:
             return False
-        if repository.has_queued_or_running_source({item for item in producers if item}):
+        if repository.has_queued_or_running_source({item for item in producers if item}, slot=slot):
             return False
-        pointers = repository.pointer_registry.get(profile.datasets.values())
+        # Lock the current pointers for the rest of this transaction.  The
+        # subsequent snapshot resolution therefore cannot observe a pointer
+        # replacement after this generation check.
+        pointers = repository.pointer_registry.get(profile.datasets.values(), for_update=True)
         for dataset_id in profile.datasets.values():
             pointer = pointers.get(dataset_id)
             if pointer is None or pointer.source_id not in producers:
                 return False
             producer = pointer.source_id
-            attempts = repository.source_runs_since(producer, slot)
-            if not any(attempt.status == "success" for attempt in attempts):
+            attempts = repository.source_runs_at(producer, slot)
+            successful_run_ids = {attempt.run_id for attempt in attempts if attempt.status == "success"}
+            if pointer.source_run_id not in successful_run_ids:
                 return False
             if _aware_utc(pointer.watermark) < _aware_utc(slot):
                 return False
@@ -428,6 +441,8 @@ class ServiceRunner:
         """Claim and spawn no more than the configured local capacity."""
         backend = self._backend()
         while len(self._active) < self.workers:
+            if self._stop.is_set():
+                return
             rows = repository.eligible_queued_runs(limit=500)
             row = next((item for item in rows if item.run_id not in self._active), None)
             if row is None:
@@ -451,6 +466,8 @@ class ServiceRunner:
                 self._fail_preflight(repository, row, str(exc))
                 self._outcomes.append(self._outcome(row))
                 continue
+            if self._stop.is_set():
+                return
             # Spawn failures are ordinary preflight failures.  Once a process
             # exists, however, a claim/commit error is a database failure: the
             # row must remain queued and the original exception must escape.
@@ -462,6 +479,12 @@ class ServiceRunner:
                 self._fail_preflight(repository, row, str(exc))
                 self._outcomes.append(self._outcome(row))
                 continue
+            if self._stop.is_set():
+                try:
+                    backend.cancel(row.run_id)
+                except KeyError:
+                    pass
+                return
 
             try:
                 claimed = repository.claim(row.run_id, worker_id)

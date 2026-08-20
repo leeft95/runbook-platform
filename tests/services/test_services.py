@@ -124,6 +124,31 @@ def test_serve_reload_uses_uvicorn_factory(monkeypatch) -> None:
     }
 
 
+def test_config_import_retains_deprecated_reports_root(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_import(args):
+        captured.update(vars(args))
+        return {"sources": 0, "profiles": 0}
+
+    monkeypatch.setattr(cli, "import_configs", fake_import)
+    assert (
+        cli.main(
+            [
+                "--database",
+                "sqlite:///test.db",
+                "config",
+                "import",
+                "--reports-root",
+                "legacy-reports",
+            ]
+        )
+        == 0
+    )
+    assert captured["reports_root"] == "legacy-reports"
+    assert "reports-root" not in capsys.readouterr().err
+
+
 def test_config_pages_use_grid_editors() -> None:
     create_app(database="postgresql+psycopg://postgres:postgres@localhost:5432/runbook")
 
