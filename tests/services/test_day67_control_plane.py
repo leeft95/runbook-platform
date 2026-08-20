@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from runbook.data import DatasetPointerUpdate, build_manifest, open_blob_store, write_manifests
 from runbook.services import cli
 from runbook.services.db import sync_sessions, upgrade_with_metadata
 from runbook.services.repository import RunRepository
+from runbook.services.runner import ServiceRunner
 from runbook.services.worker_backends import WorkerState
 
 
@@ -104,3 +106,71 @@ def test_run_cli_rejects_invalid_capacity_and_interval(capsys) -> None:
     assert cli.main(["run", "--workers", "0"]) == 1
     assert cli.main(["run", "--poll-interval", "0"]) == 1
     assert "poll interval" in capsys.readouterr().out
+
+
+def test_dependency_release_waits_for_all_required_producers_and_is_idempotent(tmp_path) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    store_uri = f"file:{tmp_path / 'store'}"
+    upgrade_with_metadata(database)
+    stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        source_a = _source(repository, "source_a")
+        source_b = _source(repository, "source_b")
+        profile = repository.save_config(
+            "profile",
+            "profile",
+            {"report_id": "report", "datasets": {"a": "source_a", "b": "source_b"}},
+        )
+        store = open_blob_store(store_uri)
+        refs = {}
+        for dataset_id, published in (("source_a", stamp), ("source_b", stamp - timedelta(days=1))):
+            manifest, digest = build_manifest(
+                dataset_id=dataset_id, watermark=published, published_at=published, files=[]
+            )
+            refs[dataset_id] = write_manifests(store, [(manifest, digest)])[dataset_id]
+        repository.pointer_registry.publish(
+            source_id="source_a",
+            source_run_id="run-a",
+            updates=[DatasetPointerUpdate("source_a", refs["source_a"], stamp, stamp)],
+        )
+        # Publish the settled old B pointer, then keep B's refresh running.
+        repository.pointer_registry.publish(
+            source_id="source_b",
+            source_run_id="old-b",
+            updates=[
+                DatasetPointerUpdate("source_b", refs["source_b"], stamp - timedelta(days=1), stamp - timedelta(days=1))
+            ],
+        )
+        run_a = repository.queue_run(
+            kind="source", target_id="source_a", slot=stamp, trigger="manual", force=True, config=source_a
+        )
+        run_b = repository.queue_run(
+            kind="source", target_id="source_b", slot=stamp, trigger="manual", force=True, config=source_b
+        )
+        run_a.status = "success"
+        run_b.status = "running"
+        run_b.worker_id = "local:b"
+        session.flush()
+        runner = ServiceRunner(database=database, data_store=store_uri)
+        runner._release_dependencies(
+            repository, [source_a, source_b], [profile], {"source_a": "source_a", "source_b": "source_b"}, "test"
+        )
+        session.flush()
+        assert repository.list_runs(kind="profile") == []
+
+        run_b.status = "success"
+        repository.pointer_registry.publish(
+            source_id="source_b",
+            source_run_id=run_b.run_id,
+            updates=[DatasetPointerUpdate("source_b", refs["source_b"], stamp, stamp)],
+        )
+        runner._release_dependencies(
+            repository, [source_a, source_b], [profile], {"source_a": "source_a", "source_b": "source_b"}, "test"
+        )
+        session.flush()
+        assert len(repository.list_runs(kind="profile")) == 1
+        runner._release_dependencies(
+            repository, [source_a, source_b], [profile], {"source_a": "source_a", "source_b": "source_b"}, "test"
+        )
+        assert len(repository.list_runs(kind="profile")) == 1
