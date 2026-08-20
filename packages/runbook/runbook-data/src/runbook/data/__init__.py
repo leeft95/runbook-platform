@@ -1,4 +1,5 @@
-from runbook.data.config import DatasetBinding, SourceConfig, load_source_configs
+from runbook.core import BlobStore, DatasetBinding, ScheduleSpec, SourceConfig, open_blob_store
+from runbook.data.config import load_source_configs
 from runbook.data.ingest import run_ingest
 from runbook.data.manifests import (
     build_manifest,
@@ -16,7 +17,6 @@ from runbook.data.pointers import (
     create_pointer_schema,
     open_pointer_registry,
 )
-from runbook.data.store import BlobStore, open_blob_store
 
 __all__ = [
     "BlobStore",
@@ -25,6 +25,7 @@ __all__ = [
     "DatasetPointer",
     "DatasetPointerUpdate",
     "SourceConfig",
+    "ScheduleSpec",
     "build_manifest",
     "load_manifest",
     "load_source_configs",

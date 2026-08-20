@@ -4,9 +4,8 @@ import os
 from dataclasses import dataclass
 from typing import Any, TypeAlias
 
+from runbook.core import ReportProfile, SourceConfig
 from runbook.core.utils.hashing import sha256_json
-from runbook.data.config import SourceConfig
-from runbook.sdk.profiles import ReportProfile
 
 ConfigModel: TypeAlias = SourceConfig | ReportProfile
 

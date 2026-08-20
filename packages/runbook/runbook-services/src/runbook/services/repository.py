@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from runbook.data.config import SourceConfig
-from sqlalchemy import Select, and_, desc, func, select, text
+from runbook.core import SourceConfig
+from sqlalchemy import Select, and_, desc, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -13,7 +13,7 @@ from .config import validate_config
 from .models import ConfigRevision, Run
 
 if TYPE_CHECKING:
-    from runbook.data import DatabasePointerRegistry
+    from .pointers import DatabasePointerRegistry
 
 
 def now_utc() -> datetime:
@@ -78,7 +78,7 @@ class RunRepository:
         reads and publications participate in the repository transaction and can be
         committed atomically with service run state.
         """
-        from runbook.data import DatabasePointerRegistry
+        from .pointers import DatabasePointerRegistry
 
         return DatabasePointerRegistry(self.session.connection())
 
@@ -166,7 +166,7 @@ class RunRepository:
 
     def get_run(self, run_id: str) -> Run | None:
         """Return one run by ID."""
-        return self.session.get(Run, run_id)
+        return self.session.get(Run, run_id, populate_existing=True)
 
     def list_runs(
         self,
@@ -266,6 +266,81 @@ class RunRepository:
             ).all()
         )
 
+    def claim(self, run_id: str, worker_id: str) -> bool:
+        """Atomically claim a queued run for one worker process."""
+        stamp = now_utc()
+        result = self.session.execute(
+            update(Run)
+            .where(
+                Run.run_id == run_id, Run.status == "queued", Run.worker_id.is_(None), Run.cancel_requested_at.is_(None)
+            )
+            .values(status="running", worker_id=worker_id, started_at=stamp, updated_at=stamp)
+        )
+        self.session.flush()
+        return int(getattr(result, "rowcount", 0)) == 1
+
+    def request_cancel(self, run_id: str) -> bool:
+        """Persist cancellation intent for a queued or running run."""
+        stamp = now_utc()
+        result = self.session.execute(
+            update(Run)
+            .where(Run.run_id == run_id, Run.status.in_(["queued", "running"]), Run.cancel_requested_at.is_(None))
+            .values(cancel_requested_at=stamp, updated_at=stamp)
+        )
+        self.session.flush()
+        return int(getattr(result, "rowcount", 0)) == 1
+
+    def cancel(self, run_id: str) -> bool:
+        """Cancel a queued run immediately or mark a running run for cancellation."""
+        row = self.get_run(run_id)
+        if row is None or row.status not in {"queued", "running"}:
+            return False
+        stamp = now_utc()
+        row.cancel_requested_at = stamp
+        row.updated_at = stamp
+        if row.status == "queued":
+            row.status = "cancelled"
+            row.finished_at = stamp
+            row.reason = "cancel requested before worker start"
+        self.session.flush()
+        return True
+
+    def finish_owned(
+        self,
+        run_id: str,
+        worker_id: str,
+        *,
+        status: str,
+        outcome: dict[str, Any] | None = None,
+        reason: str | None = None,
+    ) -> bool:
+        """Write a terminal outcome only while ownership and cancellation are valid."""
+        if status not in {"success", "failed", "waiting", "not_ready", "skipped"}:
+            raise ValueError(f"invalid worker terminal status: {status!r}")
+        stamp = now_utc()
+        values: dict[str, Any] = {
+            "status": status,
+            "result": outcome,
+            "reason": reason,
+            "finished_at": stamp,
+            "updated_at": stamp,
+        }
+        for key in ("snapshot_id", "context_hash", "code_version", "artifact_id"):
+            if outcome and key in outcome:
+                values[key] = outcome[key]
+        result = self.session.execute(
+            update(Run)
+            .where(
+                Run.run_id == run_id,
+                Run.status == "running",
+                Run.worker_id == worker_id,
+                Run.cancel_requested_at.is_(None),
+            )
+            .values(**values)
+        )
+        self.session.flush()
+        return int(getattr(result, "rowcount", 0)) == 1
+
     def mark_running(self, row: Run) -> None:
         """Mark a run as started."""
         stamp = now_utc()
@@ -283,6 +358,8 @@ class RunRepository:
         reason: str | None = None,
     ) -> None:
         """Persist a terminal run outcome."""
+        if row.status in {"success", "failed", "waiting", "not_ready", "skipped", "cancelled"}:
+            return
         stamp = now_utc()
         row.status = status
         row.result = outcome
@@ -382,7 +459,7 @@ class AsyncRunRepository:
         if expected_revision is not None and (current is None or current.revision != expected_revision):
             raise ConflictError("configuration revision is stale")
         if isinstance(validated.model, SourceConfig):
-            from runbook.data.pointers import dataset_pointers
+            from .pointers import dataset_pointers
 
             pointer_rows = (await self.session.execute(select(dataset_pointers))).mappings()
             pointer_owners = {row["dataset_id"]: row["source_id"] for row in pointer_rows}
@@ -408,7 +485,22 @@ class AsyncRunRepository:
 
     async def get_run(self, run_id: str) -> Run | None:
         """Return one run asynchronously."""
-        return await self.session.get(Run, run_id)
+        return await self.session.get(Run, run_id, populate_existing=True)
+
+    async def request_cancel(self, run_id: str) -> Run | None:
+        """Persist cancellation intent without touching a worker process."""
+        row = await self.session.get(Run, run_id)
+        if row is None:
+            return None
+        if row.status in {"queued", "running"}:
+            row.cancel_requested_at = now_utc()
+            row.updated_at = row.cancel_requested_at
+            if row.status == "queued":
+                row.status = "cancelled"
+                row.finished_at = row.cancel_requested_at
+                row.reason = "cancel requested before worker start"
+            await self.session.flush()
+        return row
 
     async def list_runs(self, **kwargs: Any) -> list[Run]:
         """List runs asynchronously."""
@@ -470,7 +562,7 @@ class AsyncRunRepository:
 
     async def list_pointers(self, limit: int | None = None) -> list[dict[str, Any]]:
         """Return current dataset pointers for the operations dashboard."""
-        from runbook.data.pointers import dataset_pointers
+        from .pointers import dataset_pointers
 
         query = select(dataset_pointers).order_by(dataset_pointers.c.dataset_id)
         if limit is not None:

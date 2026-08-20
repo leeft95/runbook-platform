@@ -19,16 +19,15 @@ def test_submit_starts_worker_process():
 
     assert worker_id == "local:12345"
 
-    popen.assert_called_once_with(
-        [
-            sys.executable,
-            "-m",
-            "runbook.worker",
-            "--run-id",
-            "run-123",
-        ],
-        env=None,
-    )
+    args, kwargs = popen.call_args
+    assert args[0] == [
+        sys.executable,
+        "-m",
+        "runbook.worker",
+        "--run-id",
+        "run-123",
+    ]
+    assert kwargs["env"]["PATH"]
 
 
 def test_poll_reports_running():

@@ -7,11 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from runbook.data import load_source_configs
-from runbook.sdk import load_profiles
-from runbook.sdk.discovery import discover_report_definition
-from runbook.sdk.execution import load_report_module
-from runbook.sdk.profiles import resolve_report_path
+from runbook.core import load_profiles, load_source_configs
 
 from .config import database_url
 from .db import sync_sessions, upgrade_with_metadata
@@ -46,13 +42,6 @@ def import_configs(args: argparse.Namespace) -> dict[str, int]:
         unknown = set(profile.datasets.values()) - known_datasets
         if unknown:
             raise ValueError(f"profile {profile.profile_id!r} references unknown datasets: {sorted(unknown)}")
-        definition = discover_report_definition(
-            load_report_module(resolve_report_path(profile.report_id, args.reports_root))
-        )
-        if sorted(profile.datasets) != definition.aliases:
-            raise ValueError(
-                f"report aliases do not match profile {profile.profile_id!r}: required={definition.aliases}, configured={sorted(profile.datasets)}"
-            )
     with sync_sessions(args.database)() as session:
         repository = RunRepository(session)
         with session.begin():

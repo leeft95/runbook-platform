@@ -1,218 +1,37 @@
+"""Scheduling and reconciliation for the durable run queue."""
+
 from __future__ import annotations
 
-from collections import defaultdict, deque
-from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
-from dataclasses import dataclass
+import os
+import time
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from multiprocessing import get_context
 from typing import Any
 
-from loguru import logger
-from runbook.core import Snapshot
+from runbook.core import ReportProfile, SourceConfig, open_blob_store
 from runbook.core.keying import build_context_hash
-from runbook.core.utils.hashing import sha256_json
-from runbook.data import (
-    DatasetPointer,
-    DatasetPointerUpdate,
-    load_manifest,
-    open_blob_store,
-    resolve_snapshot,
-)
-from runbook.data.config import SourceConfig
-from runbook.data.ingest import run_stage1_acquire
-from runbook.data.ingest.runner import load_previous_append_state
-from runbook.data.ingest.runners import run_stage2_curate
-from runbook.data.pipeline import slot_key
-from runbook.platform.report_run import run_report
-from runbook.platform.schedule import latest_due_slot
-from runbook.sdk import ReportProfile, resolve_code_version
 
-from .config import reports_root, store_uri, validate_config
+from .config import database_url, reports_root, store_uri, validate_config
 from .db import sync_engine, sync_sessions, tick_lock
-from .logging import RunLogIdentity, capture_worker_logs, write_failure_log
 from .models import ConfigRevision, Run
+from .pointers import DatasetPointerUpdate, load_manifest, resolve_snapshot
 from .repository import RunRepository
+from .schedule import latest_due_slot
+from .worker_backends import LocalProcessBackend, WorkerState
 
 
 def _aware_utc(value: datetime) -> datetime:
     """Normalize database timestamps, including SQLite's naive round-trip."""
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
-def _pointer_payload(pointer: DatasetPointer) -> dict[str, Any]:
-    """Serialize one current pointer for a source worker."""
-    return {
-        "dataset_id": pointer.dataset_id,
-        "source_id": pointer.source_id,
-        "manifest_ref": pointer.manifest_ref,
-        "watermark": pointer.watermark.isoformat(),
-        "published_at": pointer.published_at.isoformat(),
-        "source_run_id": pointer.source_run_id,
-        "updated_at": pointer.updated_at.isoformat(),
-    }
-
-
-@dataclass(frozen=True)
-class _SourceTask:
-    run_id: str
-    config: SourceConfig
-    pointers: dict[str, DatasetPointer]
-    identity: RunLogIdentity
-
-
-@dataclass(frozen=True)
-class _ReportTask:
-    run_id: str
-    identity: RunLogIdentity
-    snapshot: dict[str, Any]
-
-
-def _source_worker(
-    config_payload: dict[str, Any],
-    slot_value: str,
-    store_uri: str,
-    previous_watermarks: dict[str, str],
-    pointers_payload: dict[str, dict[str, Any]],
-    identity_payload: dict[str, Any],
-) -> dict[str, Any]:
-    """Run source readiness, acquisition, persistence, and curation in one process."""
-    config = SourceConfig.model_validate(config_payload)
-    slot = datetime.fromisoformat(slot_value)
-    identity = RunLogIdentity(
-        run_id=identity_payload["run_id"],
-        kind=identity_payload["kind"],
-        target_id=identity_payload["target_id"],
-        slot=datetime.fromisoformat(identity_payload["slot"]),
-        report_id=identity_payload.get("report_id"),
-    )
-    pointers = {
-        key: DatasetPointer(
-            dataset_id=value["dataset_id"],
-            source_id=value["source_id"],
-            manifest_ref=value["manifest_ref"],
-            watermark=datetime.fromisoformat(value["watermark"]),
-            published_at=datetime.fromisoformat(value["published_at"]),
-            source_run_id=value["source_run_id"],
-            updated_at=datetime.fromisoformat(value["updated_at"]),
-        )
-        for key, value in pointers_payload.items()
-    }
-    watermarks = {key: datetime.fromisoformat(value) for key, value in previous_watermarks.items()}
-    with capture_worker_logs(store_uri, identity) as log:
-        try:
-            store = open_blob_store(store_uri)
-            acquisition = run_stage1_acquire(
-                source_config=config,
-                slot=slot,
-                store=store,
-                previous_watermarks=watermarks,
-            )
-            if acquisition.status.value != "ready" or acquisition.acquired is None:
-                return {
-                    "source_id": config.source_id,
-                    "slot": slot_key(slot),
-                    "status": acquisition.status.value,
-                    "datasets": None,
-                    "reason": acquisition.message,
-                    "log_ref": log.log_ref,
-                }
-            logger.info(
-                "stage=2 curate source={} slot={} datasets={}",
-                config.source_id,
-                slot_key(slot),
-                sorted(config.datasets),
-            )
-            curated = run_stage2_curate(
-                store=store,
-                source_config=config,
-                acquired=acquisition.acquired,
-                published_at=slot,
-                previous_pointers=pointers,
-            )
-            logger.info(
-                "stage=2 complete source={} slot={} datasets={}",
-                config.source_id,
-                slot_key(slot),
-                sorted(curated.datasets),
-            )
-            return {
-                "source_id": config.source_id,
-                "slot": slot_key(slot),
-                "status": "success",
-                "datasets": dict(curated.datasets),
-                "pointer_updates": [
-                    {
-                        "dataset_id": item.dataset_id,
-                        "manifest_ref": item.manifest_ref,
-                        "watermark": item.watermark.isoformat(),
-                        "published_at": item.published_at.isoformat(),
-                    }
-                    for item in curated.pointer_updates
-                ],
-                "reason": None,
-                "log_ref": log.log_ref,
-            }
-        except Exception as exc:
-            logger.exception("source worker failed run_id={}", identity.run_id)
-            return {
-                "source_id": config.source_id,
-                "slot": slot_key(slot),
-                "status": "failed",
-                "datasets": None,
-                "reason": str(exc),
-                "log_ref": log.log_ref,
-            }
-
-
-def _report_worker(
-    profile_payload: dict[str, Any],
-    slot_value: str,
-    code_version: str,
-    reports_root: str,
-    snapshot_payload: dict[str, Any],
-    store_uri: str,
-    identity_payload: dict[str, Any],
-) -> dict[str, Any]:
-    """Run one pinned report with only serializable worker arguments."""
-    profile = ReportProfile.model_validate(profile_payload)
-    identity = RunLogIdentity(
-        run_id=identity_payload["run_id"],
-        kind=identity_payload["kind"],
-        target_id=identity_payload["target_id"],
-        slot=datetime.fromisoformat(identity_payload["slot"]),
-        report_id=identity_payload.get("report_id"),
-    )
-    with capture_worker_logs(store_uri, identity) as log:
-        try:
-            outcome = run_report(
-                store=open_blob_store(store_uri),
-                profile=profile,
-                slot=datetime.fromisoformat(slot_value),
-                code_version=code_version,
-                reports_root=reports_root,
-                snapshot=(
-                    Snapshot.model_validate(snapshot_payload)
-                    if isinstance(snapshot_payload, dict)
-                    else snapshot_payload
-                ),
-            ).as_dict()
-            outcome["log_ref"] = log.log_ref
-            return outcome
-        except Exception as exc:
-            logger.exception("report worker failed run_id={}", identity.run_id)
-            return {
-                "profile_id": profile.profile_id,
-                "slot": slot_key(datetime.fromisoformat(slot_value)),
-                "status": "failed",
-                "reason": str(exc),
-                "log_ref": log.log_ref,
-            }
+def _slot_key(value: datetime) -> str:
+    """Format a run slot as a canonical UTC key."""
+    return _aware_utc(value).strftime("%Y%m%dT%H%M%SZ")
 
 
 class ServiceRunner:
-    """Execute source-to-curation-to-report DAGs from the PostgreSQL run queue."""
+    """Schedule runs and reconcile one process-backed worker per run."""
 
     def __init__(
         self,
@@ -221,7 +40,7 @@ class ServiceRunner:
         data_store: str | None = None,
         report_root: str | None = None,
         workers: int = 4,
-        executor_factory: Any | None = None,
+        backend: Any | None = None,
     ):
         if workers < 1:
             raise ValueError("workers must be at least 1")
@@ -229,16 +48,27 @@ class ServiceRunner:
         self.data_store = store_uri(data_store)
         self.report_root = reports_root(report_root)
         self.workers = workers
-        self.executor_factory = executor_factory
+        self.backend = backend
 
-    def _executor(self):
-        """Build the spawn pool or an explicitly injected test executor."""
-        if self.executor_factory is not None:
-            return self.executor_factory(self.workers)
-        return ProcessPoolExecutor(max_workers=self.workers, mp_context=get_context("spawn"))
+    @staticmethod
+    def _model(config: ConfigRevision) -> SourceConfig | ReportProfile:
+        """Reconstruct a validated model from an exact stored revision."""
+        return validate_config(config.kind, config.config_id, dict(config.payload)).model
+
+    def _backend(self):
+        """Build the configured process backend."""
+        if self.backend is not None:
+            return self.backend
+        return LocalProcessBackend(
+            env={
+                "RUNBOOK_DATABASE_URL": database_url(self.database),
+                "RUNBOOK_DATA_STORE_URI": self.data_store,
+                "RUNBOOK_REPORTS_ROOT": self.report_root,
+            }
+        )
 
     def tick(self, *, now: datetime | None = None, code_version: str | None = None) -> list[dict[str, Any]]:
-        """Schedule source roots and drain one dependency-aware worker DAG."""
+        """Schedule due sources, claim capacity, and poll workers to terminal state."""
         current = now or datetime.now(timezone.utc)
         if current.tzinfo is None:
             raise ValueError("tick time must include a timezone")
@@ -246,8 +76,7 @@ class ServiceRunner:
         with tick_lock(engine) as acquired:
             if not acquired:
                 return [{"status": "skipped", "reason": "another tick is running"}]
-            sessions = sync_sessions(self.database)
-            with sessions() as session:
+            with sync_sessions(self.database)() as session:
                 repository = RunRepository(session)
                 repository.recover_stale(older_than=current - timedelta(hours=1))
                 source_configs = repository.list_latest_configs("source")
@@ -256,66 +85,47 @@ class ServiceRunner:
                 self._import_legacy_pointers(repository, source_configs, current)
                 self._schedule_sources(repository, source_configs, current)
                 session.commit()
-                return self._run_dag(
+                return self._run_queue(
                     session,
                     repository,
-                    repository.queued_runs(),
                     profile_configs,
                     producer_by_dataset,
                     code_version=code_version,
                 )
 
-    @staticmethod
-    def _model(config: ConfigRevision) -> SourceConfig | ReportProfile:
-        """Reconstruct a validated model from a stored revision."""
-        return validate_config(config.kind, config.config_id, dict(config.payload)).model
-
-    def _schedule_sources(
-        self,
-        repository: RunRepository,
-        configs: list[ConfigRevision],
-        current: datetime,
-    ) -> None:
-        """Queue the latest due slot for every enabled source; profiles are dataset-triggered."""
+    def _schedule_sources(self, repository: RunRepository, configs: list[ConfigRevision], current: datetime) -> None:
+        """Queue the latest due slot for every enabled source."""
         for config in configs:
             model = self._model(config)
             if not isinstance(model, SourceConfig) or not model.enabled:
                 continue
             slot = latest_due_slot(model.schedule.cron, model.schedule.timezone, current)
             active = repository.list_runs(kind="source", target_id=config.config_id, limit=20)
-            if any(row.slot == slot and row.status in {"queued", "running"} for row in active):
+            if any(_aware_utc(row.slot) == slot and row.status in {"queued", "running"} for row in active):
                 continue
             repository.queue_run(
-                kind="source",
-                target_id=config.config_id,
-                slot=slot,
-                trigger="schedule",
-                force=False,
-                config=config,
+                kind="source", target_id=config.config_id, slot=slot, trigger="schedule", force=False, config=config
             )
 
     def _producer_map(self, configs: list[ConfigRevision]) -> dict[str, str]:
-        """Build and validate the current one-source-per-dataset ownership map."""
+        """Build the one-source-per-dataset ownership map."""
         producers: dict[str, str] = {}
         for config in configs:
             model = self._model(config)
-            if not isinstance(model, SourceConfig):  # pragma: no cover - validated by config kind
+            if not isinstance(model, SourceConfig):
                 continue
             for binding in model.datasets.values():
-                previous = producers.setdefault(binding.dataset_id, model.source_id)
-                if previous != model.source_id:
+                owner = producers.setdefault(binding.dataset_id, model.source_id)
+                if owner != model.source_id:
                     raise ValueError(
-                        f"dataset {binding.dataset_id!r} has multiple producers: {previous!r}, {model.source_id!r}"
+                        f"dataset {binding.dataset_id!r} has multiple producers: {owner!r}, {model.source_id!r}"
                     )
         return producers
 
     def _import_legacy_pointers(
-        self,
-        repository: RunRepository,
-        source_configs: list[ConfigRevision],
-        current: datetime,
+        self, repository: RunRepository, source_configs: list[ConfigRevision], current: datetime
     ) -> None:
-        """Import a v0.0.1 root pointer document into an empty database registry."""
+        """Import the old root pointer document once into the service registry."""
         registry = repository.pointer_registry
         if not registry.is_empty():
             return
@@ -329,10 +139,8 @@ class ServiceRunner:
         grouped: dict[str, list[DatasetPointerUpdate]] = defaultdict(list)
         for dataset_id, ref in sorted(payload.items()):
             source_id = producers.get(dataset_id)
-            if source_id is None:
-                raise ValueError(f"legacy pointer dataset has no configured producer: {dataset_id!r}")
-            if not isinstance(ref, str):
-                raise ValueError(f"legacy pointer must be a manifest reference: {dataset_id!r}")
+            if source_id is None or not isinstance(ref, str):
+                raise ValueError(f"legacy pointer has no configured producer: {dataset_id!r}")
             manifest = load_manifest(store, ref, expected_dataset_id=dataset_id)
             grouped[source_id].append(
                 DatasetPointerUpdate(
@@ -344,775 +152,185 @@ class ServiceRunner:
             )
         for source_id, updates in grouped.items():
             registry.publish(
-                source_id=source_id,
-                source_run_id="legacy-pointer-import",
-                updates=updates,
-                updated_at=current,
+                source_id=source_id, source_run_id="legacy-pointer-import", updates=updates, updated_at=current
             )
-        logger.info("imported legacy dataset pointers count={}", len(payload))
 
-    def _run_dag(
+    def _pin_profile(self, repository: RunRepository, row: Run, profile: ReportProfile) -> bool:
+        """Resolve and persist the exact snapshot before a profile worker starts."""
+        if isinstance(row.snapshot_payload, dict):
+            return True
+        try:
+            snapshot = resolve_snapshot(
+                open_blob_store(self.data_store), profile.datasets, pointer_registry=repository.pointer_registry
+            )
+        except ValueError as exc:
+            if str(exc).startswith("no pointer exists"):
+                repository.finish(row, status="waiting", reason=str(exc))
+                return False
+            raise
+        if row.trigger != "manual" and snapshot.watermark < _aware_utc(row.slot):
+            repository.finish(row, status="waiting", reason="dataset watermark is behind report slot")
+            return False
+        row.snapshot_id = snapshot.snapshot_id
+        row.snapshot_payload = snapshot.model_dump(mode="json")
+        row.context_hash = build_context_hash(profile.execution_config())
+        return True
+
+    def _run_queue(
         self,
         session,
         repository: RunRepository,
-        queued: list[Run],
         profile_configs: list[ConfigRevision],
         producer_by_dataset: dict[str, str],
         *,
         code_version: str | None,
     ) -> list[dict[str, Any]]:
-        """Drain queued roots and dynamically release dependent profile work."""
-        source_rows: dict[str, deque[Run]] = defaultdict(deque)
-        source_models: dict[str, SourceConfig] = {}
-        profile_roots: list[Run] = []
-        terminal: list[tuple[datetime, str, dict[str, Any]]] = []
-
-        def row_identity(
-            row: Run,
-            model: ReportProfile | None = None,
-        ) -> RunLogIdentity:
-            return RunLogIdentity(
-                run_id=row.run_id,
-                kind=row.kind,
-                target_id=row.target_id,
-                slot=_aware_utc(row.slot),
-                report_id=model.report_id if model is not None else None,
-            )
-
-        def fail_preflight(
-            row: Run,
-            exc: Exception,
-            model: ReportProfile | None = None,
-        ) -> None:
-            """Persist unexpected parent-side failures with a diagnostic log."""
-            logger.exception(
-                "run preflight failed run_id={}",
-                row.run_id,
-            )
-            identity = row_identity(row, model)
-            log_ref = write_failure_log(
-                self.data_store,
-                identity,
-                exc,
-            )
-            outcome = {
-                "status": "failed",
-                "reason": str(exc),
-                "log_ref": log_ref,
-            }
-            repository.finish(
-                row,
-                status="failed",
-                outcome=outcome,
-                reason=str(exc),
-            )
-            terminal.append(
-                (
-                    row.requested_at,
-                    row.run_id,
-                    self._outcome(row),
-                )
-            )
-
-        for row in sorted(
-            queued,
-            key=lambda item: (
-                _aware_utc(item.requested_at),
-                item.run_id,
-            ),
-        ):
-            config = repository.get_config(
-                row.kind,
-                row.target_id,
-                row.config_revision,
-            )
-
-            if config is None:
-                fail_preflight(
-                    row,
-                    RuntimeError("pinned configuration revision is unavailable"),
-                )
-                continue
-
-            try:
-                model = self._model(config)
-            except Exception as exc:
-                fail_preflight(row, exc)
-                continue
-
-            if row.kind == "source":
-                if not isinstance(model, SourceConfig):
-                    fail_preflight(
-                        row,
-                        ValueError("pinned source configuration is invalid"),
-                    )
+        """Drain queued work with bounded capacity and same-source serialization."""
+        backend = self._backend()
+        active: dict[str, str] = {}
+        terminal: list[dict[str, Any]] = []
+        while True:
+            made_progress = False
+            for row in repository.queued_runs(limit=500):
+                if len(active) >= self.workers or row.run_id in active:
+                    break
+                if any(
+                    active_row_target == row.target_id for active_row_target in self._active_targets(repository, active)
+                ):
                     continue
-
-                source_rows[row.target_id].append(row)
-                source_models[row.run_id] = model
-            else:
-                profile_roots.append(row)
-
-        for source_id, rows in source_rows.items():
-            source_rows[source_id] = deque(
-                sorted(
-                    rows,
-                    key=lambda item: (
-                        _aware_utc(item.slot),
-                        _aware_utc(item.requested_at),
-                        item.run_id,
-                    ),
-                )
-            )
-
-        session.commit()
-
-        participating_sources = set(source_rows)
-
-        profile_models: dict[str, ReportProfile] = {}
-        remaining_dependencies: dict[str, set[str]] = {}
-        profiles_by_source: dict[str, set[str]] = defaultdict(set)
-        profile_revision_by_id: dict[str, ConfigRevision] = {}
-
-        for config in profile_configs:
-            model = self._model(config)
-
-            if not isinstance(model, ReportProfile):
-                continue
-
-            dependencies = {
-                producer_by_dataset[dataset_id]
-                for dataset_id in model.datasets.values()
-                if producer_by_dataset.get(dataset_id) in participating_sources
-            }
-
-            if not dependencies:
-                continue
-
-            profile_models[model.profile_id] = model
-            profile_revision_by_id[model.profile_id] = config
-            remaining_dependencies[model.profile_id] = set(dependencies)
-
-            for source_id in dependencies:
-                profiles_by_source[source_id].add(model.profile_id)
-
-        futures: dict[
-            Future[Any],
-            _SourceTask | _ReportTask,
-        ] = {}
-
-        # Runs transitioned to "running" by this invocation of _run_dag().
-        # This prevents Ctrl+C from failing unrelated running rows.
-        started_run_ids: set[str] = set()
-
-        with self._executor() as executor:
-
-            def finish_terminal(row: Run) -> None:
-                """Record a terminal outcome and stop tracking it as active."""
-                started_run_ids.discard(row.run_id)
-                terminal.append(
-                    (
-                        row.requested_at,
-                        row.run_id,
-                        self._outcome(row),
-                    )
-                )
-
-            def fail_submission(
-                row: Run,
-                identity: RunLogIdentity,
-                exc: Exception,
-            ) -> None:
-                """Persist startup/broken-pool failures as ordinary run outcomes."""
-                logger.error(
-                    "worker submission failed run_id={} reason={}",
-                    row.run_id,
-                    exc,
-                )
-
-                log_ref = write_failure_log(
-                    self.data_store,
-                    identity,
-                    exc,
-                )
-
-                outcome = {
-                    "status": "failed",
-                    "reason": str(exc),
-                    "log_ref": log_ref,
-                }
-
-                repository.finish(
-                    row,
-                    status="failed",
-                    outcome=outcome,
-                    reason=str(exc),
-                )
-                session.commit()
-                finish_terminal(row)
-
-            def submit_report(
-                row: Run,
-                snapshot: Snapshot | None = None,
-            ) -> None:
-                """Prepare and submit one pinned report worker task."""
-                if row.status != "queued":
-                    return
-
-                config = repository.get_config(
-                    row.kind,
-                    row.target_id,
-                    row.config_revision,
-                )
-
+                config = repository.get_config(row.kind, row.target_id, row.config_revision)
                 if config is None:
-                    fail_preflight(
-                        row,
-                        RuntimeError("pinned configuration revision is unavailable"),
-                    )
+                    self._fail_preflight(repository, row, "pinned configuration revision is unavailable")
                     session.commit()
-                    return
-
+                    terminal.append(self._outcome(row))
+                    made_progress = True
+                    continue
                 try:
                     model = self._model(config)
-                except Exception as exc:
-                    fail_preflight(row, exc)
-                    session.commit()
-                    return
-
-                if not isinstance(model, ReportProfile):
-                    fail_preflight(
-                        row,
-                        ValueError("pinned profile configuration is invalid"),
-                    )
-                    session.commit()
-                    return
-
-                identity = row_identity(row, model)
-
-                try:
-                    pinned = snapshot or resolve_snapshot(
-                        open_blob_store(self.data_store),
-                        model.datasets,
-                        pointer_registry=repository.pointer_registry,
-                    )
-                    resolved_code = resolve_code_version(code_version)
-
-                except ValueError as exc:
-                    status = "waiting" if str(exc).startswith("no pointer exists for dataset") else "failed"
-
-                    if status == "waiting":
-                        repository.finish(
-                            row,
-                            status=status,
-                            reason=str(exc),
-                        )
-                    else:
-                        log_ref = write_failure_log(
-                            self.data_store,
-                            identity,
-                            exc,
-                        )
-                        outcome = {
-                            "status": status,
-                            "reason": str(exc),
-                            "log_ref": log_ref,
-                        }
-                        repository.finish(
-                            row,
-                            status=status,
-                            outcome=outcome,
-                            reason=str(exc),
-                        )
-
-                    session.commit()
-                    finish_terminal(row)
-                    return
-
-                except Exception as exc:
-                    log_ref = write_failure_log(
-                        self.data_store,
-                        identity,
-                        exc,
-                    )
-
-                    outcome = {
-                        "status": "failed",
-                        "reason": str(exc),
-                        "log_ref": log_ref,
-                    }
-
-                    repository.finish(
-                        row,
-                        status="failed",
-                        outcome=outcome,
-                        reason=str(exc),
-                    )
-                    session.commit()
-                    finish_terminal(row)
-                    return
-
-                run_slot = _aware_utc(row.slot)
-
-                if row.trigger != "manual" and pinned.watermark < run_slot:
-                    repository.finish(
-                        row,
-                        status="waiting",
-                        reason=("dataset watermark is behind report slot"),
-                    )
-                    session.commit()
-                    finish_terminal(row)
-                    return
-
-                context_hash = build_context_hash(model.execution_config())
-
-                expected_artifact = sha256_json(
-                    {
-                        "report_id": model.report_id,
-                        "snapshot_id": pinned.snapshot_id,
-                        "code_version": resolved_code,
-                        "context_hash": context_hash,
-                    }
-                )
-
-                row.snapshot_id = pinned.snapshot_id
-                row.context_hash = context_hash
-                row.code_version = resolved_code
-
-                if not row.force and repository.successful(
-                    row.kind,
-                    row.target_id,
-                    row.slot,
-                    artifact_id=expected_artifact,
-                ):
-                    repository.finish(
-                        row,
-                        status="skipped",
-                        reason="identity already succeeded",
-                    )
-                    session.commit()
-                    finish_terminal(row)
-                    return
-
-                repository.mark_running(row)
-                started_run_ids.add(row.run_id)
-                session.commit()
-
-                identity = row_identity(row, model)
-
-                snapshot_payload: dict[str, Any] = pinned.model_dump(mode="json")
-
-                try:
-                    future = executor.submit(
-                        _report_worker,
-                        model.model_dump(mode="json"),
-                        run_slot.isoformat(),
-                        resolved_code,
-                        self.report_root,
-                        snapshot_payload,
-                        self.data_store,
-                        {
-                            "run_id": identity.run_id,
-                            "kind": identity.kind,
-                            "target_id": identity.target_id,
-                            "slot": identity.slot.isoformat(),
-                            "report_id": identity.report_id,
-                        },
-                    )
-                except Exception as exc:
-                    fail_submission(
-                        row,
-                        identity,
-                        exc,
-                    )
-                    return
-
-                futures[future] = _ReportTask(
-                    row.run_id,
-                    identity,
-                    snapshot_payload,
-                )
-
-            def submit_generated_profile(
-                profile_id: str,
-            ) -> None:
-                """Queue a dataset-triggered profile once its snapshot is complete."""
-                model = profile_models[profile_id]
-
-                try:
-                    snapshot = resolve_snapshot(
-                        open_blob_store(self.data_store),
-                        model.datasets,
-                        pointer_registry=repository.pointer_registry,
-                    )
-
-                except ValueError as exc:
-                    if str(exc).startswith("no pointer exists for dataset"):
-                        logger.info(
-                            "profile fanout blocked profile={} reason={}",
-                            profile_id,
-                            exc,
-                        )
-                        return
-
-                    logger.error(
-                        "profile fanout failed profile={} reason={}",
-                        profile_id,
-                        exc,
-                    )
-                    return
-
-                except Exception as exc:
-                    logger.error(
-                        "profile fanout failed profile={} reason={}",
-                        profile_id,
-                        exc,
-                    )
-                    return
-
-                row = repository.queue_run(
-                    kind="profile",
-                    target_id=profile_id,
-                    slot=snapshot.watermark,
-                    trigger="dataset",
-                    force=False,
-                    config=profile_revision_by_id[profile_id],
-                )
-
-                session.commit()
-                submit_report(
-                    row,
-                    snapshot=snapshot,
-                )
-
-            def settle_source(
-                source_id: str,
-            ) -> None:
-                """Release profiles whose participating source dependencies settled."""
-                for profile_id in sorted(
-                    profiles_by_source.get(
-                        source_id,
-                        (),
-                    )
-                ):
-                    remaining = remaining_dependencies[profile_id]
-                    remaining.discard(source_id)
-
-                    if not remaining:
-                        submit_generated_profile(profile_id)
-
-            def start_next_source(
-                source_id: str,
-            ) -> None:
-                """Submit the next ordered run for one source pipeline."""
-                rows = source_rows[source_id]
-
-                while rows:
-                    row = rows.popleft()
-                    model = source_models[row.run_id]
-
-                    if not row.force and repository.successful(
-                        row.kind,
-                        row.target_id,
-                        row.slot,
-                        row.config_hash,
-                    ):
-                        repository.finish(
-                            row,
-                            status="skipped",
-                            reason="identity already succeeded",
-                        )
-                        session.commit()
-                        finish_terminal(row)
-                        continue
-
-                    try:
-                        pointer_ids = [binding.dataset_id for binding in model.datasets.values()]
-
-                        pointers = repository.pointer_registry.get(pointer_ids)
-
-                        store = open_blob_store(self.data_store)
-
-                        watermarks, _tickers = load_previous_append_state(
-                            store,
-                            model,
-                            pointers,
-                        )
-
-                    except Exception as exc:
-                        identity = RunLogIdentity(
-                            run_id=row.run_id,
-                            kind="source",
-                            target_id=model.source_id,
-                            slot=_aware_utc(row.slot),
-                        )
-
-                        log_ref = write_failure_log(
-                            self.data_store,
-                            identity,
-                            exc,
-                        )
-
-                        outcome = {
-                            "status": "failed",
-                            "reason": str(exc),
-                            "log_ref": log_ref,
-                        }
-
-                        repository.finish(
-                            row,
-                            status="failed",
-                            outcome=outcome,
-                            reason=str(exc),
-                        )
-                        session.commit()
-                        finish_terminal(row)
-                        continue
-
-                    repository.mark_running(row)
-                    started_run_ids.add(row.run_id)
-                    session.commit()
-
-                    run_slot = _aware_utc(row.slot)
-
-                    identity = RunLogIdentity(
-                        run_id=row.run_id,
-                        kind="source",
-                        target_id=model.source_id,
-                        slot=run_slot,
-                    )
-
-                    try:
-                        future = executor.submit(
-                            _source_worker,
-                            model.model_dump(mode="json"),
-                            run_slot.isoformat(),
-                            self.data_store,
-                            {key: value.isoformat() for key, value in watermarks.items()},
-                            {key: _pointer_payload(value) for key, value in pointers.items()},
-                            {
-                                "run_id": identity.run_id,
-                                "kind": identity.kind,
-                                "target_id": (identity.target_id),
-                                "slot": (identity.slot.isoformat()),
-                            },
-                        )
-
-                    except Exception as exc:
-                        fail_submission(
-                            row,
-                            identity,
-                            exc,
-                        )
-                        continue
-
-                    futures[future] = _SourceTask(
-                        row.run_id,
-                        model,
-                        pointers,
-                        identity,
-                    )
-
-                    return
-
-                settle_source(source_id)
-
-            try:
-                for row in profile_roots:
-                    submit_report(row)
-
-                for source_id in sorted(source_rows):
-                    start_next_source(source_id)
-
-                while futures:
-                    done, _pending = wait(
-                        tuple(futures),
-                        timeout=30,
-                        return_when=FIRST_COMPLETED,
-                    )
-
-                    if not done:
-                        logger.warning(
-                            "runner waiting on workers active={}",
-                            [task.run_id for task in futures.values()],
-                        )
-                        continue
-
-                    for future in done:
-                        task = futures.pop(future)
-
-                        task_row = repository.get_run(task.run_id)
-
-                        if task_row is None:
-                            # Run rows are not deleted.
-                            continue
-
-                        row = task_row
-
-                        if isinstance(
-                            task,
-                            _ReportTask,
-                        ):
-                            try:
-                                result = future.result()
-                                result["snapshot"] = task.snapshot
-
-                                repository.finish(
-                                    row,
-                                    status=result["status"],
-                                    outcome=result,
-                                    reason=result.get("reason"),
-                                )
-
-                            except Exception as exc:
-                                logger.exception(
-                                    "report worker failed run_id={}",
-                                    row.run_id,
-                                )
-
-                                log_ref = write_failure_log(
-                                    self.data_store,
-                                    task.identity,
-                                    exc,
-                                    incomplete=True,
-                                )
-
-                                result = {
-                                    "status": "failed",
-                                    "reason": str(exc),
-                                    "log_ref": log_ref,
-                                    "snapshot": (task.snapshot),
-                                }
-
-                                repository.finish(
-                                    row,
-                                    status="failed",
-                                    outcome=result,
-                                    reason=str(exc),
-                                )
-
+                    if row.kind == "profile":
+                        if not isinstance(model, ReportProfile) or not self._pin_profile(repository, row, model):
                             session.commit()
-                            finish_terminal(row)
+                            terminal.append(self._outcome(row))
+                            made_progress = True
                             continue
+                        if row.code_version is None:
+                            row.code_version = code_version or os.environ.get("RUNBOOK_CODE_VERSION") or "local"
+                    elif not isinstance(model, SourceConfig):
+                        raise ValueError("pinned source configuration is invalid")
+                except Exception as exc:
+                    self._fail_preflight(repository, row, str(exc))
+                    session.commit()
+                    terminal.append(self._outcome(row))
+                    made_progress = True
+                    continue
 
-                        source_id = task.config.source_id
-
-                        try:
-                            result = future.result()
-
-                            if result["status"] != "success":
-                                repository.finish(
-                                    row,
-                                    status=result["status"],
-                                    outcome=result,
-                                    reason=result.get("reason"),
-                                )
-                            else:
-                                updates = tuple(
-                                    DatasetPointerUpdate(
-                                        dataset_id=item["dataset_id"],
-                                        manifest_ref=item["manifest_ref"],
-                                        watermark=(datetime.fromisoformat(item["watermark"])),
-                                        published_at=(datetime.fromisoformat(item["published_at"])),
-                                    )
-                                    for item in result.get(
-                                        "pointer_updates",
-                                        (),
-                                    )
-                                )
-
-                                with session.begin_nested():
-                                    (
-                                        repository.pointer_registry.publish(
-                                            source_id=(source_id),
-                                            source_run_id=(row.run_id),
-                                            updates=updates,
-                                        )
-                                    )
-
-                                    repository.finish(
-                                        row,
-                                        status="success",
-                                        outcome=result,
-                                    )
-
-                        except Exception as exc:
-                            logger.exception(
-                                "source worker failed run_id={}",
-                                row.run_id,
-                            )
-
-                            log_ref = write_failure_log(
-                                self.data_store,
-                                task.identity,
-                                exc,
-                                incomplete=True,
-                            )
-
-                            result = {
-                                "source_id": source_id,
-                                "slot": slot_key(_aware_utc(row.slot)),
-                                "status": "failed",
-                                "datasets": None,
-                                "reason": str(exc),
-                                "log_ref": log_ref,
-                            }
-
-                            repository.finish(
-                                row,
-                                status="failed",
-                                outcome=result,
-                                reason=str(exc),
-                            )
-
-                        session.commit()
-                        finish_terminal(row)
-                        start_next_source(source_id)
-
-            except KeyboardInterrupt:
-                logger.warning(
-                    "service runner interrupted; failing active runs count={}",
-                    len(started_run_ids),
-                )
-
-                # Persist run state before leaving the executor context.
-                # ProcessPoolExecutor shutdown may otherwise block while
-                # workers are still unwinding.
-                for run_id in tuple(started_run_ids):
-                    started_row = repository.get_run(run_id)
-
-                    if started_row is None or started_row.status != "running":
-                        continue
-
-                    repository.finish(
-                        started_row,
-                        status="failed",
-                        reason=("service runner interrupted"),
-                    )
-
+                try:
+                    worker_id = backend.submit(row.run_id)
+                except Exception as exc:
+                    self._fail_preflight(repository, row, str(exc))
+                    session.commit()
+                    terminal.append(self._outcome(row))
+                    made_progress = True
+                    continue
+                try:
+                    claimed = repository.claim(row.run_id, worker_id)
+                except Exception:
+                    session.rollback()
+                    backend.cancel(row.run_id)
+                    raise
+                if not claimed:
+                    backend.cancel(row.run_id)
+                    session.rollback()
+                    repository.get_run(row.run_id)
+                    continue
+                try:
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    backend.cancel(row.run_id)
+                    raise
+                active[row.run_id] = worker_id
+                made_progress = True
+            if not active:
+                if not made_progress:
+                    break
+                continue
+            done: list[str] = []
+            for run_id in list(active):
+                state: WorkerState = backend.poll(run_id)
+                if state.running:
+                    continue
+                done.append(run_id)
+                active_row = repository.get_run(run_id)
+                if active_row is None:
+                    continue
+                if active_row.status == "running" and active_row.worker_id == active[run_id]:
+                    status = "cancelled" if active_row.cancel_requested_at is not None else "failed"
+                    repository.finish(active_row, status=status, reason="worker exited without terminal outcome")
+                if active_row.kind == "source" and active_row.status == "success":
+                    self._release_profiles(repository, active_row, profile_configs, producer_by_dataset)
+                terminal.append(self._outcome(active_row))
+            if done:
+                for run_id in done:
+                    active.pop(run_id, None)
                 session.commit()
+                continue
+            time.sleep(0.02)
+        return sorted(terminal, key=lambda item: (item.get("requested_at", ""), item["run_id"]))
 
-                # Cancel work which has not begun. Running process-pool
-                # jobs generally cannot be cancelled here, but their
-                # persisted run state is already terminal.
-                for future in futures:
-                    future.cancel()
+    def _release_profiles(
+        self,
+        repository: RunRepository,
+        source_row: Run,
+        profile_configs: list[ConfigRevision],
+        producer_by_dataset: dict[str, str],
+    ) -> None:
+        """Release dataset-triggered profiles once their durable pointers resolve."""
+        store = open_blob_store(self.data_store)
+        for config in profile_configs:
+            profile = self._model(config)
+            if not isinstance(profile, ReportProfile):
+                continue
+            producers = {
+                producer_by_dataset.get(dataset_id)
+                for dataset_id in profile.datasets.values()
+                if producer_by_dataset.get(dataset_id) is not None
+            }
+            if source_row.target_id not in producers:
+                continue
+            try:
+                snapshot = resolve_snapshot(store, profile.datasets, pointer_registry=repository.pointer_registry)
+            except ValueError:
+                continue
+            if repository.successful("profile", profile.profile_id, snapshot.watermark, config_hash=config.config_hash):
+                continue
+            row = repository.queue_run(
+                kind="profile",
+                target_id=profile.profile_id,
+                slot=snapshot.watermark,
+                trigger="dataset",
+                force=False,
+                config=config,
+            )
+            row.dependencies_released_at = datetime.now(timezone.utc)
 
-                raise
+    @staticmethod
+    def _active_targets(repository: RunRepository, active: dict[str, str]) -> set[str]:
+        """Return targets currently owned by this tick's workers."""
+        return {row.target_id for row in repository.list_runs(status="running", limit=500) if row.run_id in active}
 
-        ordered = sorted(
-            terminal,
-            key=lambda item: (
-                _aware_utc(item[0]),
-                item[1],
-            ),
-        )
-
-        return [outcome for _requested_at, _run_id, outcome in ordered]
+    @staticmethod
+    def _fail_preflight(repository: RunRepository, row: Run, reason: str) -> None:
+        """Persist a terminal preflight failure."""
+        row.status = "failed"
+        row.reason = reason
+        row.result = {"status": "failed", "reason": reason}
+        row.finished_at = datetime.now(timezone.utc)
+        row.updated_at = row.finished_at
 
     @staticmethod
     def _outcome(row: Run) -> dict[str, Any]:
-        """Return the compact CLI outcome for a run."""
+        """Return the compact CLI outcome for one run."""
         return {
             "run_id": row.run_id,
             "kind": row.kind,

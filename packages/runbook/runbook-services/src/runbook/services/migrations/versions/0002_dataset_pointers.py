@@ -1,4 +1,4 @@
-"""Create the data-owned current dataset pointer table."""
+"""Create the service-owned current dataset pointer table."""
 
 import sqlalchemy as sa
 from alembic import op

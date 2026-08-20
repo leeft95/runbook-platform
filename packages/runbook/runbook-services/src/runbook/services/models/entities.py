@@ -35,6 +35,12 @@ class Run(Base):
     config_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    worker_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    snapshot_payload: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
+    dependencies_released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     identity_key: Mapped[str | None] = mapped_column(String(512), nullable=True, index=True)
     snapshot_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     context_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
