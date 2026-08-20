@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from runbook.services import cli
 from runbook.services.db import sync_sessions, upgrade_with_metadata
 from runbook.services.repository import RunRepository
 from runbook.services.worker_backends import WorkerState
@@ -97,3 +98,9 @@ def test_eligible_queue_skips_blocked_source_without_head_of_line_blocking(tmp_p
 def test_worker_state_contract_is_nonblocking() -> None:
     assert WorkerState(running=True).running
     assert WorkerState(running=False, exit_code=0).exit_code == 0
+
+
+def test_run_cli_rejects_invalid_capacity_and_interval(capsys) -> None:
+    assert cli.main(["run", "--workers", "0"]) == 1
+    assert cli.main(["run", "--poll-interval", "0"]) == 1
+    assert "poll interval" in capsys.readouterr().out

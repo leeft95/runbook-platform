@@ -106,6 +106,12 @@ def main(argv: list[str] | None = None) -> int:
     tick.add_argument("--reports-root", default=None)
     tick.add_argument("--code-version", default=None)
     tick.add_argument("--workers", type=int, default=4)
+    run = sub.add_parser("run")
+    run.add_argument("--store", default=None)
+    run.add_argument("--reports-root", default=None)
+    run.add_argument("--code-version", default=None)
+    run.add_argument("--workers", type=int, default=4)
+    run.add_argument("--poll-interval", type=float, default=5.0)
     serve = sub.add_parser("serve")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8050)
@@ -132,6 +138,18 @@ def main(argv: list[str] | None = None) -> int:
                     workers=args.workers,
                 ).tick(now=_time(args.now), code_version=args.code_version)
             }
+        elif args.command == "run":
+            if args.workers < 1:
+                raise ValueError("workers must be at least 1")
+            if args.poll_interval <= 0:
+                raise ValueError("poll interval must be greater than 0")
+            result = ServiceRunner(
+                database=args.database,
+                data_store=args.store,
+                report_root=args.reports_root,
+                workers=args.workers,
+                poll_interval=args.poll_interval,
+            ).run(code_version=args.code_version)
         else:
             import uvicorn
 
