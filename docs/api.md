@@ -73,8 +73,9 @@ The extension protocols are described in {doc}`source-adapters-and-curation`.
 
 ## Platform helpers
 
-Runs are durable PostgreSQL records. The API returns `worker_id`,
-`cancel_requested_at`, and derived `cancelling` state. `POST
+Runs are durable PostgreSQL records. The API returns `worker_id` and
+`cancel_requested_at`; the dashboard derives its `cancelling` display state.
+`POST
 /api/v1/runs/{run_id}/cancel` returns HTTP 202 and changes queued runs to
 `cancelled`; for running rows it only records cancellation intent. The API
 never reaches into the polling runner's local process registry.

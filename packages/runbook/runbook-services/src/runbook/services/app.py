@@ -46,9 +46,7 @@ def _config_view(row: Any) -> ConfigView:
 
 def _run_view(row: Any) -> RunView:
     """Convert a run row to its API representation."""
-    payload = {name: getattr(row, name) for name in row.__table__.columns.keys()}
-    payload["cancelling"] = row.status == "running" and row.cancel_requested_at is not None
-    return RunView.model_validate(payload)
+    return RunView.model_validate({name: getattr(row, name) for name in row.__table__.columns.keys()})
 
 
 def create_app(

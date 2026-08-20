@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from threading import Event
 from typing import Any
 
+from loguru import logger
 from runbook.core import ReportProfile, SourceConfig, open_blob_store
 from runbook.core.keying import build_context_hash
 
@@ -81,6 +82,7 @@ class ServiceRunner:
         self._outcomes.clear()
         with tick_lock(sync_engine(self.database)) as acquired:
             if not acquired:
+                logger.info("tick skipped: runner lock is held")
                 return [{"status": "skipped", "reason": "another tick is running"}]
             self._reconcile_orphans()
             first = True
@@ -97,7 +99,9 @@ class ServiceRunner:
         self._outcomes.clear()
         with tick_lock(sync_engine(self.database)) as acquired:
             if not acquired:
+                logger.info("runner skipped: runner lock is held")
                 return {"status": "skipped", "reason": "another tick is running"}
+            logger.info("runner started workers={} poll_interval={}", self.workers, self.poll_interval)
             try:
                 previous = {name: signal.getsignal(name) for name in (signal.SIGINT, signal.SIGTERM)}
                 for name in previous:
@@ -110,6 +114,7 @@ class ServiceRunner:
                     self._cycle(datetime.now(timezone.utc), code_version=code_version)
                     self._stop.wait(self.poll_interval)
                 self._shutdown()
+                logger.info("runner stopped")
             finally:
                 for name, handler in previous.items():
                     signal.signal(name, handler)
@@ -123,16 +128,21 @@ class ServiceRunner:
             profile_configs = repository.list_latest_configs("profile", enabled_only=True)
             producer_by_dataset = self._producer_map(source_configs)
             self._import_legacy_pointers(repository, source_configs, current)
-            self._schedule_sources(repository, source_configs, current)
+            if not self._stop.is_set():
+                self._schedule_sources(repository, source_configs, current)
             session.commit()
 
             self._reconcile_cancellations(session, repository)
             self._reconcile_workers(session, repository)
             session.commit()
 
+            if self._stop.is_set():
+                return
             self._release_dependencies(repository, source_configs, profile_configs, producer_by_dataset, code_version)
             session.commit()
 
+            if self._stop.is_set():
+                return
             self._dispatch(session, repository, code_version=code_version)
             session.commit()
 
@@ -140,18 +150,20 @@ class ServiceRunner:
         """Fail or cancel running rows not owned by this backend after restart."""
         with sync_sessions(self.database)() as session:
             repository = RunRepository(session)
-            for row in repository.list_runs(status="running", limit=500):
+            for row in repository.running_runs():
                 if row.run_id in self._active:
                     continue
-                row.status = "cancelled" if row.cancel_requested_at is not None else "failed"
-                row.reason = "worker ownership lost / runner restarted"
-                row.finished_at = datetime.now(timezone.utc)
-                row.updated_at = row.finished_at
+                repository.reconcile_orphan(
+                    row.run_id,
+                    reason="worker ownership lost / runner restarted",
+                )
             session.commit()
 
     def _schedule_sources(self, repository: RunRepository, configs: list[ConfigRevision], current: datetime) -> None:
         """Queue one idempotent scheduled run for each enabled source."""
         for config in configs:
+            if self._stop.is_set():
+                return
             model = self._model(config)
             if not isinstance(model, SourceConfig) or not model.enabled:
                 continue

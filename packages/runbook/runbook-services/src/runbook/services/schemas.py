@@ -41,7 +41,6 @@ class RunView(BaseModel):
     status: str
     worker_id: str | None = None
     cancel_requested_at: datetime | None = None
-    cancelling: bool = False
     identity_key: str | None = None
     snapshot_id: str | None = None
     context_hash: str | None = None

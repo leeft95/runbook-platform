@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from runbook.core import SourceConfig
-from sqlalchemy import Select, and_, desc, func, select, text, update
+from sqlalchemy import Select, and_, case, desc, exists, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from .config import validate_config
 from .models import ConfigRevision, Run
@@ -19,11 +19,6 @@ if TYPE_CHECKING:
 def now_utc() -> datetime:
     """Return the current timezone-aware UTC timestamp."""
     return datetime.now(timezone.utc)
-
-
-def _aware(value: datetime) -> datetime:
-    """Normalize a database timestamp for deterministic comparisons."""
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 def _config_payload(row: ConfigRevision) -> dict[str, Any]:
@@ -290,28 +285,43 @@ class RunRepository:
         """Return FIFO work not blocked by an earlier queued/running source."""
         if limit < 1 or limit > 500:
             raise ValueError("limit must be between 1 and 500")
-        queued = list(
+        earlier = aliased(Run)
+        earlier_source_work = exists(
+            select(1).where(
+                earlier.run_id != Run.run_id,
+                earlier.kind == "source",
+                earlier.target_id == Run.target_id,
+                earlier.status.in_(["queued", "running"]),
+                or_(
+                    earlier.slot < Run.slot,
+                    and_(earlier.slot == Run.slot, earlier.requested_at < Run.requested_at),
+                    and_(
+                        earlier.slot == Run.slot,
+                        earlier.requested_at == Run.requested_at,
+                        earlier.run_id < Run.run_id,
+                    ),
+                ),
+            )
+        )
+        running_source_work = exists(
+            select(1).where(
+                earlier.run_id != Run.run_id,
+                earlier.kind == "source",
+                earlier.target_id == Run.target_id,
+                earlier.status == "running",
+            )
+        )
+        return list(
             self.session.scalars(
-                select(Run).where(Run.status == "queued").order_by(Run.requested_at, Run.run_id).limit(500)
+                select(Run)
+                .where(
+                    Run.status == "queued",
+                    or_(Run.kind != "source", and_(~running_source_work, ~earlier_source_work)),
+                )
+                .order_by(Run.requested_at, Run.run_id)
+                .limit(limit)
             ).all()
         )
-        source_rows = list(self.session.scalars(select(Run).where(Run.status.in_(["queued", "running"]))).all())
-        eligible: list[Run] = []
-        for row in queued:
-            if row.kind == "source":
-                key = (_aware(row.slot), _aware(row.requested_at), row.run_id)
-                if any(
-                    other.run_id != row.run_id
-                    and other.kind == "source"
-                    and other.target_id == row.target_id
-                    and (_aware(other.slot), _aware(other.requested_at), other.run_id) < key
-                    for other in source_rows
-                ):
-                    continue
-            eligible.append(row)
-            if len(eligible) >= limit:
-                break
-        return eligible
 
     def get_identity(self, identity_key: str) -> Run | None:
         """Return the run with an exact effective identity, in any lifecycle state."""
@@ -343,6 +353,26 @@ class RunRepository:
             )
             or 0
         ) > 0
+
+    def running_runs(self) -> list[Run]:
+        """Return every running row for startup reconciliation."""
+        return list(self.session.scalars(select(Run).where(Run.status == "running")).all())
+
+    def reconcile_orphan(self, run_id: str, *, reason: str) -> bool:
+        """Conditionally terminalize one orphan using its current cancel intent."""
+        stamp = now_utc()
+        result = self.session.execute(
+            update(Run)
+            .where(Run.run_id == run_id, Run.status == "running")
+            .values(
+                status=case((Run.cancel_requested_at.is_not(None), "cancelled"), else_="failed"),
+                reason=case((Run.cancel_requested_at.is_not(None), "cancel requested"), else_=reason),
+                finished_at=stamp,
+                updated_at=stamp,
+            )
+        )
+        self.session.flush()
+        return int(getattr(result, "rowcount", 0)) == 1
 
     def claim(self, run_id: str, worker_id: str) -> bool:
         """Atomically claim a queued run for one worker process."""

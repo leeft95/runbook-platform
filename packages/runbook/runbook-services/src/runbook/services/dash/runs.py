@@ -65,6 +65,7 @@ def register(dash_app: Any, sessions: Any) -> None:
                         for value in (
                             "queued",
                             "running",
+                            "cancelling",
                             "cancelled",
                             "success",
                             "failed",
@@ -135,6 +136,11 @@ def register(dash_app: Any, sessions: Any) -> None:
         """Refresh the recent-runs grid and summary."""
         async with sessions() as session:
             rows = await AsyncRunRepository(session).list_runs(
-                kind=kind, status=status, target_id=target_id or None, limit=100
+                kind=kind,
+                status="running" if status == "cancelling" else status,
+                target_id=target_id or None,
+                limit=100,
             )
+        if status == "cancelling":
+            rows = [row for row in rows if row.cancel_requested_at is not None]
         return [_run_row(row) for row in rows], f"{len(rows)} recent runs"

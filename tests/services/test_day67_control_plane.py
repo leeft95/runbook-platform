@@ -97,6 +97,33 @@ def test_eligible_queue_skips_blocked_source_without_head_of_line_blocking(tmp_p
         assert [row.run_id for row in eligible] == [older.run_id, unrelated.run_id]
 
 
+def test_running_source_blocks_an_older_backfill_for_the_same_source(tmp_path) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    upgrade_with_metadata(database)
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        source = _source(repository, "source")
+        later = repository.queue_run(
+            kind="source",
+            target_id="source",
+            slot=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            trigger="manual",
+            force=True,
+            config=source,
+        )
+        assert repository.claim(later.run_id, "local:later")
+        repository.queue_run(
+            kind="source",
+            target_id="source",
+            slot=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            trigger="manual",
+            force=True,
+            config=source,
+        )
+        session.flush()
+        assert repository.eligible_queued_runs() == []
+
+
 def test_worker_state_contract_is_nonblocking() -> None:
     assert WorkerState(running=True).running
     assert WorkerState(running=False, exit_code=0).exit_code == 0

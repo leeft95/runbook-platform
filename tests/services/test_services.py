@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -31,18 +30,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 
-def _threaded_runner(**kwargs) -> ServiceRunner:
-    """Use threads only for tests that monkeypatch worker callables."""
-    return ServiceRunner(
-        executor_factory=lambda workers: ThreadPoolExecutor(max_workers=workers),
-        **kwargs,
-    )
-
-
 def test_root_version_endpoint_and_dash_mount() -> None:
     app = create_app(database="postgresql+psycopg://postgres:postgres@localhost:5432/runbook")
     assert "/api/v1/sources" in app.openapi()["paths"]
     assert "/api/v1/profiles/{profile_id}/runs" in app.openapi()["paths"]
+    assert "/api/v1/runs/{run_id}/cancel" in app.openapi()["paths"]
     pages = [page for module, page in dash.page_registry.items() if module.startswith("runbook.services.dash.")]
     assert {page["path"] for page in pages if page["path_template"] is None} == {
         "/",
