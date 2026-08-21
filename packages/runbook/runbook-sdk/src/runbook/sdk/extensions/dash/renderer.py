@@ -78,7 +78,11 @@ def _build_components(manifest: PDLManifest, extension: DashExtension | None, ct
     for block in manifest.page.blocks:
         title = html.H2(block.title) if block.title else None
         if isinstance(block, PDLTextBlock):
-            body: Any = dcc.Markdown(block.text) if block.format == "markdown" else html.Pre(block.text)
+            body = (
+                dcc.Markdown(block.text, id=ids.block(block.name))
+                if block.format == "markdown"
+                else html.Pre(block.text, id=ids.block(block.name))
+            )
         elif isinstance(block, PDLPlotRefBlock):
             body = dcc.Graph(id=ids.block(block.name), figure=_read_json(ctx, block.ref))
         elif isinstance(block, PDLTableBlock):
