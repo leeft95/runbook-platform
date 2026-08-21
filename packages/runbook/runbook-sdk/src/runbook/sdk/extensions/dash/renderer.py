@@ -77,6 +77,7 @@ def _build_components(manifest: PDLManifest, extension: DashExtension | None, ct
     components: list[Any] = list(controls)
     for block in manifest.page.blocks:
         title = html.H2(block.title) if block.title else None
+        body: Any
         if isinstance(block, PDLTextBlock):
             body = (
                 dcc.Markdown(block.text, id=ids.block(block.name))
