@@ -1,8 +1,9 @@
 # Runbook
 
-Runbook is a deterministic data-to-report framework. It resolves curated,
-immutable datasets into snapshot-pinned calculations and HTML report
-artifacts.
+Runbook is a deterministic PDL-first data-to-report framework. It resolves
+curated, immutable datasets into snapshot-pinned calculations and one
+canonical report manifest that can render to HTML or an optional interactive
+DashPage.
 
 The documentation is organized around the work you need to do:
 
@@ -13,6 +14,7 @@ The documentation is organized around the work you need to do:
 getting-started
 concepts
 reports
+pdl-interactive
 data
 source-adapters-and-curation
 operations
@@ -35,7 +37,7 @@ Runbook separates source acquisition, data curation, report calculation, and
 HTML rendering:
 
 ```text
-source -> immutable raw artifact -> curated dataset -> snapshot -> report -> HTML
+source -> immutable raw artifact -> curated dataset -> snapshot -> report -> PDL -> HTML / DashPage
 ```
 
 Reports read a resolved snapshot. They do not call source systems or choose

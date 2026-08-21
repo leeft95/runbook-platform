@@ -71,6 +71,16 @@ The preview resolves the latest dataset pointers and writes the generated
 HTML to the requested path. See {doc}`reports` for the report authoring
 contract and {doc}`operations` for production service setup.
 
+The deterministic PnL Explorer demonstrates the PDL-first interactive path:
+
+```bash
+runbook-preview interactive pnl_explorer_demo --demo-live
+```
+
+This is a local development server only. It renders the same static-first PDL
+as HTML and as a namespaced `DashPage`; the optional live provider is injected
+by runtime composition and is not serialized into the profile or manifest.
+
 ## Repository layout
 
 | Path | Purpose |

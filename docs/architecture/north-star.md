@@ -17,7 +17,11 @@ source config
     -> source-blind Stage 2 curation and prepared pointer update
     -> pinned dataset snapshot
     -> deterministic report execution
-    -> HTML artifact
+    -> canonical PDL manifest
+        -> portable HTML artifact
+        -> optional interactive DashPage
+            -> standalone development preview
+            -> future host-owned multi-page application
 ```
 
 The package responsibilities are deliberately narrow:
@@ -25,7 +29,7 @@ The package responsibilities are deliberately narrow:
 ```text
 runbook-core       contracts, canonical identities, snapshots, PDL
 runbook-data       acquisition, curation, manifests, pointers, datasets
-runbook-sdk        profile validation, execution, caching, HTML rendering
+runbook-sdk        profile validation, execution, caching, PDL, HTML, DashPage rendering
 runbook-services   PostgreSQL control plane, queue, API, and Dash UI
 runbook-worker     one-process-per-run source and report execution
 ```
@@ -60,6 +64,14 @@ The operations dashboard is an operational surface for the durable ledger. It
 shows run status, provenance, elapsed time, and immutable worker log chunks.
 Stage 2 emits progress checkpoints so a slow or failed curation run remains
 diagnosable without a separate stage-state table.
+
+Interactive reports remain outside the operations UI. The SDK's Dash renderer
+consumes canonical PDL, emits namespaced embeddable pages, and registers
+callbacks onto an application owned by the host. PDL contains no route or
+navigation metadata. AG Grid handles table-native operations client-side;
+plain Python interaction handlers update analytical outputs. Optional live
+providers are injected capabilities addressed by logical names, never
+credentials in PDL or profiles.
 
 The local rules are:
 

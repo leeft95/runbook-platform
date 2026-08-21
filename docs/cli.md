@@ -12,11 +12,22 @@ runbook-preview PROFILE_ID [--profiles PATH] [--reports-root PATH]
                    [--store URI] [--database URL]
                    [--code-version VALUE] [--output PATH]
                    [--log-level LEVEL]
+
+runbook-preview interactive PROFILE_ID [--profiles PATH] [--reports-root PATH]
+                   [--store URI] [--database URL]
+                   [--code-version VALUE] [--host HOST] [--port PORT]
+                   [--demo-live] [--log-level LEVEL]
 ```
 
 Defaults are `data/contract/report_profiles.json`, `reports`, and the
 configured data/database URIs. `--output` writes the resulting HTML locally;
 without it, the command prints the result metadata as JSON.
+
+The `interactive` form is development-only. It builds the same canonical PDL,
+composes its `DashPage` into one temporary host-owned Dash app, and binds to
+`127.0.0.1:8051` unless changed. `--demo-live` injects the deterministic
+in-memory SQLite provider used by the public PnL example. No service runner,
+production routing, authentication, or durable interactive state is involved.
 
 ## `runbook-services`
 

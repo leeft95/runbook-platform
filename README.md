@@ -1,8 +1,10 @@
 # Runbook Platform
 
-Runbook is a deterministic data-to-report framework. Curated immutable
-datasets are resolved into snapshot-pinned report execution, cached
-calculations, and HTML artifacts.
+Runbook is a deterministic PDL-first data-to-report framework. Curated
+immutable datasets are resolved into snapshot-pinned report execution, cached
+calculations, and one canonical plain-JSON report manifest (PDL). That
+manifest renders as portable HTML and, when enabled, as an embeddable
+interactive DashPage.
 
 ## Packages
 
@@ -10,7 +12,7 @@ calculations, and HTML artifacts.
 - `runbook-data`: generic HTTP/local-file ingestion, curation, manifests,
   snapshots, and local/S3 blob storage.
 - `runbook-sdk`: report authoring, deterministic execution, preview, caching,
-  and HTML rendering.
+  PDL/HTML rendering, and the optional `pdl-dash/0.1` interactive extension.
 - `runbook-services`: the PostgreSQL control plane, local polling runner,
   worker diagnostics, and a Dash operations UI.
 - `runbook-worker`: one-process-per-run source and report execution.
@@ -19,7 +21,9 @@ The package DAG is `core -> data/sdk/services`; the SDK retains its
 developer-facing `sdk -> data` edge, and `worker` composes core, data, SDK, and
 services at the per-run process boundary. Services never imports worker code.
 Reports are external templates selected with `--reports-root`; they do not
-call source systems.
+call source systems. PDL remains renderer-neutral: Dash IDs, AG Grid column
+definitions, routes, credentials, and callback functions never enter the
+core manifest.
 
 ## Install and test
 
@@ -45,6 +49,8 @@ as the deterministic append key and watermark.
 - [Runbook documentation site](https://redcombojnr.github.io/runbook-platform/)
 - [Data guide](docs/data.md): ingest the synthetic fixtures, configure sources,
   understand manifests, and load current or historical datasets.
+- [PDL interactive reports](docs/pdl-interactive.md): semantic tables, HTML
+  fallback, DashPage composition, interactions, and optional live data.
 - [Source adapter and curation guide](docs/source-adapters-and-curation.md): add
   acquisition capabilities and deterministic Stage 2 parsers.
 - [Service operations](packages/runbook/runbook-services/README.md): configure

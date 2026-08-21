@@ -91,3 +91,84 @@ profile bindings.
 Use `--code-version` when Git metadata is unavailable, or set
 `RUNBOOK_CODE_VERSION`. Use `--output` to copy the generated HTML from blob
 storage to a local file. Preview does not advance dataset pointers.
+
+## Interactive PDL reports
+
+The page function returns one canonical PDL manifest. The same manifest is the
+input to static HTML and optional interactive rendering; do not maintain a
+second Dash-only report definition.
+
+Install the optional Dash dependencies when developing interactive reports:
+
+```bash
+pip install -e 'packages/runbook/runbook-sdk[dash]'
+```
+
+Semantic table metadata is optional and overrides deterministic Arrow schema
+inference:
+
+```python
+from runbook.sdk import column, currency, percent
+from runbook.sdk.ui import table
+
+table(
+    name="positions",
+    ref=ctx.artifact.table(frame, name="positions"),
+    row=2,
+    col=1,
+    col_span=12,
+    columns=[
+        column("book", role="dimension"),
+        column("pnl", role="measure", aggregation="sum", format=currency("GBP")),
+        column("return", role="measure", aggregation="avg", format=percent(2)),
+    ],
+)
+```
+
+Strings, dictionaries, booleans, numbers, dates, and timestamps receive
+deterministic default roles. Explicit columns are validated against the
+physical schema. HTML renders a static table; Dash translates the same
+semantics to AG Grid. Sorting, filtering, resizing, reordering, visibility,
+grouping, pivoting, and value aggregation stay client-side and require no
+Python callback.
+
+Report-level updates use plain Python handlers:
+
+```python
+@report.interaction("filter_dashboard")
+def filter_dashboard(ctx, state):
+    frame = ctx.calc("pnl")
+    return {"summary": "...", "chart": figure, "positions": frame}
+```
+
+The `pdl-dash/0.1` extension declares controls and maps logical inputs and
+outputs to a registered handler. Report code never imports Dash callback
+types, component IDs, or callback context. The renderer validates unique
+controls, known inputs/outputs, registered handlers, duplicate output
+ownership, and the supported extension version before Dash starts.
+
+`render_dash_page(...)` returns an embeddable `DashPage` with separate
+`layout()` and `register_callbacks(app)` methods. The host owns the root Dash
+application and routing. Each page receives a safe namespace, so two pages may
+both use local names such as `summary` and `book` in one app. The interactive
+preview composes this same page object into a temporary app; it is
+development-only and binds to `127.0.0.1` by default.
+
+## Optional live data
+
+Managed data remains immutable and snapshot-backed through `ctx.dataset(...)`.
+An injected live capability is separate:
+
+```python
+rows = ctx.live.sql("logical_name").query(
+    "SELECT * FROM positions WHERE book = :book",
+    {"book": state.get("book")},
+)
+```
+
+Only logical source names belong in report code. Providers, credentials, and
+network configuration stay in runtime composition. Without an injected
+provider, `ctx.live.sql(...)` raises a clear capability-unavailable error.
+The public SQLite demo captures only logical provider name, query time and
+duration, query hash, and safe parameter metadata; it never serializes
+results, credentials, or connection URLs.

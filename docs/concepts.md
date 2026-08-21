@@ -8,7 +8,8 @@ Runbook has four bounded stages:
    and a complete content-addressed manifest.
 3. **Calculation** resolves a dataset snapshot and evaluates report
    calculations lazily, with immutable cache entries.
-4. **Rendering** turns the report page manifest and its artifacts into HTML.
+4. **Rendering** turns the canonical PDL page manifest and its artifacts into
+   HTML or an optional interactive DashPage.
 
 The service plane coordinates these stages, while the blob store retains
 immutable data and artifacts.
@@ -49,3 +50,17 @@ core <- data <- sdk <- platform <- services
 
 Source adapters and parsers belong in `runbook-data`; reports should remain
 dataset-first and must not make network calls.
+
+## PDL is the report product
+
+PDL (the `pdl-core/0.1` manifest) is the renderer-neutral report contract.
+It is plain JSON describing title, snapshot identity, page layout, semantic
+blocks, artifact references, and generic extension namespaces. A report with a
+Dash extension is still a complete static report first: HTML renders its text,
+plot, and table without loading Dash, while an interactive renderer enhances
+the same blocks.
+
+PDL deliberately excludes application concerns. Routes, navigation, Dash
+components and IDs, AG Grid `columnDefs`, Python functions, dataframes,
+database connections, credentials, and live providers belong to the SDK,
+renderer, host, or runtime boundary.
