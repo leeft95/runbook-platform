@@ -330,6 +330,15 @@ def test_rendered_table_uses_logical_schema_and_trusted_grid_props(tmp_path) -> 
     assert by_field["timestamp"]["cellDataType"] == "dateTimeString"
     assert by_field["date"]["sortable"] is True and by_field["date"]["filter"] == "agDateColumnFilter"
     assert by_field["timestamp"]["sortable"] is True and by_field["timestamp"]["filter"] == "agDateColumnFilter"
-    formatters = [item.get("valueFormatter", "") for item in payload["props"]["columnDefs"]]
-    assert any("style: 'currency'" in item for item in formatters)
-    assert any("style: 'percent'" in item for item in formatters)
+    assert by_field["date"]["filterParams"] == {"inRangeInclusive": True}
+    assert by_field["timestamp"]["filterParams"] == {"inRangeInclusive": True}
+    formatters = [item["valueFormatter"] for item in payload["props"]["columnDefs"] if "valueFormatter" in item]
+    assert all(set(formatter) == {"function"} for formatter in formatters)
+    formatter_sources = [formatter["function"] for formatter in formatters]
+    assert any("style: 'currency'" in source for source in formatter_sources)
+    assert any("style: 'percent'" in source for source in formatter_sources)
+    assert "toLocaleString" in by_field["amount"]["valueFormatter"]["function"]
+    assert "style: 'currency'" in by_field["currency_amount"]["valueFormatter"]["function"]
+    assert "style: 'percent'" in by_field["ratio"]["valueFormatter"]["function"]
+    assert "toLocaleDateString" in by_field["date"]["valueFormatter"]["function"]
+    assert "toLocaleString" in by_field["timestamp"]["valueFormatter"]["function"]

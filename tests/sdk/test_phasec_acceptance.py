@@ -117,6 +117,7 @@ def test_ag_grid_time_types_match_json_string_rows_and_stay_client_side() -> Non
     for definition in inferred.values():
         assert definition["sortable"] is True
         assert definition["filter"] == "agDateColumnFilter"
+        assert definition["filterParams"] == {"inRangeInclusive": True}
     explicit = {
         item["field"]: item
         for item in build_ag_grid_column_defs(
@@ -129,6 +130,8 @@ def test_ag_grid_time_types_match_json_string_rows_and_stay_client_side() -> Non
     }
     assert explicit["day"]["cellDataType"] == "dateString"
     assert explicit["moment"]["cellDataType"] == "dateTimeString"
+    assert explicit["day"]["filterParams"] == {"inRangeInclusive": True}
+    assert explicit["moment"]["filterParams"] == {"inRangeInclusive": True}
     assert "cellDataType': 'date'" not in str(explicit)
 
 
@@ -144,10 +147,12 @@ def test_ag_grid_formatter_code_is_renderer_generated_only() -> None:
         ],
     )
     formatter = definitions[0]["valueFormatter"]
-    assert "toLocaleString" in formatter
-    assert "javascript:" not in formatter.lower()
-    assert "user" not in formatter.lower()
-    assert all(key not in definitions[0] for key in ("cellRenderer", "valueGetter", "function"))
+    assert set(formatter) == {"function"}
+    source = formatter["function"]
+    assert "toLocaleString" in source
+    assert "javascript:" not in source.lower()
+    assert "user" not in source.lower()
+    assert all(key not in definitions[0] for key in ("cellRenderer", "valueGetter"))
 
 
 def test_pnl_artifact_manifest_drives_complete_static_html_and_dash_callback(tmp_path, pointer_registry) -> None:

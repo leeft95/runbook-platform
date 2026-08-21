@@ -45,6 +45,9 @@ def build_ag_grid_column_defs(
             definition["aggFunc"] = semantic.aggregation.value if semantic.aggregation else "sum"
         elif role == PDLColumnRole.time:
             definition["filter"] = "agDateColumnFilter"
+            # Keep both endpoints in a client-side in-range date filter. The
+            # renderer owns this option; PDL does not expose AG Grid config.
+            definition["filterParams"] = {"inRangeInclusive": True}
             # Row data is serialized JSON, so AG Grid's string date types keep
             # client-side sorting/filtering deterministic without Date objects
             # or user-provided JavaScript. Inference supplies the format kind;
@@ -64,26 +67,28 @@ def build_ag_grid_column_defs(
     return definitions
 
 
-def _formatter(format_model: Any) -> str:
+def _formatter(format_model: Any) -> dict[str, str]:
     """Return one of the renderer-owned formatters; never accept user JS."""
     kind = format_model.kind
     decimals = getattr(format_model, "decimals", None)
     digits = "undefined" if decimals is None else str(decimals)
     if kind == "number":
-        return f"params.value == null ? '' : Number(params.value).toLocaleString(undefined, {{maximumFractionDigits: {digits}}})"
-    if kind == "currency":
+        source = f"params.value == null ? '' : Number(params.value).toLocaleString(undefined, {{maximumFractionDigits: {digits}}})"
+    elif kind == "currency":
         currency = json.dumps(format_model.currency)
-        return (
+        source = (
             "params.value == null ? '' : Number(params.value).toLocaleString(undefined, "
             f"{{style: 'currency', currency: {currency}, maximumFractionDigits: {digits}}})"
         )
-    if kind == "percent":
-        return f"params.value == null ? '' : Number(params.value).toLocaleString(undefined, {{style: 'percent', maximumFractionDigits: {digits}}})"
-    if kind == "date":
-        return "params.value == null ? '' : new Date(params.value).toLocaleDateString()"
-    if kind == "datetime":
-        return "params.value == null ? '' : new Date(params.value).toLocaleString()"
-    raise ValueError(f"unsupported PDL column format: {kind!r}")
+    elif kind == "percent":
+        source = f"params.value == null ? '' : Number(params.value).toLocaleString(undefined, {{style: 'percent', maximumFractionDigits: {digits}}})"
+    elif kind == "date":
+        source = "params.value == null ? '' : new Date(params.value).toLocaleDateString()"
+    elif kind == "datetime":
+        source = "params.value == null ? '' : new Date(params.value).toLocaleString()"
+    else:
+        raise ValueError(f"unsupported PDL column format: {kind!r}")
+    return {"function": source}
 
 
 __all__ = ["ag_grid_default_col_def", "build_ag_grid_column_defs"]
