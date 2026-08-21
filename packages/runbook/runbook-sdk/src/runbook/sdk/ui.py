@@ -3,11 +3,21 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+import pyarrow as pa
 from runbook.core.pdl.models import (
+    PDLAggregation,
     PDLArtifacts,
+    PDLColumn,
+    PDLColumnFormat,
+    PDLColumnRole,
+    PDLCurrencyFormat,
+    PDLDateFormat,
+    PDLDateTimeFormat,
     PDLManifest,
+    PDLNumberFormat,
     PDLPage,
     PDLPageType,
+    PDLPercentFormat,
     PDLPlotRefBlock,
     PDLStyle,
     PDLTableBlock,
@@ -55,7 +65,7 @@ def manifest(
     page: PDLPage,
     title: str | None = None,
     style: PDLStyle | None = None,
-    extensions: dict[str, dict[str, Any]] | None = None,
+    extensions: dict[str, Any] | None = None,
 ) -> PDLManifest:
     """Build a canonical PDL manifest from context and page structure."""
     resolved_title = title
@@ -70,6 +80,16 @@ def manifest(
     if not resolved_title:
         resolved_title = "Report"
 
+    serialized_extensions: dict[str, dict[str, Any]] | None = None
+    if extensions is not None:
+        serialized_extensions = {}
+        for namespace, extension in extensions.items():
+            dump = getattr(extension, "model_dump", None)
+            value = dump(mode="json") if callable(dump) else extension
+            if not isinstance(value, dict):
+                raise TypeError(f"PDL extension {namespace!r} must serialize to an object")
+            serialized_extensions[namespace] = value
+
     return PDLManifest(
         title=resolved_title,
         snapshot_id=ctx.snapshot.snapshot_id,
@@ -77,7 +97,7 @@ def manifest(
         style=style,
         page=page,
         artifacts=_build_artifacts(page),
-        extensions=extensions,
+        extensions=serialized_extensions,
     )
 
 
@@ -136,6 +156,7 @@ def table(
     title: str | None = None,
     row_span: int = 1,
     col_span: int = 1,
+    columns: list[PDLColumn] | None = None,
     extensions: dict[str, dict[str, Any]] | None = None,
 ) -> PDLTableBlock:
     """Create a positioned table block from an artifact reference."""
@@ -152,8 +173,106 @@ def table(
         col=col,
         row_span=row_span,
         col_span=col_span,
+        columns=columns,
         extensions=extensions,
     )
+
+
+def column(
+    field: str,
+    *,
+    label: str | None = None,
+    role: PDLColumnRole | str | None = None,
+    aggregation: PDLAggregation | str | None = None,
+    format: PDLColumnFormat | None = None,
+    hidden: bool = False,
+) -> PDLColumn:
+    """Build semantic metadata for one table column."""
+    return PDLColumn(
+        field=field,
+        label=label,
+        role=PDLColumnRole(role) if isinstance(role, str) else role,
+        aggregation=PDLAggregation(aggregation) if isinstance(aggregation, str) else aggregation,
+        format=format,
+        hidden=hidden,
+    )
+
+
+def number(*, decimals: int | None = None) -> PDLNumberFormat:
+    """Build a numeric display format."""
+    return PDLNumberFormat(decimals=decimals)
+
+
+def currency(currency_code: str, *, decimals: int | None = None) -> PDLCurrencyFormat:
+    """Build a currency display format."""
+    return PDLCurrencyFormat(currency=currency_code, decimals=decimals)
+
+
+def percent(decimals: int | None = None) -> PDLPercentFormat:
+    """Build a percentage display format."""
+    return PDLPercentFormat(decimals=decimals)
+
+
+def date(pattern: str | None = None) -> PDLDateFormat:
+    """Build a date display format."""
+    return PDLDateFormat(pattern=pattern)
+
+
+def datetime(pattern: str | None = None) -> PDLDateTimeFormat:
+    """Build a date-time display format."""
+    return PDLDateTimeFormat(pattern=pattern)
+
+
+def infer_columns(schema: pa.Schema) -> list[PDLColumn]:
+    """Infer deterministic semantic columns from an Arrow schema."""
+    result: list[PDLColumn] = []
+    for field in schema:
+        arrow_type = field.type
+        if pa.types.is_dictionary(arrow_type):
+            column = PDLColumn(field=field.name, role=PDLColumnRole.dimension)
+        elif pa.types.is_string(arrow_type) or pa.types.is_boolean(arrow_type):
+            column = PDLColumn(field=field.name, role=PDLColumnRole.dimension)
+        elif pa.types.is_integer(arrow_type) or pa.types.is_floating(arrow_type) or pa.types.is_decimal(arrow_type):
+            column = PDLColumn(
+                field=field.name,
+                role=PDLColumnRole.measure,
+                aggregation=PDLAggregation.sum,
+            )
+        elif pa.types.is_date(arrow_type):
+            column = PDLColumn(field=field.name, role=PDLColumnRole.time, format=PDLDateFormat())
+        elif pa.types.is_timestamp(arrow_type):
+            column = PDLColumn(field=field.name, role=PDLColumnRole.time, format=PDLDateTimeFormat())
+        else:
+            column = PDLColumn(field=field.name)
+        result.append(column)
+    return result
+
+
+def merge_columns(schema: pa.Schema | None, columns: Sequence[PDLColumn] | None) -> list[PDLColumn]:
+    """Merge explicit semantics over inferred Arrow fields and validate references."""
+    explicit = list(columns or [])
+    fields = [column.field for column in explicit]
+    if len(fields) != len(set(fields)):
+        raise ValueError("table columns must not contain duplicate fields")
+    if schema is None:
+        return explicit
+
+    physical = {field.name for field in schema}
+    unknown = [field for field in fields if field not in physical]
+    if unknown:
+        raise ValueError(f"table columns reference unknown fields: {unknown!r}")
+    inferred = infer_columns(schema)
+    overrides = {column.field: column for column in explicit}
+    merged: list[PDLColumn] = []
+    for item in inferred:
+        override = overrides.get(item.field)
+        if override is None:
+            merged.append(item)
+            continue
+        updates = override.model_dump(exclude_unset=True)
+        updates.pop("field", None)
+        merged.append(item.model_copy(update=updates))
+    return merged
 
 
 def plot(

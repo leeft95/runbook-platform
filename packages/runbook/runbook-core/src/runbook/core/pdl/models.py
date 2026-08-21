@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from runbook.core.table.models import TableArtifactRef
 from typing_extensions import Annotated
 
@@ -40,6 +40,91 @@ class PDLPageType(str, Enum):
     custom = "custom"
 
 
+class PDLColumnRole(str, Enum):
+    """Renderer-neutral semantic role for a table column."""
+
+    dimension = "dimension"
+    measure = "measure"
+    time = "time"
+    identifier = "identifier"
+
+
+class PDLAggregation(str, Enum):
+    """Supported renderer-neutral aggregation intents."""
+
+    sum = "sum"
+    avg = "avg"
+    min = "min"
+    max = "max"
+    count = "count"  # type: ignore[assignment]
+    first = "first"
+    last = "last"
+
+
+class PDLNumberFormat(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["number"] = "number"
+    decimals: int | None = Field(default=None, ge=0, le=12)
+
+
+class PDLCurrencyFormat(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["currency"] = "currency"
+    currency: NonEmptyStr
+    decimals: int | None = Field(default=None, ge=0, le=12)
+
+
+class PDLPercentFormat(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["percent"] = "percent"
+    decimals: int | None = Field(default=None, ge=0, le=12)
+
+
+class PDLDateFormat(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["date"] = "date"
+    pattern: NonEmptyStr | None = None
+
+
+class PDLDateTimeFormat(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["datetime"] = "datetime"
+    pattern: NonEmptyStr | None = None
+
+
+PDLColumnFormat = Union[
+    PDLNumberFormat,
+    PDLCurrencyFormat,
+    PDLPercentFormat,
+    PDLDateFormat,
+    PDLDateTimeFormat,
+]
+
+
+class PDLColumn(BaseModel):
+    """Optional semantic metadata for one physical table field."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: NonEmptyStr
+    label: NonEmptyStr | None = None
+    role: PDLColumnRole | None = None
+    aggregation: PDLAggregation | None = None
+    format: PDLColumnFormat | None = Field(default=None, discriminator="kind")
+    hidden: bool = False
+
+    @model_validator(mode="after")
+    def validate_aggregation_role(self) -> "PDLColumn":
+        if self.aggregation is not None and self.role not in {None, PDLColumnRole.measure}:
+            raise ValueError("aggregation is only valid for measure columns")
+        return self
+
+
 class PDLStyle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -63,6 +148,17 @@ class PDLBlockBase(BaseModel):
 
 class PDLTableBlock(PDLBlockBase, TableArtifactRef):
     type: Literal["table"] = "table"
+    columns: list[PDLColumn] | None = None
+
+    @field_validator("columns")
+    @classmethod
+    def validate_unique_columns(cls, value: list[PDLColumn] | None) -> list[PDLColumn] | None:
+        if value is None:
+            return None
+        fields = [column.field for column in value]
+        if len(fields) != len(set(fields)):
+            raise ValueError("table columns must not contain duplicate fields")
+        return value
 
 
 class PDLPlotRefBlock(PDLBlockBase):
@@ -89,6 +185,9 @@ class PDLPage(BaseModel):
 
     @model_validator(mode="after")
     def validate_blocks_fit_grid(self) -> "PDLPage":
+        names = [block.name for block in self.blocks]
+        if len(names) != len(set(names)):
+            raise ValueError("page blocks must not contain duplicate names")
         if self.page_type in {PDLPageType.grid, PDLPageType.flex_grid}:
             if self.rows is None or self.columns is None:
                 raise ValueError("rows and columns are required when page_type is 'grid' or 'flex_grid'")

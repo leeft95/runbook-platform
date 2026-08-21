@@ -174,6 +174,11 @@
                 { "type": "null" }
               ],
               "default": null
+            },
+            "columns": {
+              "type": ["array", "null"],
+              "items": { "$ref": "#/$defs/column" },
+              "uniqueItems": true
             }
           }
         }
@@ -207,6 +212,79 @@
           }
         }
       ]
+    },
+    "column": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string", "minLength": 1 },
+        "label": { "type": ["string", "null"], "minLength": 1 },
+        "role": {
+          "type": ["string", "null"],
+          "enum": ["dimension", "measure", "time", "identifier", null]
+        },
+        "aggregation": {
+          "type": ["string", "null"],
+          "enum": ["sum", "avg", "min", "max", "count", "first", "last", null]
+        },
+        "format": {
+          "oneOf": [
+            { "$ref": "#/$defs/numberFormat" },
+            { "$ref": "#/$defs/currencyFormat" },
+            { "$ref": "#/$defs/percentFormat" },
+            { "$ref": "#/$defs/dateFormat" },
+            { "$ref": "#/$defs/datetimeFormat" }
+          ]
+        },
+        "hidden": { "type": "boolean", "default": false }
+      }
+    },
+    "numberFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "number" },
+        "decimals": { "type": ["integer", "null"], "minimum": 0, "maximum": 12 }
+      }
+    },
+    "currencyFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "currency"],
+      "properties": {
+        "kind": { "const": "currency" },
+        "currency": { "type": "string", "minLength": 1 },
+        "decimals": { "type": ["integer", "null"], "minimum": 0, "maximum": 12 }
+      }
+    },
+    "percentFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "percent" },
+        "decimals": { "type": ["integer", "null"], "minimum": 0, "maximum": 12 }
+      }
+    },
+    "dateFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "date" },
+        "pattern": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "datetimeFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "datetime" },
+        "pattern": { "type": ["string", "null"], "minLength": 1 }
+      }
     },
     "block": {
       "oneOf": [

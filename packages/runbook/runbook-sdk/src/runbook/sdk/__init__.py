@@ -6,7 +6,22 @@ from runbook.sdk.client import RunbookClient, create_client
 from runbook.sdk.context import Ctx
 from runbook.sdk.execution import ReportResult, execute_report, resolve_code_version
 from runbook.sdk.profiles import ReportProfile, load_profiles
-from runbook.sdk.ui import flex_grid, grid, manifest, plot, table, text
+from runbook.sdk.ui import (
+    column,
+    currency,
+    date,
+    datetime,
+    flex_grid,
+    grid,
+    infer_columns,
+    manifest,
+    merge_columns,
+    number,
+    percent,
+    plot,
+    table,
+    text,
+)
 
 __all__ = [
     "ReportProfile",
@@ -19,11 +34,19 @@ __all__ = [
     "RequiredAliases",
     "RunbookClient",
     "create_client",
+    "column",
+    "currency",
+    "date",
+    "datetime",
     "execute_report",
     "flex_grid",
     "grid",
+    "infer_columns",
     "load_profiles",
     "manifest",
+    "merge_columns",
+    "number",
+    "percent",
     "plot_line",
     "plot",
     "report",
