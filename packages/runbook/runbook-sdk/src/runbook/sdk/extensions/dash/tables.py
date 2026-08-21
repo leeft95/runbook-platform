@@ -45,7 +45,13 @@ def build_ag_grid_column_defs(
             definition["aggFunc"] = semantic.aggregation.value if semantic.aggregation else "sum"
         elif role == PDLColumnRole.time:
             definition["filter"] = "agDateColumnFilter"
-            definition["cellDataType"] = "date"
+            # Row data is serialized JSON, so AG Grid's string date types keep
+            # client-side sorting/filtering deterministic without Date objects
+            # or user-provided JavaScript. Inference supplies the format kind;
+            # an explicit time column without one uses the date contract.
+            definition["cellDataType"] = (
+                "dateTimeString" if semantic.format is not None and semantic.format.kind == "datetime" else "dateString"
+            )
         elif role == PDLColumnRole.identifier:
             definition["filter"] = "agTextColumnFilter"
         elif role == PDLColumnRole.dimension:

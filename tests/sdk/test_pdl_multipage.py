@@ -89,3 +89,62 @@ def test_two_dash_pages_compose_with_host_owned_navigation() -> None:
         )
         assert response.status_code == 200
         assert f'"children":"{prefix}:B"'.encode() in response.data
+
+
+def test_same_page_interactions_keep_distinct_inputs_handlers_and_outputs() -> None:
+    manifest = PDLManifest(
+        title="Two interactions",
+        snapshot_id="s",
+        as_of="2024-01-01T00:00:00Z",
+        page=PDLPage(
+            page_type=PDLPageType.grid,
+            rows=2,
+            columns=1,
+            blocks=[
+                PDLTextBlock(name="summary_a", text="A", row=1, col=1),
+                PDLTextBlock(name="summary_b", text="B", row=2, col=1),
+            ],
+        ),
+        extensions={
+            "dash": dashboard(
+                controls=[select("book_a", options=["A"]), select("book_b", options=["B"])],
+                interactions=[
+                    interaction(handler="first", inputs=["book_a"], outputs=["summary_a"]),
+                    interaction(handler="second", inputs=["book_b"], outputs=["summary_b"]),
+                ],
+            ).model_dump(mode="json")
+        },
+    )
+    definition = ReportDefinition(
+        [],
+        {},
+        lambda ctx: manifest,
+        {
+            "first": lambda ctx, state: {"summary_a": f"first:{state['book_a']}"},
+            "second": lambda ctx, state: {"summary_b": f"second:{state['book_b']}"},
+        },
+    )
+    page = render_dash_page(manifest, definition, SimpleNamespace(), namespace="two-interactions")
+    app = Dash(__name__ + "_same_page", use_pages=False)
+    app.layout = page.layout()
+    page.register_callbacks(app)
+    assert len(app.callback_map) == 2
+    client = app.server.test_client()
+
+    for output_name, input_name, value, expected in (
+        ("summary_a", "book_a", "A", "first:A"),
+        ("summary_b", "book_b", "B", "second:B"),
+    ):
+        callback_key = next(key for key in app.callback_map if page.ids.block(output_name) in key)
+        response = client.post(
+            "/_dash-update-component",
+            json={
+                "output": callback_key,
+                "outputs": [{"id": page.ids.block(output_name), "property": "children"}],
+                "inputs": [{"id": page.ids.control(input_name), "property": "value", "value": value}],
+                "changedPropIds": [f"{page.ids.control(input_name)}.value"],
+                "state": [],
+            },
+        )
+        assert response.status_code == 200
+        assert f'"children":"{expected}"'.encode() in response.data

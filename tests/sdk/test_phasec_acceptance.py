@@ -19,7 +19,8 @@ from runbook.core.pdl.models import (
 )
 from runbook.core.storage import BlobStore
 from runbook.data.manifests import build_manifest, publish_manifests, resolve_snapshot, write_dataframe
-from runbook.sdk import ReportProfile, column, execute_report, number
+from runbook.sdk import ReportProfile, column, date, execute_report, number
+from runbook.sdk import datetime as datetime_format
 from runbook.sdk.extensions.dash import build_ag_grid_column_defs, dashboard
 from runbook.sdk.extensions.dash.tables import ag_grid_default_col_def
 from runbook.sdk.html import render_html
@@ -106,6 +107,29 @@ def test_ag_grid_analytical_features_are_renderer_defaults_without_callbacks() -
     assert by_field["pnl"]["enableValue"] and by_field["pnl"]["aggFunc"] == "sum"
     assert "callback" not in json.dumps(definitions).lower()
     assert ag_grid_default_col_def()["sortable"] is True
+
+
+def test_ag_grid_time_types_match_json_string_rows_and_stay_client_side() -> None:
+    schema = pa.schema([("trade_date", pa.date32()), ("as_of", pa.timestamp("us", tz="UTC"))])
+    inferred = {item["field"]: item for item in build_ag_grid_column_defs(schema)}
+    assert inferred["trade_date"]["cellDataType"] == "dateString"
+    assert inferred["as_of"]["cellDataType"] == "dateTimeString"
+    for definition in inferred.values():
+        assert definition["sortable"] is True
+        assert definition["filter"] == "agDateColumnFilter"
+    explicit = {
+        item["field"]: item
+        for item in build_ag_grid_column_defs(
+            pa.schema([("day", pa.string()), ("moment", pa.string())]),
+            [
+                column("day", role="time", format=date()),
+                column("moment", role="time", format=datetime_format()),
+            ],
+        )
+    }
+    assert explicit["day"]["cellDataType"] == "dateString"
+    assert explicit["moment"]["cellDataType"] == "dateTimeString"
+    assert "cellDataType': 'date'" not in str(explicit)
 
 
 def test_ag_grid_formatter_code_is_renderer_generated_only() -> None:

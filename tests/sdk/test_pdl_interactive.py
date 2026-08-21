@@ -325,6 +325,11 @@ def test_rendered_table_uses_logical_schema_and_trusted_grid_props(tmp_path) -> 
     assert payload["props"]["dangerously_allow_code"] is True
     assert all(value in encoded for value in ("book", "amount", "currency_amount", "ratio", "date", "timestamp"))
     assert "toLocaleString" in encoded and "toLocaleDateString" in encoded
+    by_field = {item["field"]: item for item in payload["props"]["columnDefs"]}
+    assert by_field["date"]["cellDataType"] == "dateString"
+    assert by_field["timestamp"]["cellDataType"] == "dateTimeString"
+    assert by_field["date"]["sortable"] is True and by_field["date"]["filter"] == "agDateColumnFilter"
+    assert by_field["timestamp"]["sortable"] is True and by_field["timestamp"]["filter"] == "agDateColumnFilter"
     formatters = [item.get("valueFormatter", "") for item in payload["props"]["columnDefs"]]
     assert any("style: 'currency'" in item for item in formatters)
     assert any("style: 'percent'" in item for item in formatters)
