@@ -15,6 +15,7 @@ from runbook.sdk.discovery import discover_report_definition
 from runbook.sdk.execution import ReportResult, execute_report, load_report_module, resolve_code_version
 from runbook.sdk.extensions.dash import DashPage, render_dash_page
 from runbook.sdk.live import LiveDataResolver
+from runbook.sdk.live_sqlite import build_demo_live_provider
 from runbook.sdk.logging import configure_logging
 from runbook.sdk.profiles import ReportProfile, load_profiles, resolve_report_path
 
@@ -80,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--interactive", action="store_true", help="serve a development-only Dash preview")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8051)
+    parser.add_argument("--demo-live", action="store_true", help="inject the deterministic local SQLite demo provider")
     parser.add_argument(
         "--log-level",
         default=None,
@@ -104,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
             snapshot=snapshot,
             reports_root=args.reports_root,
             code_version=resolve_code_version(args.code_version),
+            live=build_demo_live_provider() if args.demo_live else None,
         )
         app.run(host=args.host, port=args.port, debug=False)
         return 0
