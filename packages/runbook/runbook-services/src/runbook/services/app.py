@@ -23,7 +23,7 @@ def _version(distribution_name: str) -> str:
     try:
         return importlib.metadata.version(distribution_name)
     except importlib.metadata.PackageNotFoundError:
-        return "0.1.0"
+        return "0.2.0"
 
 
 def version_payload() -> dict[str, str]:

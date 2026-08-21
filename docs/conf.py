@@ -12,7 +12,7 @@ for package in ("runbook-core", "runbook-data", "runbook-sdk", "runbook-services
 project = "Runbook"
 copyright = "2026, redcombojnr and contributors"
 author = "redcombojnr and contributors"
-release = "0.1.0"
+release = "0.2.0"
 
 extensions = [
     "myst_parser",
