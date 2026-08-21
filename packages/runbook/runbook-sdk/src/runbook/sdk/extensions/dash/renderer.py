@@ -105,6 +105,7 @@ def _build_controls(extension: DashExtension, ctx: Any, ids: DashIds) -> list[An
     controls: list[Any] = []
     for control in extension.controls:
         label = html.Label(control.label or control.name, htmlFor=ids.control(control.name))
+        widget: Any
         if isinstance(control, DashSelect):
             options = _options(control.options, ctx)
             widget = dcc.Dropdown(
@@ -161,11 +162,11 @@ def _register_callbacks(
     blocks = {block.name: block for block in manifest.page.blocks}
     for declaration in extension.interactions:
         outputs = [Output(ids.block(name), _output_property(blocks[name])) for name in declaration.outputs]
-        inputs = [Input(ids.control(name), _input_property(extension, name)) for name in declaration.inputs]
+        inputs = _input_specs(extension, ids, declaration.inputs, Input)
         handler = (definition.interaction_fns or {})[declaration.handler]
 
         def callback(*values: Any, _handler: Any = handler, _inputs: list[str] = declaration.inputs) -> list[Any]:
-            state = dict(zip(_inputs, values, strict=True))
+            state = _state_from_values(extension, _inputs, values)
             result = _handler(ctx, state)
             if not isinstance(result, Mapping):
                 raise TypeError(f"interaction {_handler.__name__!r} must return a mapping")
@@ -185,11 +186,36 @@ def _output_property(block: Any) -> str:
     raise TypeError(f"unsupported interaction output block: {type(block)!r}")
 
 
-def _input_property(extension: DashExtension, name: str) -> str:
+def _input_specs(extension: DashExtension, ids: DashIds, names: list[str], input_type: Any) -> list[Any]:
+    return [
+        input_type(ids.control(name), property_name)
+        for name in names
+        for property_name in _properties_for_input(extension, name)
+    ]
+
+
+def _properties_for_input(extension: DashExtension, name: str) -> tuple[str, ...]:
     for control in extension.controls:
         if control.name == name:
-            return "value"
+            if isinstance(control, DashDateRange):
+                return ("start_date", "end_date")
+            return ("value",)
     raise ValueError(f"unknown Dash input control: {name!r}")
+
+
+def _state_from_values(extension: DashExtension, names: list[str], values: tuple[Any, ...]) -> dict[str, Any]:
+    state: dict[str, Any] = {}
+    cursor = 0
+    for name in names:
+        properties = _properties_for_input(extension, name)
+        if len(properties) == 1:
+            state[name] = values[cursor]
+        else:
+            state[name] = {properties[0]: values[cursor], properties[1]: values[cursor + 1]}
+        cursor += len(properties)
+    if cursor != len(values):
+        raise ValueError("Dash callback input state does not match declared controls")
+    return state
 
 
 def _convert_output(block: Any, value: Any) -> Any:

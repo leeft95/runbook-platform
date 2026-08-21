@@ -17,6 +17,24 @@
       "timestamp_column": "timestamp"
     }
   },
+  "demo_pnl_explorer": {
+    "adapter": "local_file",
+    "enabled": true,
+    "schedule": {"cron": "0 1 * * *", "timezone": "UTC"},
+    "datasets": {
+      "pnl": {
+        "dataset_id": "demo_pnl_explorer",
+        "schema_version": "v1",
+        "partition_keys": [],
+        "parser_id": "csv_timeseries_v1",
+        "update_mode": "full"
+      }
+    },
+    "params": {
+      "local_path": "data/fixtures/pnl_explorer.csv",
+      "timestamp_column": "date"
+    }
+  },
   "demo_intraday_bars": {
     "adapter": "local_file",
     "enabled": true,

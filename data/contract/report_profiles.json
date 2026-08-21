@@ -17,5 +17,12 @@
     "datasets": {"prices": "demo_daily_prices"},
     "params": {"price_col": "close", "vol_window": 20},
     "layout": {"plot_width": 700, "plot_height": 360}
+  },
+  "pnl_explorer_demo": {
+    "report_id": "pnl_explorer",
+    "title": "PnL Explorer",
+    "enabled": true,
+    "datasets": {"pnl": "demo_pnl_explorer"},
+    "extensions": {"modes": {"dash": {"enabled": true}}}
   }
 }
