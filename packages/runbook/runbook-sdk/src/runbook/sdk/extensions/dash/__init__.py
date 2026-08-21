@@ -9,12 +9,14 @@ from runbook.sdk.extensions.dash.builders import (
     select,
     toggle,
 )
+from runbook.sdk.extensions.dash.ids import DashIds, validate_namespace
 from runbook.sdk.extensions.dash.models import (
     DashControl,
     DashExtension,
     DashInteraction,
     DatasetValues,
 )
+from runbook.sdk.extensions.dash.page import DashPage
 from runbook.sdk.extensions.dash.tables import ag_grid_default_col_def, build_ag_grid_column_defs
 from runbook.sdk.extensions.dash.validation import parse_dash_extension, resolve_dataset_values, validate_dash_manifest
 
@@ -22,6 +24,8 @@ __all__ = [
     "DashControl",
     "DashExtension",
     "DashInteraction",
+    "DashIds",
+    "DashPage",
     "DatasetValues",
     "dashboard",
     "ag_grid_default_col_def",
@@ -29,6 +33,7 @@ __all__ = [
     "parse_dash_extension",
     "resolve_dataset_values",
     "validate_dash_manifest",
+    "validate_namespace",
     "date_range",
     "dataset_values",
     "interaction",
