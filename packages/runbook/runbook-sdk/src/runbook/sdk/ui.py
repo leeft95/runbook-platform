@@ -269,8 +269,7 @@ def merge_columns(schema: pa.Schema | None, columns: Sequence[PDLColumn] | None)
         if override is None:
             merged.append(item)
             continue
-        updates = override.model_dump(exclude_unset=True)
-        updates.pop("field", None)
+        updates = {name: getattr(override, name) for name in override.model_fields_set if name != "field"}
         merged.append(item.model_copy(update=updates))
     return merged
 
