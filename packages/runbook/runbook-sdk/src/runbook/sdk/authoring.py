@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 REPORT_CALC_ATTR = "__runbook_report_calc_name__"
 REPORT_PAGE_ATTR = "__runbook_report_page__"
+REPORT_INTERACTION_ATTR = "__runbook_report_interaction_name__"
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,17 @@ class _ReportNamespace:
         """Mark a function as the report page builder."""
         setattr(fn, REPORT_PAGE_ATTR, "page")
         return fn
+
+    def interaction(self, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Mark a plain-Python function as a named report interaction handler."""
+        if not isinstance(name, str) or not name:
+            raise TypeError("report.interaction(name) requires a non-empty name")
+
+        def decorate(fn: Callable[..., Any]) -> Callable[..., Any]:
+            setattr(fn, REPORT_INTERACTION_ATTR, name)
+            return fn
+
+        return decorate
 
 
 report = _ReportNamespace()
