@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from runbook.sdk import column, currency, manifest, percent, plot, report, required_aliases, table, text
 from runbook.sdk.extensions.dash import dashboard, dataset_values, date_range, interaction, multi_select, select
+from runbook.sdk.live import LiveCapabilityUnavailableError
 from runbook.sdk.ui import grid
 
 ALIASES = required_aliases(pnl="pnl")
@@ -55,10 +56,45 @@ def _filter(frame: pd.DataFrame, state: dict[str, object]) -> pd.DataFrame:
     return result
 
 
+def _live_frame(ctx, state: dict[str, object]) -> pd.DataFrame:
+    """Query optional live rows with named parameters and normalize their schema."""
+    date_state = state.get("date")
+    start = date_state.get("start_date") if isinstance(date_state, dict) else None
+    end = date_state.get("end_date") if isinstance(date_state, dict) else None
+    books = state.get("book")
+    books = books if isinstance(books, list) else []
+    strategy = state.get("strategy") if isinstance(state.get("strategy"), str) else None
+    try:
+        source = ctx.live.sql("demo_pnl")
+    except LiveCapabilityUnavailableError:
+        return pd.DataFrame(columns=["date", "book", "strategy", "instrument", "pnl", "exposure", "return"])
+
+    predicates = [
+        "(:strategy IS NULL OR strategy = :strategy)",
+        "(:start IS NULL OR business_date >= :start)",
+        "(:end IS NULL OR business_date <= :end)",
+    ]
+    params: dict[str, object] = {"strategy": strategy, "start": start, "end": end}
+    if books:
+        names = [f":book_{index}" for index in range(len(books))]
+        predicates.append(f"book IN ({', '.join(names)})")
+        params.update({name[1:]: value for name, value in zip(names, books, strict=True)})
+    frame = source.query(
+        "SELECT business_date AS date, book, strategy, instrument, pnl, exposure FROM demo_live_pnl WHERE "
+        + " AND ".join(predicates),
+        params,
+    )
+    frame["date"] = pd.to_datetime(frame["date"], utc=True)
+    frame["return"] = 0.0
+    return frame
+
+
 @report.interaction("filter_dashboard")
 def filter_dashboard(ctx, state: dict[str, object]) -> dict[str, object]:
     """Update summary, chart, and table from ordinary JSON interaction state."""
-    frame = _filter(ctx.calc("pnl"), state)
+    managed = _filter(ctx.calc("pnl"), state)
+    live = _live_frame(ctx, state)
+    frame = pd.concat([managed, live], ignore_index=True)
     return {
         "summary": build_summary(frame),
         "pnl_chart": build_chart(frame),
