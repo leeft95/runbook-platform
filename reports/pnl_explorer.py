@@ -37,6 +37,16 @@ def build_chart(frame: pd.DataFrame) -> go.Figure:
     return figure
 
 
+def _utc_day(value: object) -> pd.Timestamp:
+    """Normalize a date-control value to the start of its UTC day."""
+    timestamp = pd.Timestamp(str(value))
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
+    return timestamp.normalize()
+
+
 def _filter(frame: pd.DataFrame, state: dict[str, object]) -> pd.DataFrame:
     """Apply control state to the PnL frame."""
     result = frame
@@ -49,10 +59,11 @@ def _filter(frame: pd.DataFrame, state: dict[str, object]) -> pd.DataFrame:
     date_state = state.get("date")
     start = date_state.get("start_date") if isinstance(date_state, dict) else None
     end = date_state.get("end_date") if isinstance(date_state, dict) else None
+    dates = pd.to_datetime(result["date"], utc=True)
     if start:
-        result = result[result["date"] >= pd.Timestamp(str(start), tz="UTC")]
+        result = result[dates >= _utc_day(start)]
     if end:
-        result = result[result["date"] <= pd.Timestamp(str(end), tz="UTC")]
+        result = result[dates < _utc_day(end) + pd.Timedelta(days=1)]
     return result
 
 
@@ -69,12 +80,14 @@ def _live_frame(ctx, state: dict[str, object]) -> pd.DataFrame:
     except LiveCapabilityUnavailableError:
         return pd.DataFrame(columns=["date", "book", "strategy", "instrument", "pnl", "exposure", "return"])
 
-    predicates = [
-        "(:strategy IS NULL OR strategy = :strategy)",
-        "(:start IS NULL OR business_date >= :start)",
-        "(:end IS NULL OR business_date <= :end)",
-    ]
-    params: dict[str, object] = {"strategy": strategy, "start": start, "end": end}
+    predicates = ["(:strategy IS NULL OR strategy = :strategy)"]
+    params: dict[str, object] = {"strategy": strategy}
+    if start:
+        predicates.append("business_date >= :start")
+        params["start"] = _utc_day(start).strftime("%Y-%m-%d")
+    if end:
+        predicates.append("business_date < :end")
+        params["end"] = (_utc_day(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     if books:
         names = [f":book_{index}" for index in range(len(books))]
         predicates.append(f"book IN ({', '.join(names)})")

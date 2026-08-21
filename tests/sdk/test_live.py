@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -11,7 +12,7 @@ from runbook.sdk.context import Ctx
 from runbook.sdk.discovery import discover_report_definition
 from runbook.sdk.execution import load_report_module
 from runbook.sdk.live import LiveCapabilityUnavailableError
-from runbook.sdk.live_sqlite import build_demo_live_provider
+from runbook.sdk.live_sqlite import SQLiteLiveDataResolver, build_demo_live_provider
 from runbook.sdk.preview_cli import _serve_interactive_app
 
 
@@ -116,3 +117,47 @@ def test_pnl_interaction_combines_managed_and_live_rows(tmp_path) -> None:
     result = definition.interaction_fns["filter_dashboard"](ctx, {"book": ["Alpha"], "strategy": None, "date": {}})
     assert len(result["positions"]) == 2
     assert result["positions"]["pnl"].sum() == 350.0
+
+
+def test_pnl_end_date_includes_intraday_managed_and_live_rows(tmp_path) -> None:
+    module = load_report_module("reports/pnl_explorer.py")
+    state: dict[str, object] = {"book": [], "strategy": None, "date": {"end_date": "2024-01-05"}}
+    managed = pd.DataFrame(
+        [
+            {"date": "2024-01-05T15:30:00Z", "pnl": 10.0},
+            {"date": "2024-01-06T00:00:00Z", "pnl": 20.0},
+        ]
+    )
+    managed["date"] = pd.to_datetime(managed["date"], utc=True)
+    managed_result = module._filter(managed, state)
+    assert managed_result["pnl"].tolist() == [10.0]
+
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+    pd.DataFrame(
+        [
+            {
+                "business_date": "2024-01-05T15:30:00Z",
+                "book": "Alpha",
+                "strategy": "Macro",
+                "instrument": "GBPUSD",
+                "pnl": 10.0,
+                "exposure": 100.0,
+            },
+            {
+                "business_date": "2024-01-06T00:00:00Z",
+                "book": "Alpha",
+                "strategy": "Macro",
+                "instrument": "GBPUSD",
+                "pnl": 20.0,
+                "exposure": 200.0,
+            },
+        ]
+    ).to_sql("demo_live_pnl", connection, index=False)
+    live = SQLiteLiveDataResolver.from_connection(connection)
+    try:
+        ctx = _ctx(tmp_path)
+        ctx.live = live
+        live_result = module._live_frame(ctx, state)
+        assert live_result["pnl"].tolist() == [10.0]
+    finally:
+        live.close()
