@@ -15,6 +15,7 @@ from runbook.sdk.extensions.dash.models import (
     DashInteraction,
     DatasetValues,
 )
+from runbook.sdk.extensions.dash.tables import ag_grid_default_col_def, build_ag_grid_column_defs
 
 __all__ = [
     "DashControl",
@@ -22,6 +23,8 @@ __all__ = [
     "DashInteraction",
     "DatasetValues",
     "dashboard",
+    "ag_grid_default_col_def",
+    "build_ag_grid_column_defs",
     "date_range",
     "dataset_values",
     "interaction",
