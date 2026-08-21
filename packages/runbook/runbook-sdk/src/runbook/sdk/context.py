@@ -12,6 +12,7 @@ from loguru import logger
 from runbook.core.report_artifacts import ArtifactRegistry, validate_artifact_name
 from runbook.core.snapshots import Snapshot
 from runbook.data import BlobStore, load_snapshot_dataset
+from runbook.sdk.live import UNAVAILABLE_LIVE_RESOLVER, LiveDataResolver
 
 TParams = TypeVar("TParams")
 _CACHE_MISS = object()
@@ -33,6 +34,7 @@ class Ctx:
         artifact_prefix: str,
         artifact_store: BlobStore | None = None,
         use_cache: bool = True,
+        live: LiveDataResolver | None = None,
     ):
         self.snapshot = snapshot
         self._store = store
@@ -43,6 +45,7 @@ class Ctx:
         self.context_hash = context_hash
         self._artifact_prefix = artifact_prefix.rstrip("/")
         self.use_cache = use_cache
+        self.live = live or UNAVAILABLE_LIVE_RESOLVER
         self._calc_fns: dict[str, Callable[[Ctx], Any]] = {}
         self._memo: dict[str, Any] = {}
         self.cache_hits: dict[str, bool] = {}

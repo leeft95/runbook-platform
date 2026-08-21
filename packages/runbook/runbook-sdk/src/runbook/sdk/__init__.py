@@ -5,6 +5,7 @@ from runbook.sdk.authoring import RequiredAliases, report, required_aliases
 from runbook.sdk.client import RunbookClient, create_client
 from runbook.sdk.context import Ctx
 from runbook.sdk.execution import ReportResult, execute_report, resolve_code_version
+from runbook.sdk.live import LiveCapabilityUnavailableError, LiveDataResolver, LiveQuerySource
 from runbook.sdk.profiles import ReportProfile, load_profiles
 from runbook.sdk.ui import (
     column,
@@ -43,6 +44,9 @@ __all__ = [
     "grid",
     "infer_columns",
     "load_profiles",
+    "LiveCapabilityUnavailableError",
+    "LiveDataResolver",
+    "LiveQuerySource",
     "manifest",
     "merge_columns",
     "number",
