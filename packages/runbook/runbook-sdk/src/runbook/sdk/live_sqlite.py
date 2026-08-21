@@ -23,6 +23,7 @@ class LiveQueryProvenance:
     query_hash: str
     parameter_keys: tuple[str, ...]
     parameter_types: tuple[str, ...]
+    duration_ms: float
 
 
 class SQLiteLiveQuerySource:
@@ -46,13 +47,14 @@ class SQLiteLiveQuerySource:
         ).hexdigest()
         started = time.monotonic()
         frame = pd.read_sql_query(statement, self._connection, params=safe_params)
-        _ = time.monotonic() - started
+        duration_ms = (time.monotonic() - started) * 1000.0
         self.last_provenance = LiveQueryProvenance(
             logical_provider=self.logical_provider,
             query_time=datetime.now(timezone.utc),
             query_hash=query_hash,
             parameter_keys=parameter_keys,
             parameter_types=parameter_types,
+            duration_ms=duration_ms,
         )
         return frame
 
