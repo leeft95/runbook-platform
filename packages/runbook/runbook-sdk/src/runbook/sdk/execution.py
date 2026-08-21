@@ -21,6 +21,7 @@ from runbook.core.utils.hashing import sha256_json
 from runbook.sdk.context import Ctx
 from runbook.sdk.discovery import discover_report_definition
 from runbook.sdk.html import DEFAULT_GRID_CSS, DEFAULT_GRID_CSS_REF, render_html
+from runbook.sdk.live import LiveDataResolver
 from runbook.sdk.profiles import ReportProfile, resolve_report_path
 
 
@@ -126,6 +127,7 @@ def execute_report(
     use_cache: bool = True,
     generated_at: datetime | None = None,
     platform_version: str | None = None,
+    live: LiveDataResolver | None = None,
 ) -> ReportResult:
     """Execute a report's Stage 3 manifest and Stage 4 HTML publication."""
     logger.info(
@@ -180,6 +182,7 @@ def execute_report(
         context_hash=context_hash,
         artifact_prefix=prefix,
         use_cache=use_cache,
+        live=live,
     )
     for name, function in definition.calc_fns.items():
         ctx.register_calc(name, function)

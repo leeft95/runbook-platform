@@ -14,6 +14,7 @@ from runbook.sdk.context import Ctx
 from runbook.sdk.discovery import discover_report_definition
 from runbook.sdk.execution import ReportResult, execute_report, load_report_module, resolve_code_version
 from runbook.sdk.extensions.dash import DashPage, render_dash_page
+from runbook.sdk.live import LiveDataResolver
 from runbook.sdk.logging import configure_logging
 from runbook.sdk.profiles import ReportProfile, load_profiles, resolve_report_path
 
@@ -25,6 +26,7 @@ def compose_dash_app(
     snapshot: Any,
     reports_root: str | Path = "reports",
     code_version: str,
+    live: LiveDataResolver | None = None,
 ) -> tuple[Any, ReportResult, DashPage]:
     """Execute one report and compose its DashPage into a host-owned app."""
     result = execute_report(
@@ -33,6 +35,7 @@ def compose_dash_app(
         snapshot=snapshot,
         code_version=code_version,
         reports_root=reports_root,
+        live=live,
     )
     module = load_report_module(resolve_report_path(profile.report_id, reports_root))
     definition = discover_report_definition(module)
@@ -46,6 +49,7 @@ def compose_dash_app(
         code_version=code_version,
         context_hash=build_context_hash(config),
         artifact_prefix=result.prefix,
+        live=live,
     )
     for name, function in definition.calc_fns.items():
         ctx.register_calc(name, function)
