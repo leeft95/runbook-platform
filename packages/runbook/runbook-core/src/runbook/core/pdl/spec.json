@@ -178,7 +178,8 @@
             "columns": {
               "type": ["array", "null"],
               "items": { "$ref": "#/$defs/column" },
-              "uniqueItems": true
+              "uniqueItems": true,
+              "x-runbook-unique-by": "field"
             }
           }
         }
@@ -273,8 +274,7 @@
       "additionalProperties": false,
       "required": ["kind"],
       "properties": {
-        "kind": { "const": "date" },
-        "pattern": { "type": ["string", "null"], "minLength": 1 }
+        "kind": { "const": "date" }
       }
     },
     "datetimeFormat": {
@@ -282,8 +282,7 @@
       "additionalProperties": false,
       "required": ["kind"],
       "properties": {
-        "kind": { "const": "datetime" },
-        "pattern": { "type": ["string", "null"], "minLength": 1 }
+        "kind": { "const": "datetime" }
       }
     },
     "block": {

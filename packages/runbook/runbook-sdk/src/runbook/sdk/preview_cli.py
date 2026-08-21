@@ -64,6 +64,15 @@ def compose_dash_app(
     return app, result, page
 
 
+def _serve_interactive_app(app: Any, *, live: Any, host: str, port: int) -> None:
+    """Run a development preview and always release an owned live provider."""
+    try:
+        app.run(host=host, port=port, debug=False)
+    finally:
+        if live is not None:
+            live.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     """Render one profile against the latest snapshot for preview."""
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
@@ -100,15 +109,20 @@ def main(argv: list[str] | None = None) -> int:
         dash_mode = profile.extensions.get("modes", {}).get("dash", {})
         if not isinstance(dash_mode, dict) or not dash_mode.get("enabled", False):
             parser.error("interactive preview requires extensions.modes.dash.enabled=true")
-        app, _, _ = compose_dash_app(
-            store=store,
-            profile=profile,
-            snapshot=snapshot,
-            reports_root=args.reports_root,
-            code_version=resolve_code_version(args.code_version),
-            live=build_demo_live_provider() if args.demo_live else None,
-        )
-        app.run(host=args.host, port=args.port, debug=False)
+        live = build_demo_live_provider() if args.demo_live else None
+        try:
+            app, _, _ = compose_dash_app(
+                store=store,
+                profile=profile,
+                snapshot=snapshot,
+                reports_root=args.reports_root,
+                code_version=resolve_code_version(args.code_version),
+                live=live,
+            )
+            _serve_interactive_app(app, live=live, host=args.host, port=args.port)
+        finally:
+            if live is not None and not live.closed:
+                live.close()
         return 0
     result = execute_report(
         store=store,

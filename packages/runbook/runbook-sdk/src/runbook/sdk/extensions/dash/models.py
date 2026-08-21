@@ -69,7 +69,6 @@ class DashExtension(BaseModel):
     schema_version: Literal["pdl-dash/0.1"] = "pdl-dash/0.1"
     controls: list[DashControl] = Field(default_factory=list)
     interactions: list[DashInteraction] = Field(default_factory=list)
-    tables: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     @classmethod
     def from_manifest(cls, raw: dict[str, Any]) -> "DashExtension":

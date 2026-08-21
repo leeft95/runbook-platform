@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import pandas as pd
-import pyarrow.parquet as pq
+import pyarrow as pa
 from runbook.core.pdl.models import PDLManifest, PDLPlotRefBlock, PDLTableBlock, PDLTextBlock
 from runbook.sdk.discovery import ReportDefinition
 from runbook.sdk.extensions.dash.ids import DashIds
@@ -88,13 +88,21 @@ def _build_components(manifest: PDLManifest, extension: DashExtension | None, ct
             body = dcc.Graph(id=ids.block(block.name), figure=_read_json(ctx, block.ref))
         elif isinstance(block, PDLTableBlock):
             frame = _read_table(ctx, block.data_ref)
-            schema = pq.read_schema(io.BytesIO(_read_bytes(ctx, block.data_ref)))
+            # pandas' restored index is intentionally not part of rowData. Derive
+            # the renderer schema from the same logical columns to avoid exposing
+            # parquet's synthetic __index_level_0__ field in AG Grid.
+            schema = pa.Schema.from_pandas(frame, preserve_index=False)
             body = dag.AgGrid(
                 id=ids.block(block.name),
                 rowData=_records(frame),
                 columnDefs=build_ag_grid_column_defs(schema, block.columns),
                 defaultColDef=ag_grid_default_col_def(),
                 dashGridOptions={"sideBar": "columns"},
+                # Phase C uses client-side grouping/pivot/value aggregation in
+                # local preview. The formatter strings are generated solely from
+                # closed PDL semantic format models; PDL has no JS escape hatch.
+                enableEnterpriseModules=True,
+                dangerously_allow_code=True,
             )
         else:
             raise ValueError(f"unsupported PDL block type: {block.type!r}")
@@ -176,16 +184,39 @@ def _register_callbacks(
         inputs = _input_specs(extension, ids, declaration.inputs, Input)
         handler = (definition.interaction_fns or {})[declaration.handler]
 
-        def callback(*values: Any, _handler: Any = handler, _inputs: list[str] = declaration.inputs) -> list[Any]:
-            """Convert ordinary Dash input values to JSON-like report state."""
-            state = _state_from_values(extension, _inputs, values)
-            result = _handler(ctx, state)
-            if not isinstance(result, Mapping):
-                raise TypeError(f"interaction {_handler.__name__!r} must return a mapping")
-            return [_convert_output(blocks[name], result.get(name)) for name in declaration.outputs]
+        callback = _make_callback(
+            ctx=ctx,
+            extension=extension,
+            handler=handler,
+            input_names=tuple(declaration.inputs),
+            output_names=tuple(declaration.outputs),
+            output_blocks={name: blocks[name] for name in declaration.outputs},
+        )
 
         if outputs:
             app.callback(outputs, inputs)(callback)
+
+
+def _make_callback(
+    *,
+    ctx: Any,
+    extension: DashExtension,
+    handler: Any,
+    input_names: tuple[str, ...],
+    output_names: tuple[str, ...],
+    output_blocks: Mapping[str, Any],
+) -> Any:
+    """Create one isolated callback closure for one declared interaction."""
+
+    def callback(*values: Any) -> list[Any]:
+        """Convert ordinary Dash input values to JSON-like report state."""
+        state = _state_from_values(extension, list(input_names), values)
+        result = handler(ctx, state)
+        if not isinstance(result, Mapping):
+            raise TypeError(f"interaction {handler.__name__!r} must return a mapping")
+        return [_convert_output(output_blocks[name], result.get(name)) for name in output_names]
+
+    return callback
 
 
 def _output_property(block: Any) -> str:

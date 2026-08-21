@@ -3,10 +3,12 @@ from __future__ import annotations
 import ast
 import io
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 import pyarrow as pa
+from runbook.core.data import DatasetFile
 from runbook.core.pdl.models import (
     PDLManifest,
     PDLPage,
@@ -16,9 +18,12 @@ from runbook.core.pdl.models import (
     PDLTextBlock,
 )
 from runbook.core.storage import BlobStore
+from runbook.data.manifests import build_manifest, publish_manifests, resolve_snapshot, write_dataframe
+from runbook.sdk import ReportProfile, column, execute_report, number
 from runbook.sdk.extensions.dash import build_ag_grid_column_defs, dashboard
 from runbook.sdk.extensions.dash.tables import ag_grid_default_col_def
 from runbook.sdk.html import render_html
+from runbook.sdk.preview_cli import compose_dash_app
 
 
 def _imports(root: Path) -> set[str]:
@@ -101,6 +106,127 @@ def test_ag_grid_analytical_features_are_renderer_defaults_without_callbacks() -
     assert by_field["pnl"]["enableValue"] and by_field["pnl"]["aggFunc"] == "sum"
     assert "callback" not in json.dumps(definitions).lower()
     assert ag_grid_default_col_def()["sortable"] is True
+
+
+def test_ag_grid_formatter_code_is_renderer_generated_only() -> None:
+    definitions = build_ag_grid_column_defs(
+        pa.schema([("amount", pa.float64())]),
+        [
+            column(
+                "amount",
+                role="measure",
+                format=number(decimals=2),
+            )
+        ],
+    )
+    formatter = definitions[0]["valueFormatter"]
+    assert "toLocaleString" in formatter
+    assert "javascript:" not in formatter.lower()
+    assert "user" not in formatter.lower()
+    assert all(key not in definitions[0] for key in ("cellRenderer", "valueGetter", "function"))
+
+
+def test_pnl_artifact_manifest_drives_complete_static_html_and_dash_callback(tmp_path, pointer_registry) -> None:
+    store = BlobStore(f"file:{tmp_path}")
+    now = datetime(2024, 1, 20, tzinfo=timezone.utc)
+    frame = pd.DataFrame(
+        [
+            {
+                "date": "2024-01-17",
+                "book": "Alpha",
+                "strategy": "Macro",
+                "instrument": "GBPUSD",
+                "pnl": 100.0,
+                "exposure": 1000.0,
+                "return": 0.1,
+            },
+            {
+                "date": "2024-01-18",
+                "book": "Beta",
+                "strategy": "RV",
+                "instrument": "EURGBP",
+                "pnl": -20.0,
+                "exposure": 750.0,
+                "return": -0.02,
+            },
+        ]
+    )
+    ref, digest = write_dataframe(store, "demo_pnl_explorer", frame)
+    dataset_manifest, manifest_digest = build_manifest(
+        dataset_id="demo_pnl_explorer",
+        watermark=now,
+        published_at=now,
+        files=[DatasetFile(ref=ref, sha256=digest, partition={})],
+    )
+    publish_manifests(
+        store,
+        [(dataset_manifest, manifest_digest)],
+        pointer_registry=pointer_registry,
+        source_id="pnl_acceptance",
+        source_run_id="test",
+    )
+    snapshot = resolve_snapshot(store, {"pnl": "demo_pnl_explorer"}, pointer_registry=pointer_registry)
+    profile = ReportProfile(
+        profile_id="pnl_acceptance",
+        report_id="pnl_explorer",
+        datasets={"pnl": "demo_pnl_explorer"},
+        extensions={"modes": {"dash": {"enabled": True}}},
+    )
+    result = execute_report(
+        store=store,
+        profile=profile,
+        snapshot=snapshot,
+        code_version="acceptance",
+        reports_root="reports",
+        generated_at=now,
+        platform_version="0.2.0",
+    )
+    html = store.get(result.html_ref).decode()
+    assert all(value in html for value in ("PnL Explorer", "Total PnL", "PnL through time", "Alpha", "GBPUSD"))
+
+    from runbook.sdk.live_sqlite import build_demo_live_provider
+
+    live = build_demo_live_provider()
+    try:
+        app, _, page = compose_dash_app(
+            store=store,
+            profile=profile,
+            snapshot=snapshot,
+            reports_root="reports",
+            code_version="acceptance",
+            live=live,
+        )
+        assert page.namespace == "pnl_acceptance"
+        page_payload = page.layout().to_plotly_json()
+        assert "pdl-pnl_acceptance-block-summary" in str(page_payload)
+        assert "pdl-pnl_acceptance-block-pnl_chart" in str(page_payload)
+        assert "pdl-pnl_acceptance-block-positions" in str(page_payload)
+        assert app.server.test_client().get("/").status_code == 200
+        callback_key = next(key for key in app.callback_map if "pdl-pnl_acceptance-block-summary" in key)
+        response = app.server.test_client().post(
+            "/_dash-update-component",
+            json={
+                "output": callback_key,
+                "outputs": [
+                    {"id": "pdl-pnl_acceptance-block-summary", "property": "children"},
+                    {"id": "pdl-pnl_acceptance-block-pnl_chart", "property": "figure"},
+                    {"id": "pdl-pnl_acceptance-block-positions", "property": "rowData"},
+                ],
+                "inputs": [
+                    {"id": "pdl-pnl_acceptance-control-book", "property": "value", "value": []},
+                    {"id": "pdl-pnl_acceptance-control-strategy", "property": "value", "value": None},
+                    {"id": "pdl-pnl_acceptance-control-date", "property": "start_date", "value": None},
+                    {"id": "pdl-pnl_acceptance-control-date", "property": "end_date", "value": None},
+                ],
+                "changedPropIds": ["pdl-pnl_acceptance-control-book.value"],
+                "state": [],
+            },
+        )
+        assert response.status_code == 200
+        assert b"Total PnL" in response.data
+        assert b"GBPUSD" in response.data
+    finally:
+        live.close()
 
 
 def test_services_and_reusable_package_boundaries_remain_one_way() -> None:

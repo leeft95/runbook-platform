@@ -73,10 +73,9 @@ def dashboard(
     *,
     controls: Sequence[DashControl] = (),
     interactions: Sequence[DashInteraction] = (),
-    tables: dict[str, dict[str, object]] | None = None,
 ) -> DashExtension:
     """Build a pdl-dash/0.1 extension object."""
-    return DashExtension(controls=list(controls), interactions=list(interactions), tables=tables or {})
+    return DashExtension(controls=list(controls), interactions=list(interactions))
 
 
 def _is_sequence(value: object) -> TypeGuard[Sequence[JSONScalar]]:

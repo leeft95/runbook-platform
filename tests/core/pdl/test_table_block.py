@@ -33,6 +33,14 @@ def test_pdl_spec_table_block_contains_style_fields() -> None:
     assert "style_key" in table_block_props
 
 
+def test_pdl_spec_documents_field_uniqueness_contract() -> None:
+    spec_path = Path("packages/runbook/runbook-core/src/runbook/core/pdl/spec.json")
+    payload = json.loads(spec_path.read_text(encoding="utf-8"))
+    columns = payload["$defs"]["tableBlock"]["allOf"][1]["properties"]["columns"]
+    assert columns["x-runbook-unique-by"] == "field"
+    assert columns["uniqueItems"] is True
+
+
 def test_pdl_spec_table_block_ref_fields_match_table_artifact_ref_schema() -> None:
     spec_path = Path("packages/runbook/runbook-core/src/runbook/core/pdl/spec.json")
     payload = json.loads(spec_path.read_text(encoding="utf-8"))

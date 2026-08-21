@@ -213,14 +213,14 @@ def percent(decimals: int | None = None) -> PDLPercentFormat:
     return PDLPercentFormat(decimals=decimals)
 
 
-def date(pattern: str | None = None) -> PDLDateFormat:
+def date() -> PDLDateFormat:
     """Build a date display format."""
-    return PDLDateFormat(pattern=pattern)
+    return PDLDateFormat()
 
 
-def datetime(pattern: str | None = None) -> PDLDateTimeFormat:
+def datetime() -> PDLDateTimeFormat:
     """Build a date-time display format."""
-    return PDLDateTimeFormat(pattern=pattern)
+    return PDLDateTimeFormat()
 
 
 def infer_columns(schema: pa.Schema) -> list[PDLColumn]:
@@ -269,8 +269,15 @@ def merge_columns(schema: pa.Schema | None, columns: Sequence[PDLColumn] | None)
         if override is None:
             merged.append(item)
             continue
-        updates = {name: getattr(override, name) for name in override.model_fields_set if name != "field"}
-        merged.append(item.model_copy(update=updates))
+        updates = {
+            name: getattr(override, name)
+            for name in override.model_fields_set
+            if name != "field" and (getattr(override, name) is not None or name == "hidden")
+        }
+        # model_copy(update=...) deliberately skips validation. Revalidate the
+        # complete merged payload so an inferred dimension cannot acquire a
+        # measure-only aggregation through an explicit partial override.
+        merged.append(PDLColumn.model_validate({**item.model_dump(mode="python"), **updates}))
     return merged
 
 

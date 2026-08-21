@@ -87,14 +87,12 @@ class PDLDateFormat(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["date"] = "date"
-    pattern: NonEmptyStr | None = None
 
 
 class PDLDateTimeFormat(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["datetime"] = "datetime"
-    pattern: NonEmptyStr | None = None
 
 
 PDLColumnFormat = Union[

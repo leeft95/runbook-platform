@@ -25,6 +25,12 @@ The supported renderer-neutral formats are `number`, `currency`, `percent`,
 `date`, and `datetime`. They describe intent, not framework configuration.
 There are no AG Grid names in core PDL.
 
+Date and datetime currently carry no custom pattern: a renderer chooses its
+locale-safe default. `columns` also carries the checked-in
+`x-runbook-unique-by: field` schema annotation. Standard JSON Schema's
+`uniqueItems` only compares complete objects and cannot enforce uniqueness of a
+property; the Pydantic/SDK validator is canonical for this rule.
+
 ## HTML fallback and AG Grid
 
 HTML ignores extension namespaces it does not implement. A report with
@@ -39,6 +45,14 @@ filters and typed display formatters are renderer-owned. Sorting, filtering,
 column resize/reorder/visibility, grouping, pivoting, and aggregation happen
 inside AG Grid on the client, without server callbacks or arbitrary
 JavaScript supplied by a report.
+
+The local Phase C renderer enables AG Grid Enterprise modules so grouping,
+pivoting, and value aggregation are available in a development preview. This
+is an evaluation path, not a bundled license: deployments must provide a valid
+AG Grid Enterprise license according to their own terms. No license key,
+credential, or secret is stored in PDL, profiles, or this repository. Generated
+formatters are the only code-bearing grid properties and are built from the
+closed semantic format models; report authors cannot supply JavaScript.
 
 ## Controls and interactions
 
@@ -78,6 +92,19 @@ and are absent from PDL.
 The preview CLI uses this same contract. It is explicitly development-only,
 defaults to `127.0.0.1`, and has no production lifecycle, session, or service
 runner integration.
+
+For a bounded local/browser smoke, run
+`runbook-preview interactive pnl_explorer_demo --demo-live --host 127.0.0.1
+--port 8051`, exercise the Book/Strategy/Date controls, and stop it after the
+check. The stable selectors are `pdl-pnl_explorer_demo-control-book`,
+`pdl-pnl_explorer_demo-control-strategy`,
+`pdl-pnl_explorer_demo-control-date`,
+`pdl-pnl_explorer_demo-block-summary`,
+`pdl-pnl_explorer_demo-block-pnl_chart`, and
+`pdl-pnl_explorer_demo-block-positions`. The table is mounted with
+`enableEnterpriseModules` and generated formatters; grouping, pivoting,
+aggregation, and formatting must remain browser-side and must not add a Dash
+callback.
 
 ## Live capability boundary
 

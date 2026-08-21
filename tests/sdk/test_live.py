@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -11,6 +12,7 @@ from runbook.sdk.discovery import discover_report_definition
 from runbook.sdk.execution import load_report_module
 from runbook.sdk.live import LiveCapabilityUnavailableError
 from runbook.sdk.live_sqlite import build_demo_live_provider
+from runbook.sdk.preview_cli import _serve_interactive_app
 
 
 def _ctx(tmp_path):
@@ -54,6 +56,41 @@ def test_sqlite_provider_parameterizes_and_captures_safe_provenance() -> None:
     assert provenance.parameter_keys == ("book",)
     assert "Alpha" not in provenance.query_hash
     assert not hasattr(provenance, "results")
+    provider.close()
+
+
+def test_sqlite_provider_is_thread_safe_and_close_is_idempotent() -> None:
+    provider = build_demo_live_provider()
+    source = provider.sql("demo_pnl")
+
+    def query() -> list[str]:
+        return source.query("SELECT book FROM demo_live_pnl ORDER BY book")["book"].tolist()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: query(), range(16)))
+        list(pool.map(lambda _: provider.close(), range(8)))
+    assert results == [["Alpha", "Beta", "Gamma"]] * 16
+    assert provider.closed is True
+    provider.close()
+    with pytest.raises(LiveCapabilityUnavailableError, match="provider is closed"):
+        source.query("SELECT 1")
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_preview_lifecycle_closes_owned_live_provider(raises: bool) -> None:
+    provider = build_demo_live_provider()
+
+    class App:
+        def run(self, **kwargs: object) -> None:
+            if raises:
+                raise RuntimeError("bounded preview stop")
+
+    if raises:
+        with pytest.raises(RuntimeError, match="bounded preview stop"):
+            _serve_interactive_app(App(), live=provider, host="127.0.0.1", port=0)
+    else:
+        _serve_interactive_app(App(), live=provider, host="127.0.0.1", port=0)
+    assert provider.closed is True
 
 
 def test_pnl_interaction_combines_managed_and_live_rows(tmp_path) -> None:
