@@ -134,7 +134,7 @@ class ReportProfile(BaseModel):
         for name, mode in modes.items():
             if not isinstance(mode, dict) or not isinstance(mode.get("enabled", False), bool):
                 raise ValueError(f"extensions.modes.{name} must contain boolean enabled")
-            if mode.get("enabled"):
+            if mode.get("enabled") and name != "dash":
                 raise ValueError(f"renderer extension {name!r} is not implemented; HTML is the only renderer")
         return self
 

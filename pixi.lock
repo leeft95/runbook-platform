@@ -7037,7 +7037,7 @@ packages:
 - pypi: ./packages/runbook/runbook-sdk
   name: runbook-sdk
   version: 0.1.0
-  sha256: f4da4f1bd898a9a63cd59cfc60e7c47e7ea61ec802b278e63cfdf9921b4c8b62
+  sha256: 3817e6521a34f8480594dde3bd56bdc038070d539e3d4dfd2210fb5545ef7c96
   requires_dist:
   - pandas
   - pyarrow
@@ -7046,6 +7046,8 @@ packages:
   - loguru
   - runbook-core
   - runbook-data
+  - dash>=4.2,<5 ; extra == 'dash'
+  - dash-ag-grid>=35,<36 ; extra == 'dash'
   requires_python: '>=3.11'
 - pypi: ./packages/runbook/runbook-services
   name: runbook-services
