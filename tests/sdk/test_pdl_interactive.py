@@ -33,6 +33,7 @@ from runbook.sdk.extensions.dash import (
     render_dash_page,
     validate_dash_manifest,
 )
+from runbook.sdk.extensions.dash.renderer import _convert_output
 
 
 def test_interaction_discovery_preserves_calc_and_page() -> None:
@@ -128,6 +129,26 @@ def test_semantic_inference_and_override() -> None:
         merge_columns(schema, [column("book", aggregation="sum")])
     with pytest.raises(ValueError, match="duplicate fields"):
         merge_columns(schema, [column("book"), column("book")])
+
+
+def test_table_callback_outputs_normalize_declared_date_and_datetime() -> None:
+    block = PDLTableBlock(
+        name="positions",
+        data_ref="positions.parquet",
+        row=1,
+        col=1,
+        columns=[
+            column("day", role="time", format=date()),
+            column("moment", role="time", format=datetime_format()),
+        ],
+    )
+    frame = pd.DataFrame(
+        {
+            "day": [pd.Timestamp("2024-01-01T12:00:00Z")],
+            "moment": [pd.Timestamp("2024-01-01T12:30:45.123456Z")],
+        }
+    )
+    assert _convert_output(block, frame) == [{"day": "2024-01-01", "moment": "2024-01-01T12:30:45.123456Z"}]
 
 
 def test_dash_extension_validation_and_namespacing() -> None:
@@ -322,9 +343,9 @@ def test_rendered_table_uses_logical_schema_and_trusted_grid_props(tmp_path) -> 
     encoded = str(payload)
     assert "__index_level_0__" not in encoded
     assert payload["props"]["enableEnterpriseModules"] is True
-    assert payload["props"]["dangerously_allow_code"] is True
+    assert payload["props"].get("dangerously_allow_code") is not True
     assert all(value in encoded for value in ("book", "amount", "currency_amount", "ratio", "date", "timestamp"))
-    assert "toLocaleString" in encoded and "toLocaleDateString" in encoded
+    assert "d3.format" in encoded and "d3.timeFormat" in encoded
     by_field = {item["field"]: item for item in payload["props"]["columnDefs"]}
     assert by_field["date"]["cellDataType"] == "dateString"
     assert by_field["timestamp"]["cellDataType"] == "dateTimeString"
@@ -335,10 +356,15 @@ def test_rendered_table_uses_logical_schema_and_trusted_grid_props(tmp_path) -> 
     formatters = [item["valueFormatter"] for item in payload["props"]["columnDefs"] if "valueFormatter" in item]
     assert all(set(formatter) == {"function"} for formatter in formatters)
     formatter_sources = [formatter["function"] for formatter in formatters]
-    assert any("style: 'currency'" in source for source in formatter_sources)
-    assert any("style: 'percent'" in source for source in formatter_sources)
-    assert "toLocaleString" in by_field["amount"]["valueFormatter"]["function"]
-    assert "style: 'currency'" in by_field["currency_amount"]["valueFormatter"]["function"]
-    assert "style: 'percent'" in by_field["ratio"]["valueFormatter"]["function"]
-    assert "toLocaleDateString" in by_field["date"]["valueFormatter"]["function"]
-    assert "toLocaleString" in by_field["timestamp"]["valueFormatter"]["function"]
+    assert any("d3.formatLocale" in source for source in formatter_sources)
+    assert any('d3.format(".2%")' in source for source in formatter_sources)
+    assert payload["props"]["rowData"][0]["date"] == "2024-01-01"
+    assert payload["props"]["rowData"][0]["timestamp"] == "2024-01-01T12:30:00.000000Z"
+    assert 'd3.format(",.2f")' in by_field["amount"]["valueFormatter"]["function"]
+    assert (
+        'd3.formatLocale({"decimal":".","thousands":",","grouping":[3],"currency":["£",""]})'
+        in by_field["currency_amount"]["valueFormatter"]["function"]
+    )
+    assert 'd3.format(".2%")' in by_field["ratio"]["valueFormatter"]["function"]
+    assert "d3.timeParse('%Y-%m-%d')" in by_field["date"]["valueFormatter"]["function"]
+    assert "d3.isoParse(params.value)" in by_field["timestamp"]["valueFormatter"]["function"]

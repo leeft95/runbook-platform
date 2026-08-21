@@ -19,7 +19,7 @@ from runbook.core.pdl.models import (
 )
 from runbook.core.storage import BlobStore
 from runbook.data.manifests import build_manifest, publish_manifests, resolve_snapshot, write_dataframe
-from runbook.sdk import ReportProfile, column, date, execute_report, number
+from runbook.sdk import ReportProfile, column, currency, date, execute_report, number
 from runbook.sdk import datetime as datetime_format
 from runbook.sdk.extensions.dash import build_ag_grid_column_defs, dashboard
 from runbook.sdk.extensions.dash.tables import ag_grid_default_col_def
@@ -149,10 +149,27 @@ def test_ag_grid_formatter_code_is_renderer_generated_only() -> None:
     formatter = definitions[0]["valueFormatter"]
     assert set(formatter) == {"function"}
     source = formatter["function"]
-    assert "toLocaleString" in source
+    assert 'd3.format(",.2f")' in source
+    assert "toLocaleString" not in source
     assert "javascript:" not in source.lower()
     assert "user" not in source.lower()
     assert all(key not in definitions[0] for key in ("cellRenderer", "valueGetter"))
+
+
+def test_ag_grid_currency_formatters_use_closed_d3_locales() -> None:
+    definitions = build_ag_grid_column_defs(
+        pa.schema([(code.lower(), pa.float64()) for code in ("GBP", "USD", "EUR", "JPY")]),
+        [
+            column(code.lower(), role="measure", format=currency(code, decimals=0))
+            for code in ("GBP", "USD", "EUR", "JPY")
+        ],
+    )
+    symbols = {"GBP": "£", "USD": "$", "EUR": "€", "JPY": "¥"}
+    for code, definition in zip(symbols, definitions, strict=True):
+        source = definition["valueFormatter"]["function"]
+        assert "d3.formatLocale" in source
+        assert f'"currency":["{symbols[code]}",""]' in source
+        assert "toLocaleString" not in source
 
 
 def test_pnl_artifact_manifest_drives_complete_static_html_and_dash_callback(tmp_path, pointer_registry) -> None:
@@ -211,7 +228,9 @@ def test_pnl_artifact_manifest_drives_complete_static_html_and_dash_callback(tmp
         platform_version="0.2.0",
     )
     html = store.get(result.html_ref).decode()
-    assert all(value in html for value in ("PnL Explorer", "Total PnL", "PnL through time", "Alpha", "GBPUSD"))
+    assert all(
+        value in html for value in ("PnL Explorer", "Total PnL", "PnL through time", "Alpha", "GBPUSD", "2024-01-17")
+    )
 
     from runbook.sdk.live_sqlite import build_demo_live_provider
 
@@ -254,6 +273,10 @@ def test_pnl_artifact_manifest_drives_complete_static_html_and_dash_callback(tmp
         assert response.status_code == 200
         assert b"Total PnL" in response.data
         assert b"GBPUSD" in response.data
+        payload = response.get_json()
+        rows = payload["response"]["pdl-pnl_acceptance-block-positions"]["rowData"]
+        assert rows[0]["date"] == "2024-01-17"
+        assert all("T" not in row["date"] for row in rows)
     finally:
         live.close()
 

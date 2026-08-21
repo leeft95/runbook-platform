@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 import plotly.graph_objects as go
-from runbook.sdk import column, currency, manifest, percent, plot, report, required_aliases, table, text
+from runbook.sdk import column, currency, date, manifest, percent, plot, report, required_aliases, table, text
 from runbook.sdk.extensions.dash import dashboard, dataset_values, date_range, interaction, multi_select, select
 from runbook.sdk.live import LiveCapabilityUnavailableError
 from runbook.sdk.ui import grid
@@ -106,7 +106,7 @@ def filter_dashboard(ctx, state: dict[str, object]) -> dict[str, object]:
 def page(ctx):
     """Build the canonical static-first PnL Explorer PDL manifest."""
     frame = ctx.calc("pnl")
-    table_frame = frame.assign(date=frame["date"].dt.strftime("%Y-%m-%d"))
+    table_frame = frame.assign(date=frame["date"].dt.date)
     table_ref = ctx.artifact.table(table_frame, name="positions")
     chart_ref = ctx.artifact.plot(build_chart(frame), name="pnl_chart")
     return manifest(
@@ -125,7 +125,7 @@ def page(ctx):
                     col=1,
                     col_span=12,
                     columns=[
-                        column("date", role="time"),
+                        column("date", role="time", format=date()),
                         column("book", role="dimension"),
                         column("strategy", role="dimension"),
                         column("instrument", role="identifier"),

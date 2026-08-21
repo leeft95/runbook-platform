@@ -17,6 +17,13 @@ _DEFAULT_COL_DEF: dict[str, Any] = {
     "suppressMovable": False,
 }
 
+_CURRENCY_SYMBOLS = {
+    "GBP": "£",
+    "USD": "$",
+    "EUR": "€",
+    "JPY": "¥",
+}
+
 
 def ag_grid_default_col_def() -> dict[str, Any]:
     """Return renderer defaults for client-side analytical table behaviour."""
@@ -71,21 +78,30 @@ def _formatter(format_model: Any) -> dict[str, str]:
     """Return one of the renderer-owned formatters; never accept user JS."""
     kind = format_model.kind
     decimals = getattr(format_model, "decimals", None)
-    digits = "undefined" if decimals is None else str(decimals)
+    number_spec = ",~g" if decimals is None else f",.{decimals}f"
     if kind == "number":
-        source = f"params.value == null ? '' : Number(params.value).toLocaleString(undefined, {{maximumFractionDigits: {digits}}})"
+        source = f"params.value == null ? '' : d3.format({json.dumps(number_spec)})(params.value)"
     elif kind == "currency":
-        currency = json.dumps(format_model.currency)
-        source = (
-            "params.value == null ? '' : Number(params.value).toLocaleString(undefined, "
-            f"{{style: 'currency', currency: {currency}, maximumFractionDigits: {digits}}})"
+        currency_code = str(format_model.currency).upper()
+        symbol = _CURRENCY_SYMBOLS.get(currency_code, f"{currency_code} ")
+        locale = json.dumps(
+            {
+                "decimal": ".",
+                "thousands": ",",
+                "grouping": [3],
+                "currency": [symbol, ""],
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
+        source = f"params.value == null ? '' : d3.formatLocale({locale}).format({json.dumps('$' + number_spec)})(params.value)"
     elif kind == "percent":
-        source = f"params.value == null ? '' : Number(params.value).toLocaleString(undefined, {{style: 'percent', maximumFractionDigits: {digits}}})"
+        percent_spec = ".2%" if decimals is None else f".{decimals}%"
+        source = f"params.value == null ? '' : d3.format({json.dumps(percent_spec)})(params.value)"
     elif kind == "date":
-        source = "params.value == null ? '' : new Date(params.value).toLocaleDateString()"
+        source = "params.value == null ? '' : d3.timeFormat('%b %-d, %Y')(d3.timeParse('%Y-%m-%d')(params.value))"
     elif kind == "datetime":
-        source = "params.value == null ? '' : new Date(params.value).toLocaleString()"
+        source = "params.value == null ? '' : d3.timeFormat('%b %-d, %Y %H:%M')(d3.isoParse(params.value))"
     else:
         raise ValueError(f"unsupported PDL column format: {kind!r}")
     return {"function": source}

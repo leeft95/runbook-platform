@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import io
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pandas as pd
 import pyarrow as pa
-from runbook.core.pdl.models import PDLManifest, PDLPlotRefBlock, PDLTableBlock, PDLTextBlock
+from runbook.core.pdl.models import PDLColumn, PDLColumnRole, PDLManifest, PDLPlotRefBlock, PDLTableBlock, PDLTextBlock
 from runbook.sdk.discovery import ReportDefinition
 from runbook.sdk.extensions.dash.ids import DashIds
 from runbook.sdk.extensions.dash.models import (
@@ -27,6 +27,7 @@ from runbook.sdk.extensions.dash.validation import (
     resolve_dataset_values,
     validate_dash_manifest,
 )
+from runbook.sdk.ui import merge_columns
 
 
 def render_dash_page(
@@ -94,15 +95,14 @@ def _build_components(manifest: PDLManifest, extension: DashExtension | None, ct
             schema = pa.Schema.from_pandas(frame, preserve_index=False)
             body = dag.AgGrid(
                 id=ids.block(block.name),
-                rowData=_records(frame),
+                rowData=_records(frame, block.columns),
                 columnDefs=build_ag_grid_column_defs(schema, block.columns),
                 defaultColDef=ag_grid_default_col_def(),
                 dashGridOptions={"sideBar": "columns"},
                 # Phase C uses client-side grouping/pivot/value aggregation in
-                # local preview. The formatter strings are generated solely from
-                # closed PDL semantic format models; PDL has no JS escape hatch.
+                # local preview. Formatter functions use only Dash AG Grid's
+                # trusted preloaded d3 namespace; PDL has no JS escape hatch.
                 enableEnterpriseModules=True,
-                dangerously_allow_code=True,
             )
         else:
             raise ValueError(f"unsupported PDL block type: {block.type!r}")
@@ -280,13 +280,26 @@ def _convert_output(block: Any, value: Any) -> Any:
     if isinstance(block, PDLTableBlock):
         if not isinstance(value, pd.DataFrame):
             raise TypeError(f"interaction output {block.name!r} expects a pandas.DataFrame")
-        return _records(value)
+        return _records(value, block.columns)
     raise TypeError(f"unsupported interaction output block: {type(block)!r}")
 
 
-def _records(frame: pd.DataFrame) -> list[dict[str, Any]]:
-    """Convert a dataframe to JSON-safe AG Grid row records."""
-    return json.loads(frame.to_json(orient="records", date_format="iso"))
+def _records(frame: pd.DataFrame, columns: Sequence[PDLColumn] | None = None) -> list[dict[str, Any]]:
+    """Convert a dataframe to JSON-safe AG Grid row records with PDL time types."""
+    schema = pa.Schema.from_pandas(frame, preserve_index=False)
+    semantics = merge_columns(schema, columns)
+    normalized = frame.copy()
+    for semantic in semantics:
+        if semantic.role != PDLColumnRole.time or semantic.field not in normalized:
+            continue
+        parsed = pd.to_datetime(normalized[semantic.field], errors="coerce", utc=True)
+        kind = semantic.format.kind if semantic.format is not None else "date"
+        if kind == "datetime":
+            values = parsed.dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        else:
+            values = parsed.dt.strftime("%Y-%m-%d")
+        normalized[semantic.field] = values.where(parsed.notna(), None)
+    return json.loads(normalized.to_json(orient="records", date_format="iso"))
 
 
 def _read_bytes(ctx: Any, ref: str) -> bytes:
