@@ -8,6 +8,9 @@ authors = [{ name = "redcombojnr" }]
 urls = { Repository = "https://github.com/redcombojnr/runbook-platform" }
 dependencies = ["pandas", "pyarrow", "plotly", "pydantic", "loguru", "runbook-core", "runbook-data"]
 
+[project.optional-dependencies]
+dash = ["dash>=4.2,<5", "dash-ag-grid>=35,<36"]
+
 [project.scripts]
 runbook-preview = "runbook.sdk.preview_cli:main"
 

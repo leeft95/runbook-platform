@@ -17,6 +17,7 @@ from runbook.sdk.extensions.dash.models import (
     DatasetValues,
 )
 from runbook.sdk.extensions.dash.page import DashPage
+from runbook.sdk.extensions.dash.renderer import render_dash_page
 from runbook.sdk.extensions.dash.tables import ag_grid_default_col_def, build_ag_grid_column_defs
 from runbook.sdk.extensions.dash.validation import parse_dash_extension, resolve_dataset_values, validate_dash_manifest
 
@@ -34,6 +35,7 @@ __all__ = [
     "resolve_dataset_values",
     "validate_dash_manifest",
     "validate_namespace",
+    "render_dash_page",
     "date_range",
     "dataset_values",
     "interaction",
