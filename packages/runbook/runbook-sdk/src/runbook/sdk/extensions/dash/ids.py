@@ -25,14 +25,17 @@ class DashIds:
         validate_namespace(self.namespace)
 
     def _component(self, kind: str, local_name: str) -> str:
+        """Build one validated namespaced component ID."""
         if not _SAFE.fullmatch(local_name):
             raise ValueError(f"invalid PDL {kind} name: {local_name!r}")
         return f"pdl-{self.namespace}-{kind}-{local_name}"
 
     def block(self, local_name: str) -> str:
+        """Return the namespaced ID for a PDL block."""
         return self._component("block", local_name)
 
     def control(self, local_name: str) -> str:
+        """Return the namespaced ID for a Dash control."""
         return self._component("control", local_name)
 
 

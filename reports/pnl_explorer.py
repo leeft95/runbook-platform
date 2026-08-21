@@ -11,12 +11,14 @@ ALIASES = required_aliases(pnl="pnl")
 
 @report.calc("pnl")
 def pnl(ctx) -> pd.DataFrame:
+    """Load and normalize the deterministic PnL dataset."""
     frame = ctx.dataset(ALIASES.pnl).copy()
     frame["date"] = pd.to_datetime(frame["date"], utc=True)
     return frame.sort_values("date", kind="mergesort").reset_index(drop=True)
 
 
 def build_summary(frame: pd.DataFrame) -> str:
+    """Build the static and interactive summary line."""
     total = float(frame["pnl"].sum()) if not frame.empty else 0.0
     by_book = frame.groupby("book", sort=True)["pnl"].sum() if not frame.empty else pd.Series(dtype=float)
     best = str(by_book.idxmax()) if not by_book.empty else "n/a"
@@ -25,6 +27,7 @@ def build_summary(frame: pd.DataFrame) -> str:
 
 
 def build_chart(frame: pd.DataFrame) -> go.Figure:
+    """Build the cumulative PnL Plotly figure."""
     figure = go.Figure()
     if not frame.empty:
         series = frame.groupby("date", sort=True)["pnl"].sum().cumsum()
@@ -34,6 +37,7 @@ def build_chart(frame: pd.DataFrame) -> go.Figure:
 
 
 def _filter(frame: pd.DataFrame, state: dict[str, object]) -> pd.DataFrame:
+    """Apply control state to the PnL frame."""
     result = frame
     books = state.get("book")
     if isinstance(books, list) and books:
@@ -53,6 +57,7 @@ def _filter(frame: pd.DataFrame, state: dict[str, object]) -> pd.DataFrame:
 
 @report.interaction("filter_dashboard")
 def filter_dashboard(ctx, state: dict[str, object]) -> dict[str, object]:
+    """Update summary, chart, and table from ordinary JSON interaction state."""
     frame = _filter(ctx.calc("pnl"), state)
     return {
         "summary": build_summary(frame),
@@ -63,6 +68,7 @@ def filter_dashboard(ctx, state: dict[str, object]) -> dict[str, object]:
 
 @report.page
 def page(ctx):
+    """Build the canonical static-first PnL Explorer PDL manifest."""
     frame = ctx.calc("pnl")
     table_frame = frame.assign(date=frame["date"].dt.strftime("%Y-%m-%d"))
     table_ref = ctx.artifact.table(table_frame, name="positions")

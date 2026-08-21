@@ -43,6 +43,7 @@ def render_dash_page(
     components = _build_components(manifest, extension, ctx, ids)
 
     def layout_factory() -> Any:
+        """Build the page layout without creating or owning a Dash app."""
         from dash import html
 
         columns = manifest.page.columns or 1
@@ -61,12 +62,14 @@ def render_dash_page(
         )
 
     def callback_registrar(app: Any) -> None:
+        """Register this page's callbacks on the host-owned app."""
         _register_callbacks(app, manifest, extension, definition, ctx, ids)
 
     return DashPage(layout_factory=layout_factory, callback_registrar=callback_registrar, namespace=namespace)
 
 
 def _build_components(manifest: PDLManifest, extension: DashExtension | None, ctx: Any, ids: DashIds) -> list[Any]:
+    """Translate PDL blocks to Dash components and place them in the PDL grid."""
     import dash_ag_grid as dag
     from dash import dcc, html
 
@@ -100,6 +103,7 @@ def _build_components(manifest: PDLManifest, extension: DashExtension | None, ct
 
 
 def _build_controls(extension: DashExtension, ctx: Any, ids: DashIds) -> list[Any]:
+    """Translate the small supported control set to Dash inputs."""
     from dash import dcc, html
 
     controls: list[Any] = []
@@ -142,6 +146,7 @@ def _build_controls(extension: DashExtension, ctx: Any, ids: DashIds) -> list[An
 
 
 def _options(options: list[Any] | DatasetValues | None, ctx: Any) -> list[Any] | None:
+    """Resolve explicit or pinned-snapshot dataset-backed control options."""
     if isinstance(options, DatasetValues):
         return resolve_dataset_values(options, ctx.dataset)
     return options
@@ -155,6 +160,7 @@ def _register_callbacks(
     ctx: Any,
     ids: DashIds,
 ) -> None:
+    """Bind declared plain-Python interactions to host Dash callbacks."""
     if extension is None:
         return
     from dash import Input, Output
@@ -166,6 +172,7 @@ def _register_callbacks(
         handler = (definition.interaction_fns or {})[declaration.handler]
 
         def callback(*values: Any, _handler: Any = handler, _inputs: list[str] = declaration.inputs) -> list[Any]:
+            """Convert ordinary Dash input values to JSON-like report state."""
             state = _state_from_values(extension, _inputs, values)
             result = _handler(ctx, state)
             if not isinstance(result, Mapping):
@@ -177,6 +184,7 @@ def _register_callbacks(
 
 
 def _output_property(block: Any) -> str:
+    """Select the Dash property updated by a PDL block type."""
     if isinstance(block, PDLTextBlock):
         return "children"
     if isinstance(block, PDLPlotRefBlock):
@@ -187,6 +195,7 @@ def _output_property(block: Any) -> str:
 
 
 def _input_specs(extension: DashExtension, ids: DashIds, names: list[str], input_type: Any) -> list[Any]:
+    """Expand logical controls into native Dash input properties."""
     return [
         input_type(ids.control(name), property_name)
         for name in names
@@ -195,6 +204,7 @@ def _input_specs(extension: DashExtension, ids: DashIds, names: list[str], input
 
 
 def _properties_for_input(extension: DashExtension, name: str) -> tuple[str, ...]:
+    """Return native input properties for one logical control."""
     for control in extension.controls:
         if control.name == name:
             if isinstance(control, DashDateRange):
@@ -204,6 +214,7 @@ def _properties_for_input(extension: DashExtension, name: str) -> tuple[str, ...
 
 
 def _state_from_values(extension: DashExtension, names: list[str], values: tuple[Any, ...]) -> dict[str, Any]:
+    """Reassemble expanded native inputs into logical interaction state."""
     state: dict[str, Any] = {}
     cursor = 0
     for name in names:
@@ -219,6 +230,7 @@ def _state_from_values(extension: DashExtension, names: list[str], values: tuple
 
 
 def _convert_output(block: Any, value: Any) -> Any:
+    """Validate and convert a handler result to a Dash component property value."""
     if isinstance(block, PDLTextBlock):
         if not isinstance(value, str):
             raise TypeError(f"interaction output {block.name!r} expects str")
@@ -237,10 +249,12 @@ def _convert_output(block: Any, value: Any) -> Any:
 
 
 def _records(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    """Convert a dataframe to JSON-safe AG Grid row records."""
     return json.loads(frame.to_json(orient="records", date_format="iso"))
 
 
 def _read_bytes(ctx: Any, ref: str) -> bytes:
+    """Read one relative PDL artifact from the report artifact store."""
     store = getattr(ctx, "_artifact_store", None) or getattr(ctx, "_store", None)
     if store is None:
         raise TypeError("Dash renderer context must expose an artifact store")
@@ -250,10 +264,12 @@ def _read_bytes(ctx: Any, ref: str) -> bytes:
 
 
 def _read_json(ctx: Any, ref: str) -> Any:
+    """Read one JSON plot artifact."""
     return json.loads(_read_bytes(ctx, ref).decode("utf-8"))
 
 
 def _read_table(ctx: Any, ref: str) -> pd.DataFrame:
+    """Read one Parquet table artifact."""
     return pd.read_parquet(io.BytesIO(_read_bytes(ctx, ref)))
 
 

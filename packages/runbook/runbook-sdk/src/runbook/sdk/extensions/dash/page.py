@@ -22,6 +22,7 @@ class DashPage:
 
     @property
     def ids(self) -> DashIds:
+        """Return the central ID helper for this page namespace."""
         return DashIds(self.namespace)
 
     def layout(self) -> Any:

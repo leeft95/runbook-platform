@@ -80,4 +80,5 @@ def dashboard(
 
 
 def _is_sequence(value: object) -> TypeGuard[Sequence[JSONScalar]]:
+    """Identify explicit scalar option sequences without treating strings as lists."""
     return isinstance(value, Sequence) and not isinstance(value, (str, bytes, DatasetValues))

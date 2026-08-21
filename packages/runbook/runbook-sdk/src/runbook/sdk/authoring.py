@@ -66,6 +66,7 @@ class _ReportNamespace:
             raise TypeError("report.interaction(name) requires a non-empty name")
 
         def decorate(fn: Callable[..., Any]) -> Callable[..., Any]:
+            """Attach the interaction marker to a report function."""
             setattr(fn, REPORT_INTERACTION_ATTR, name)
             return fn
 
