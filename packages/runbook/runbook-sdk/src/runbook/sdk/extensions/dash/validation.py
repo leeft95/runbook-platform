@@ -23,6 +23,8 @@ def parse_dash_extension(manifest: PDLManifest | Mapping[str, Any]) -> DashExten
         return raw
     if not isinstance(raw, Mapping):
         raise ValueError("PDL extension 'dash' must be an object")
+    if raw.get("schema_version") != SUPPORTED_SCHEMA_VERSION:
+        raise ValueError(f"unsupported pdl-dash schema version: {raw.get('schema_version')!r}")
     try:
         extension = DashExtension.from_manifest(dict(raw))
     except Exception as exc:

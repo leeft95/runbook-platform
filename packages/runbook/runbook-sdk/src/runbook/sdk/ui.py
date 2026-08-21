@@ -198,7 +198,7 @@ def column(
     )
 
 
-def number(*, decimals: int | None = None) -> PDLNumberFormat:
+def number(decimals: int | None = None) -> PDLNumberFormat:
     """Build a numeric display format."""
     return PDLNumberFormat(decimals=decimals)
 
