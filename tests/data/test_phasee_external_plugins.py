@@ -17,7 +17,6 @@ from runbook.data.ingest.models import AcquisitionResult, RawArtifactRecord, Rea
 from runbook.data.ingest.parsers import get_parser
 from runbook.data.ingest.runner import (
     load_previous_acquisition_state,
-    load_previous_append_state,
     run_stage1_acquire,
 )
 from runbook.data.pointers import DatasetPointerUpdate
@@ -210,7 +209,7 @@ def test_direct_stage1_passes_previous_state(monkeypatch: pytest.MonkeyPatch, tm
     assert received == [state]
 
 
-def test_previous_append_state_materializes_all_partition_keys(tmp_path: Path, pointer_registry) -> None:
+def test_previous_state_materializes_all_partition_keys(tmp_path: Path, pointer_registry) -> None:
     store = open_blob_store(f"file:{tmp_path / 'store'}")
     manifest_ref = "curated/phase_e_prices/manifests/sha256=state.json"
     store.put_immutable(
@@ -255,16 +254,6 @@ def test_previous_append_state_materializes_all_partition_keys(tmp_path: Path, p
     assert state.metadata == {
         "partition_values": {"prices": {"region": ["EU", "US"], "ticker": ["ALPHA", "BETA"], "venue": ["A", "B"]}}
     }
-
-    watermarks, tickers = load_previous_append_state(store, _config(), pointer_registry.get(["phase_e_prices"]))
-    assert watermarks == {"prices": when}
-    assert tickers == {"prices": {"ALPHA", "BETA"}}
-
-
-def test_legacy_previous_append_state_is_empty_without_prior_pointers(tmp_path: Path) -> None:
-    store = open_blob_store(f"file:{tmp_path / 'store'}")
-    assert load_previous_acquisition_state(store, _config(), {}) is None
-    assert load_previous_append_state(store, _config(), {}) == ({}, {})
 
 
 _PUBLIC_PACKAGE_ROOTS = (

@@ -39,28 +39,6 @@ def _source_config(request: IngestRequest) -> SourceConfig:
         raise ValueError(f"unknown source: {request.source!r}") from exc
 
 
-def load_previous_append_state(
-    store: BlobStore,
-    config: SourceConfig,
-    pointers: dict[str, DatasetPointer],
-) -> tuple[dict[str, datetime], dict[str, set[str]]]:
-    """Load the legacy append tuple for callers from before v0.2.1."""
-    state = load_previous_acquisition_state(store, config, pointers)
-    if state is None:
-        return {}, {}
-    watermarks = dict(state.watermark) if isinstance(state.watermark, dict) else {}
-    tickers: dict[str, set[str]] = {}
-    partition_values = state.metadata.get("partition_values")
-    if isinstance(partition_values, dict):
-        for alias, values in partition_values.items():
-            if not isinstance(values, dict):
-                continue
-            ticker_values = values.get("ticker")
-            if isinstance(ticker_values, list):
-                tickers[alias] = set(ticker_values)
-    return watermarks, tickers
-
-
 def load_previous_acquisition_state(
     store: BlobStore,
     config: SourceConfig,
@@ -299,7 +277,6 @@ def run_ingest(
 
 __all__ = [
     "load_previous_acquisition_state",
-    "load_previous_append_state",
     "run_ingest",
     "run_stage1_acquire",
 ]

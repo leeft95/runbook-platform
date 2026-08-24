@@ -17,7 +17,6 @@ from runbook.data.ingest.models import (
 from runbook.data.ingest.parsers import Stage2Parser
 from runbook.data.ingest.runner import (
     load_previous_acquisition_state,
-    load_previous_append_state,
     run_ingest,
     run_stage1_acquire,
 )
@@ -34,7 +33,6 @@ __all__ = [
     "ReadinessResult",
     "ReadinessStatus",
     "SourceConfig",
-    "load_previous_append_state",
     "load_previous_acquisition_state",
     "run_ingest",
     "run_stage1_acquire",

@@ -67,7 +67,7 @@ def _source(row, config: SourceConfig, identity: RunLogIdentity) -> dict[str, An
             with sync_sessions(os.environ.get("RUNBOOK_DATABASE_URL"))() as session:
                 repository = RunRepository(session)
                 pointers = repository.pointer_registry.get(binding.dataset_id for binding in config.datasets.values())
-            # Previous append state is execution state.  Keep its validation
+            # Previous acquisition state is execution state.  Keep its validation
             # inside the worker log boundary so stale pointers produce a
             # useful failed run instead of an unexplained process exit.
             previous_state = load_previous_acquisition_state(store, config, pointers)
