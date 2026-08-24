@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
+from typing import Any
 
 from loguru import logger
 from runbook.core.utils.hashing import sha256_bytes
@@ -13,6 +16,7 @@ from runbook.data.ingest.models import (
     AcquisitionStageResult,
     IngestRequest,
     IngestResult,
+    PreviousAcquisitionState,
     ReadinessStatus,
 )
 from runbook.data.ingest.runners import run_stage2_curate
@@ -35,20 +39,22 @@ def _source_config(request: IngestRequest) -> SourceConfig:
         raise ValueError(f"unknown source: {request.source!r}") from exc
 
 
-def load_previous_append_state(
+def load_previous_acquisition_state(
     store: BlobStore,
     config: SourceConfig,
     pointers: dict[str, DatasetPointer],
-) -> tuple[dict[str, datetime], dict[str, set[str]]]:
-    """Load append state and reject pointers whose manifests disappeared."""
+) -> PreviousAcquisitionState | None:
+    """Load generic append state and reject pointers whose manifests disappeared."""
     watermarks: dict[str, datetime] = {}
-    tickers: dict[str, set[str]] = {}
+    partition_values: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    found = False
     for alias, binding in config.datasets.items():
         if binding.update_mode != "append":
             continue
         pointer = pointers.get(binding.dataset_id)
         if pointer is None:
             continue
+        found = True
         if not store.exists(pointer.manifest_ref):
             raise RuntimeError(
                 "append dataset pointer references missing manifest: "
@@ -62,10 +68,25 @@ def load_previous_append_state(
             expected_dataset_id=binding.dataset_id,
         )
         watermarks[alias] = manifest.watermark
-        values = {item.partition["ticker"] for item in manifest.files if "ticker" in item.partition}
-        if values:
-            tickers[alias] = values
-    return watermarks, tickers
+        for item in manifest.files:
+            for key, value in item.partition.items():
+                partition_values[alias][key].add(value)
+    if not found:
+        return None
+    metadata = (
+        {
+            "partition_values": {
+                alias: {key: sorted(values) for key, values in sorted(by_key.items())}
+                for alias, by_key in sorted(partition_values.items())
+            }
+        }
+        if partition_values
+        else {}
+    )
+    return PreviousAcquisitionState(
+        watermark={alias: watermarks[alias] for alias in sorted(watermarks)} or None,
+        metadata=metadata,
+    )
 
 
 def run_stage1_acquire(
@@ -74,6 +95,7 @@ def run_stage1_acquire(
     slot: datetime,
     store: BlobStore,
     previous_watermarks: dict[str, datetime] | None = None,
+    previous_state: PreviousAcquisitionState | None = None,
 ) -> AcquisitionStageResult:
     """Check readiness, acquire bytes, and persist one immutable raw artifact."""
     config = source_config
@@ -108,12 +130,46 @@ def run_stage1_acquire(
         run,
         config.adapter,
     )
-    acquired = adapter.acquire(
-        source_config=config,
-        readiness=readiness,
-        fetched_at=slot,
-        previous_watermarks=previous_watermarks or {},
-    )
+    state = previous_state
+    if state is None and previous_watermarks:
+        state = PreviousAcquisitionState(watermark=previous_watermarks)
+    acquire_signature: inspect.Signature
+    try:
+        acquire_signature = inspect.signature(adapter.acquire)
+    except (TypeError, ValueError) as exc:  # pragma: no cover - registry rejects these adapters
+        raise ValueError(f"adapter acquire signature is not inspectable: {exc}") from None
+    acquire_kwargs: dict[str, Any] = {
+        "source_config": config,
+        "readiness": readiness,
+        "fetched_at": slot,
+    }
+    accepts_previous_state = True
+    try:
+        acquire_signature.bind(**acquire_kwargs, previous_state=state)
+    except TypeError:
+        accepts_previous_state = False
+    accepts_previous_watermarks = True
+    try:
+        acquire_signature.bind(**acquire_kwargs, previous_watermarks=state.watermark if state is not None else {})
+    except TypeError:
+        accepts_previous_watermarks = False
+    if accepts_previous_state and accepts_previous_watermarks:
+        try:
+            acquire_signature.bind(
+                **acquire_kwargs,
+                previous_state=state,
+                previous_watermarks=state.watermark if state is not None else {},
+            )
+        except TypeError:
+            accepts_previous_state = True
+            accepts_previous_watermarks = False
+    if accepts_previous_state:
+        acquire_kwargs["previous_state"] = state
+    if accepts_previous_watermarks:
+        acquire_kwargs["previous_watermarks"] = (
+            state.watermark if state is not None and isinstance(state.watermark, dict) else previous_watermarks or {}
+        )
+    acquired = adapter.acquire(**acquire_kwargs)
     raw_sha = sha256_bytes(acquired.payload)
     raw_ref = f"raw/{config.source_id}/{run}/sha256={raw_sha}/source{PurePosixPath(acquired.record.source_filename).suffix or '.bin'}"
     store.put_immutable(raw_ref, acquired.payload)
@@ -162,7 +218,7 @@ def run_ingest(
     blob_store = store or open_blob_store(resolved.store_uri)
     pointers = pointer_registry or open_pointer_registry()
     current = pointers.get(binding.dataset_id for binding in config.datasets.values())
-    previous_watermarks, _previous_tickers = load_previous_append_state(
+    previous_state = load_previous_acquisition_state(
         blob_store,
         config,
         current,
@@ -171,7 +227,7 @@ def run_ingest(
         source_config=config,
         slot=slot,
         store=blob_store,
-        previous_watermarks=previous_watermarks,
+        previous_state=previous_state,
     )
     if acquisition.status is not ReadinessStatus.ready:
         return IngestResult(
@@ -219,4 +275,8 @@ def run_ingest(
     )
 
 
-__all__ = ["load_previous_append_state", "run_ingest", "run_stage1_acquire"]
+__all__ = [
+    "load_previous_acquisition_state",
+    "run_ingest",
+    "run_stage1_acquire",
+]

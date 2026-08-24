@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from runbook.data.config import SourceConfig
 from runbook.data.ingest.models import AcquisitionResult, CuratedFrame
 
 
+@runtime_checkable
 class Stage2Parser(Protocol):
     def __call__(
         self,

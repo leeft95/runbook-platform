@@ -27,7 +27,7 @@ runbook-services config import \
 
 The config import validates source configs and profile dataset IDs before
 writing revisions. `--reports-root` is retained as a deprecated no-op for
-v0.2.0 compatibility; report aliases and report module discovery are validated
+v0.2.1 compatibility; report aliases and report module discovery are validated
 by the worker at execution time, where the configured report root is available.
 
 ## Polling runner and compatibility tick

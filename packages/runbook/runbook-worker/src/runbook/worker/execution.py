@@ -10,7 +10,7 @@ from typing import Any
 from loguru import logger
 from runbook.core import ReportProfile, Snapshot, SourceConfig, open_blob_store
 from runbook.data.ingest import run_stage1_acquire
-from runbook.data.ingest.runner import load_previous_append_state
+from runbook.data.ingest.runner import load_previous_acquisition_state
 from runbook.data.ingest.runners import run_stage2_curate
 from runbook.sdk import execute_report, resolve_code_version
 from runbook.services.config import validate_config
@@ -67,12 +67,12 @@ def _source(row, config: SourceConfig, identity: RunLogIdentity) -> dict[str, An
             with sync_sessions(os.environ.get("RUNBOOK_DATABASE_URL"))() as session:
                 repository = RunRepository(session)
                 pointers = repository.pointer_registry.get(binding.dataset_id for binding in config.datasets.values())
-            # Previous append state is execution state.  Keep its validation
+            # Previous acquisition state is execution state.  Keep its validation
             # inside the worker log boundary so stale pointers produce a
             # useful failed run instead of an unexplained process exit.
-            watermarks, _state = load_previous_append_state(store, config, pointers)
+            previous_state = load_previous_acquisition_state(store, config, pointers)
             slot = _utc(row.slot)
-            acquired = run_stage1_acquire(source_config=config, slot=slot, store=store, previous_watermarks=watermarks)
+            acquired = run_stage1_acquire(source_config=config, slot=slot, store=store, previous_state=previous_state)
             if acquired.status.value != "ready" or acquired.acquired is None:
                 return {
                     "source_id": config.source_id,

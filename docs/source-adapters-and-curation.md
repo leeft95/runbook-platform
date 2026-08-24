@@ -1,5 +1,44 @@
 # Building source adapters and curators
 
+## Installed extensions
+
+`runbook-data` discovers out-of-tree integrations from trusted installed
+packages. Adapter names are looked up in the `runbook.adapters` entry-point
+group and parser names in `runbook.parsers`; the built-in names `http`,
+`local_file`, and `csv_timeseries_v1` are reserved and cannot be shadowed.
+Lookup is exact, and duplicate installed names fail clearly.
+
+A minimal extension package declares both groups in its `pyproject.toml`:
+
+```toml
+[project.entry-points."runbook.adapters"]
+vendor = "my_package.adapters:VendorAdapter"
+
+[project.entry-points."runbook.parsers"]
+vendor_v1 = "my_package.parsers:parse_vendor"
+```
+
+The adapter is a zero-argument class implementing the public
+`SourceAdapter` contract. Its `acquire` method may receive the generic,
+frozen `PreviousAcquisitionState`:
+
+```python
+class VendorAdapter:
+    def acquire(self, *, source_config, readiness, fetched_at, previous_state=None): ...
+```
+
+`PreviousAcquisitionState` contains a conceptual `watermark` and JSON-safe
+`metadata`. Runbook transports and serializes the state; the adapter owns the
+meaning of metadata keys. Prior partition values are materialized under the
+generic `metadata["partition_values"]` mapping with sorted lists. The model is
+immutable, including nested JSON values, and serializes with Pydantic's JSON
+mode.
+
+Entry points are executable Python code. Runbook loads only packages already
+installed in the trusted runtime environment. The same metadata lookup runs
+in every fresh worker subprocess, so an editable-only parent-process
+registration is not sufficient.
+
 `runbook-data` has two extension points for bringing a new source into the
 platform:
 
@@ -46,7 +85,7 @@ class SourceAdapter(Protocol):
         source_config: SourceConfig,
         readiness: ReadinessResult,
         fetched_at: datetime,
-        previous_watermarks: Mapping[str, datetime] | None = None,
+        previous_state: PreviousAcquisitionState | None = None,
     ) -> AcquisitionResult: ...
 ```
 
@@ -57,9 +96,8 @@ The methods have distinct jobs:
 - `check` performs a cheap, non-destructive readiness check. Return `ready`
   only when `acquire` can proceed, `not_ready` when expected data is not yet
   available, and `failed` for authentication, server, or protocol failures.
-- `acquire` reads the source and returns its raw payload. It may use
-  `previous_watermarks` for an incremental source request, keyed by dataset
-  alias.
+- `acquire` reads the source and returns its raw payload. It may interpret the
+  adapter-owned metadata in `previous_state` for an incremental request.
 
 For example, an authenticated JSON download could be implemented in
 `ingest/adapters/authenticated_json.py`:
@@ -142,9 +180,9 @@ class AuthenticatedJsonAdapter:
         source_config: SourceConfig,
         readiness: ReadinessResult,
         fetched_at: datetime,
-        previous_watermarks: Mapping[str, datetime] | None = None,
+        previous_state=None,
     ) -> AcquisitionResult:
-        del previous_watermarks  # This source always returns a complete export.
+        del previous_state  # This source always returns a complete export.
         url = source_config.params["url"]
         response = (self.session or requests.Session()).get(
             url,
@@ -177,7 +215,7 @@ contain credentials. Store the name of a credential environment variable in
 source configuration, as above, rather than the credential itself. Strip
 sensitive URL query parameters before storing or logging a locator.
 
-### Register the adapter
+### Register an in-tree adapter
 
 Adapters are currently registered in
 [`ingest/adapters/__init__.py`](https://github.com/redcombojnr/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/adapters/__init__.py).
@@ -195,8 +233,8 @@ _ADAPTERS: dict[str, AdapterType] = {
 }
 ```
 
-There is no runtime plugin or entry-point registration API at present. A new
-adapter is therefore an in-tree `runbook-data` change.
+Built-ins are reserved. New out-of-tree adapters should use the installed
+entry-point group shown above instead of runtime registration.
 
 ## Build a Stage 2 parser
 
@@ -301,9 +339,9 @@ unchanged old partitions are retained and matching partitions are merged.
 Append parsers must provide merge keys, and their watermark cannot move
 backwards.
 
-### Register the parser
+### Register an in-tree parser
 
-Parsers are registered in
+Built-in parsers are registered in
 [`ingest/parsers/__init__.py`](https://github.com/redcombojnr/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/parsers/__init__.py):
 
 ```python
@@ -314,6 +352,10 @@ _PARSERS: dict[str, Stage2Parser] = {
     "orders_json_v1": parse_orders_json,
 }
 ```
+
+External parsers are ordinary callables declared in the `runbook.parsers`
+entry-point group; they use the same `Stage2Parser` call signature and do not
+need a public registration function.
 
 Version the parser identifier when a parsing or schema change would alter the
 meaning of already-published data.
