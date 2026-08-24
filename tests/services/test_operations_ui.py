@@ -141,3 +141,12 @@ def test_run_drawer_page_inputs_are_optional() -> None:
     assert [item["id"] for item in selected_inputs] == list(_ROW_INPUTS)
     assert all(item["allow_optional"] is True for item in selected_inputs)
     assert _run_id_from_rows(None, [{"run_id": "profile-run"}], None) == "profile-run"
+
+
+def test_run_drawer_does_not_reopen_stale_selection_on_navigation() -> None:
+    grid = "runbook-ui-profile-detail-runs-grid"
+    assert run_drawer._run_id_for_trigger(grid, ([{"run_id": "current-run"}],), "stale-run") == "current-run"
+    assert run_drawer._run_id_for_trigger(f"{run_drawer.PREFIX}-log-refresh", (None,), "stored-run") == "stored-run"
+    assert run_drawer._run_id_for_trigger(f"{run_drawer.PREFIX}-cancel", (None,), "stored-run") == "stored-run"
+    assert run_drawer._run_id_for_trigger("runbook-ui-location", (None,) * len(_ROW_INPUTS), "stale-run") is None
+    assert run_drawer._run_id_for_trigger(grid, ([{"run_id": "different-run"}],), "stored-run") == "different-run"

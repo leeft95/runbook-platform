@@ -33,6 +33,18 @@ def _run_id_from_rows(*rows: list[dict[str, Any]] | None) -> str | None:
     return None
 
 
+def _run_id_for_trigger(
+    triggered_id: str | None,
+    rows: tuple[list[dict[str, Any]] | None, ...],
+    selected_state: str | None,
+) -> str | None:
+    """Use stored selection only for explicit drawer actions."""
+    current = _run_id_from_rows(*rows)
+    if triggered_id in {f"{PREFIX}-log-refresh", f"{PREFIX}-cancel"}:
+        return selected_state or current
+    return current
+
+
 def _aware_slot(value: datetime) -> datetime:
     """Normalize a run slot for immutable log addressing."""
     if value.tzinfo is None:
@@ -211,7 +223,11 @@ def register(dash_app: Any, sessions: Any, data_store: str) -> None:
         selected = args[: len(_ROW_INPUTS)]
         cancel_clicks = args[len(_ROW_INPUTS) + 1]
         selected_state = args[len(_ROW_INPUTS) + 2]
-        run_id = _run_id_from_rows(*selected) or (selected_state if isinstance(selected_state, str) else None)
+        run_id = _run_id_for_trigger(
+            ctx.triggered_id,
+            selected,
+            selected_state if isinstance(selected_state, str) else None,
+        )
         if ctx.triggered_id == f"{PREFIX}-cancel" and cancel_clicks:
             run_id = selected_state if isinstance(selected_state, str) else run_id
         if ctx.triggered_id in {f"{PREFIX}-cancel", f"{PREFIX}-log-refresh"} and not run_id:
@@ -274,4 +290,4 @@ def register(dash_app: Any, sessions: Any, data_store: str) -> None:
         )
 
 
-__all__ = ["PREFIX", "_run_id_from_rows", "drawer", "register"]
+__all__ = ["PREFIX", "_run_id_from_rows", "_run_id_for_trigger", "drawer", "register"]
