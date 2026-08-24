@@ -163,8 +163,20 @@ def test_shell_hash_scroll_callback_and_config_offsets() -> None:
         {"id": "runbook-ui-location", "property": "hash"},
     ]
     callback_record = next(item for item in app._callback_list if item["output"] == "runbook-ui-hash-scroll.data")
-    assert callback_record["clientside_function"] is not None
+    assert callback_record["clientside_function"] == {
+        "namespace": "runbookNavigation",
+        "function_name": "scrollToHash",
+    }
     assert "runbook-ui-hash-scroll" in str(app.layout)
+    navigation_js = (
+        Path(__file__).resolve().parents[2]
+        / "packages/runbook/runbook-services/src/runbook/services/assets/navigation.js"
+    ).read_text(encoding="utf-8")
+    assert "window.dash_clientside" in navigation_js
+    assert "runbookNavigation" in navigation_js
+    assert "scrollToHash" in navigation_js
+    assert "decodeURIComponent" in navigation_js
+    assert 'scrollIntoView({block: "start"})' in navigation_js
     css = (
         Path(__file__).resolve().parents[2]
         / "packages/runbook/runbook-services/src/runbook/services/assets/operations.css"

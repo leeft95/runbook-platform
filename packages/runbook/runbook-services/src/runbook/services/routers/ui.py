@@ -10,7 +10,7 @@ def mount_ui(server: Any, *, sessions: Any, data_store: str | None, reports_root
     """Mount the multipage operations UI at ``/ui/``."""
     import dash
     import dash_mantine_components as dmc
-    from dash import Dash, Input, Output, dcc
+    from dash import ClientsideFunction, Dash, Input, Output, dcc
     from dash.backends._fastapi import reset_current_request, set_current_request
     from fastapi.responses import HTMLResponse
 
@@ -114,34 +114,7 @@ def mount_ui(server: Any, *, sessions: Any, data_store: str | None, reports_root
         )
 
     dash_app.clientside_callback(
-        """
-        function (_pathname, hash) {
-            const fragment = String(hash || '').replace(/^#/, '');
-            if (!fragment) {
-                return window.dash_clientside.no_update;
-            }
-            let targetId;
-            try {
-                targetId = decodeURIComponent(fragment);
-            } catch (_error) {
-                return window.dash_clientside.no_update;
-            }
-            if (!targetId) {
-                return window.dash_clientside.no_update;
-            }
-            const scrollToTarget = function () {
-                const target = document.getElementById(targetId);
-                if (target) {
-                    target.scrollIntoView({block: 'start'});
-                }
-            };
-            window.requestAnimationFrame(function () {
-                scrollToTarget();
-                window.setTimeout(scrollToTarget, 80);
-            });
-            return '';
-        }
-        """,
+        ClientsideFunction(namespace="runbookNavigation", function_name="scrollToHash"),
         Output("runbook-ui-hash-scroll", "data"),
         Input("runbook-ui-location", "pathname"),
         Input("runbook-ui-location", "hash"),
