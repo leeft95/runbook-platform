@@ -59,6 +59,7 @@ def mount_ui(server: Any, *, sessions: Any, data_store: str | None, reports_root
     dash_app.layout = dmc.MantineProvider(
         [
             dcc.Location(id="runbook-ui-location"),
+            dcc.Store(id="runbook-ui-hash-scroll"),
             dmc.AppShell(
                 [
                     dmc.AppShellHeader(
@@ -111,6 +112,40 @@ def mount_ui(server: Any, *, sessions: Any, data_store: str | None, reports_root
             path == href.rstrip("/") or (href != "/ui/" and path.startswith(href.rstrip("/") + "/"))
             for _label, href, _component_id in nav_items
         )
+
+    dash_app.clientside_callback(
+        """
+        function (_pathname, hash) {
+            const fragment = String(hash || '').replace(/^#/, '');
+            if (!fragment) {
+                return window.dash_clientside.no_update;
+            }
+            let targetId;
+            try {
+                targetId = decodeURIComponent(fragment);
+            } catch (_error) {
+                return window.dash_clientside.no_update;
+            }
+            if (!targetId) {
+                return window.dash_clientside.no_update;
+            }
+            const scrollToTarget = function () {
+                const target = document.getElementById(targetId);
+                if (target) {
+                    target.scrollIntoView({block: 'start'});
+                }
+            };
+            window.requestAnimationFrame(function () {
+                scrollToTarget();
+                window.setTimeout(scrollToTarget, 80);
+            });
+            return '';
+        }
+        """,
+        Output("runbook-ui-hash-scroll", "data"),
+        Input("runbook-ui-location", "pathname"),
+        Input("runbook-ui-location", "hash"),
+    )
 
     @server.get("/ui/{path:path}", include_in_schema=False)
     async def ui_page(path: str, request: Request) -> HTMLResponse:

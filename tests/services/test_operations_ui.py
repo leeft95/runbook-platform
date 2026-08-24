@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import dash
 import dash_mantine_components as dmc
+from fastapi import FastAPI
 from runbook.services.dash import run_drawer
 from runbook.services.dash.catalogue import _latest_runs, _successful_runs, catalogue_layout, profile_rows, source_rows
 from runbook.services.dash.dashboard import _pointer_row
@@ -20,6 +22,7 @@ from runbook.services.dash.profile_detail import layout as profile_detail_layout
 from runbook.services.dash.run_drawer import _ROW_INPUTS, _run_id_from_rows
 from runbook.services.dash.source_detail import layout as source_detail_layout
 from runbook.services.dash.system import layout as system_layout
+from runbook.services.routers.ui import mount_ui
 
 
 def test_operations_formatting_and_dependency_derivation() -> None:
@@ -150,3 +153,21 @@ def test_run_drawer_does_not_reopen_stale_selection_on_navigation() -> None:
     assert run_drawer._run_id_for_trigger(f"{run_drawer.PREFIX}-cancel", (None,), "stored-run") == "stored-run"
     assert run_drawer._run_id_for_trigger("runbook-ui-location", (None,) * len(_ROW_INPUTS), "stale-run") is None
     assert run_drawer._run_id_for_trigger(grid, ([{"run_id": "different-run"}],), "stored-run") == "different-run"
+
+
+def test_shell_hash_scroll_callback_and_config_offsets() -> None:
+    app = mount_ui(FastAPI(), sessions=None, data_store=None, reports_root="")
+    callback = app.callback_map["runbook-ui-hash-scroll.data"]
+    assert callback["inputs"] == [
+        {"id": "runbook-ui-location", "property": "pathname"},
+        {"id": "runbook-ui-location", "property": "hash"},
+    ]
+    callback_record = next(item for item in app._callback_list if item["output"] == "runbook-ui-hash-scroll.data")
+    assert callback_record["clientside_function"] is not None
+    assert "runbook-ui-hash-scroll" in str(app.layout)
+    css = (
+        Path(__file__).resolve().parents[2]
+        / "packages/runbook/runbook-services/src/runbook/services/assets/operations.css"
+    ).read_text(encoding="utf-8")
+    assert "#runbook-ui-profiles-config, #runbook-ui-sources-config" in css
+    assert "scroll-margin-top: 72px" in css
