@@ -70,9 +70,9 @@ def _source(row, config: SourceConfig, identity: RunLogIdentity) -> dict[str, An
             # Previous append state is execution state.  Keep its validation
             # inside the worker log boundary so stale pointers produce a
             # useful failed run instead of an unexplained process exit.
-            watermarks, _state = load_previous_append_state(store, config, pointers)
+            previous_state = load_previous_append_state(store, config, pointers)
             slot = _utc(row.slot)
-            acquired = run_stage1_acquire(source_config=config, slot=slot, store=store, previous_watermarks=watermarks)
+            acquired = run_stage1_acquire(source_config=config, slot=slot, store=store, previous_state=previous_state)
             if acquired.status.value != "ready" or acquired.acquired is None:
                 return {
                     "source_id": config.source_id,
