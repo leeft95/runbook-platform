@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -249,7 +250,17 @@ print(json.dumps({"first": first.status.value, "second": second.status.value, "p
         .replace("STORE", str(tmp_path / "store"))
         .replace("STATE_PATH", str(tmp_path / "state.json"))
     )
-    environment = {**__import__("os").environ, "PYTHONPATH": str(extracted)}
+    public_sources = [
+        str(Path("packages/runbook/runbook-core/src").resolve()),
+        str(Path("packages/runbook/runbook-data/src").resolve()),
+        str(Path("packages/runbook/runbook-sdk/src").resolve()),
+        str(Path("packages/runbook/runbook-services/src").resolve()),
+        str(Path("packages/runbook/runbook-worker/src").resolve()),
+    ]
+    environment = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join([str(extracted), *public_sources, os.environ.get("PYTHONPATH", "")]),
+    }
     result = subprocess.run(
         [sys.executable, "-c", script],
         check=True,
