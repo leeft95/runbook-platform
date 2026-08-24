@@ -8,6 +8,8 @@ owned by :mod:`runbook.data`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -110,6 +112,20 @@ class PreviousAcquisitionState(BaseModel):
 
     watermark: datetime | dict[str, datetime] | None = None
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+    def model_copy(
+        self,
+        *,
+        update: Mapping[str, Any] | None = None,
+        deep: bool = False,
+    ) -> "PreviousAcquisitionState":
+        """Copy through validation so updates retain recursive immutability."""
+        data = self.model_dump(mode="python")
+        if deep:
+            data = deepcopy(data)
+        if update:
+            data.update(update)
+        return type(self).model_validate(data)
 
     def model_post_init(self, __context: Any) -> None:
         """Freeze nested mappings and lists as well as model attributes."""

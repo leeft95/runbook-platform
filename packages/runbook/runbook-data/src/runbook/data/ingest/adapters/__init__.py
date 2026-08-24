@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Mapping
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from runbook.data.config import SourceConfig
 from runbook.data.ingest.adapters.base import (
@@ -24,6 +23,21 @@ _ADAPTERS: dict[str, AdapterType] = {
     "http": HttpAdapter,
     "local_file": LocalFileAdapter,
 }
+
+
+def _bind_adapter_method(
+    adapter_id: str, method_name: str, method: Any, *args: Any, **kwargs: Any
+) -> inspect.Signature:
+    """Require that a public adapter method accepts its actual call shape."""
+    try:
+        signature = inspect.signature(method)
+        signature.bind(*args, **kwargs)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"incompatible adapter entry point group='runbook.adapters' name={adapter_id!r}: "
+            f"{method_name} cannot accept the public keyword/argument contract ({exc})"
+        ) from None
+    return signature
 
 
 def get_adapter(source_config: SourceConfig) -> SourceAdapter:
@@ -60,16 +74,35 @@ def get_adapter(source_config: SourceConfig) -> SourceAdapter:
             f"incompatible adapter entry point group='runbook.adapters' name={adapter_id!r}: "
             f"missing methods {', '.join(missing)}"
         )
-    parameters: Mapping[str, inspect.Parameter]
+    _bind_adapter_method(adapter_id, "validate", adapter.validate, object())
+    _bind_adapter_method(
+        adapter_id,
+        "check",
+        adapter.check,
+        source_config=object(),
+        acquisition_run="",
+        observed_at=object(),
+    )
+    acquire_signature = _bind_adapter_method(
+        adapter_id,
+        "acquire",
+        adapter.acquire,
+        source_config=object(),
+        readiness=object(),
+        fetched_at=object(),
+    )
+    acquire_base = {"source_config": object(), "readiness": object(), "fetched_at": object()}
+    accepts_previous_state = True
     try:
-        parameters = inspect.signature(adapter.acquire).parameters
-    except (TypeError, ValueError):  # pragma: no cover - uncommon extension callables
-        parameters = {}
-    if parameters and not (
-        "previous_state" in parameters
-        or "previous_watermarks" in parameters
-        or any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
-    ):
+        acquire_signature.bind(**acquire_base, previous_state=None)
+    except TypeError:
+        accepts_previous_state = False
+    accepts_previous_watermarks = True
+    try:
+        acquire_signature.bind(**acquire_base, previous_watermarks={})
+    except TypeError:
+        accepts_previous_watermarks = False
+    if not accepts_previous_state and not accepts_previous_watermarks:
         raise ValueError(
             f"incompatible adapter entry point group='runbook.adapters' name={adapter_id!r}: "
             "acquire must accept previous_state or previous_watermarks"

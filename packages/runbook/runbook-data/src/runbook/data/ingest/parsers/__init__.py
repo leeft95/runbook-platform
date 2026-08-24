@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Mapping
+from typing import Any
 
 from runbook.data.ingest.discovery import EntryPointDiscoveryError, find_named_entry_points, load_named_entry_point
 from runbook.data.ingest.parsers.base import Stage2Parser
@@ -12,6 +12,17 @@ from runbook.data.ingest.parsers.csv_timeseries import parse_csv_timeseries
 _PARSERS: dict[str, Stage2Parser] = {
     "csv_timeseries_v1": parse_csv_timeseries,
 }
+
+
+def _bind_parser(parser_id: str, parser: Any) -> None:
+    """Require that a parser accepts the public keyword invocation shape."""
+    try:
+        inspect.signature(parser).bind(source_config=object(), dataset_alias="", acquired=object())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"incompatible parser entry point group='runbook.parsers' name={parser_id!r}: "
+            f"callable cannot accept the public keyword contract ({exc})"
+        ) from None
 
 
 def get_parser(parser_id: str) -> Stage2Parser:
@@ -33,21 +44,7 @@ def get_parser(parser_id: str) -> Stage2Parser:
             f"incompatible parser entry point group='runbook.parsers' name={parser_id!r}: "
             "expected a callable Stage2Parser"
         )
-    parameters: Mapping[str, inspect.Parameter]
-    try:
-        parameters = inspect.signature(parser).parameters
-    except (TypeError, ValueError):  # pragma: no cover - uncommon extension callables
-        parameters = {}
-    required = {"source_config", "dataset_alias", "acquired"}
-    if (
-        parameters
-        and not required <= parameters.keys()
-        and not any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
-    ):
-        raise ValueError(
-            f"incompatible parser entry point group='runbook.parsers' name={parser_id!r}: "
-            "callable must accept source_config, dataset_alias, and acquired"
-        )
+    _bind_parser(parser_id, parser)
     return parser
 
 

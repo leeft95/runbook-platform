@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 from collections import defaultdict
-from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Any
@@ -41,6 +40,28 @@ def _source_config(request: IngestRequest) -> SourceConfig:
 
 
 def load_previous_append_state(
+    store: BlobStore,
+    config: SourceConfig,
+    pointers: dict[str, DatasetPointer],
+) -> tuple[dict[str, datetime], dict[str, set[str]]]:
+    """Load the legacy append tuple for callers from before v0.2.1."""
+    state = load_previous_acquisition_state(store, config, pointers)
+    if state is None:
+        return {}, {}
+    watermarks = dict(state.watermark) if isinstance(state.watermark, dict) else {}
+    tickers: dict[str, set[str]] = {}
+    partition_values = state.metadata.get("partition_values")
+    if isinstance(partition_values, dict):
+        for alias, values in partition_values.items():
+            if not isinstance(values, dict):
+                continue
+            ticker_values = values.get("ticker")
+            if isinstance(ticker_values, list):
+                tickers[alias] = set(ticker_values)
+    return watermarks, tickers
+
+
+def load_previous_acquisition_state(
     store: BlobStore,
     config: SourceConfig,
     pointers: dict[str, DatasetPointer],
@@ -134,20 +155,39 @@ def run_stage1_acquire(
     state = previous_state
     if state is None and previous_watermarks:
         state = PreviousAcquisitionState(watermark=previous_watermarks)
-    acquire_parameters: Mapping[str, inspect.Parameter]
+    acquire_signature: inspect.Signature
     try:
-        acquire_parameters = inspect.signature(adapter.acquire).parameters
-    except (TypeError, ValueError):  # pragma: no cover - uncommon extension callables
-        acquire_parameters = {}
+        acquire_signature = inspect.signature(adapter.acquire)
+    except (TypeError, ValueError) as exc:  # pragma: no cover - registry rejects these adapters
+        raise ValueError(f"adapter acquire signature is not inspectable: {exc}") from None
     acquire_kwargs: dict[str, Any] = {
         "source_config": config,
         "readiness": readiness,
         "fetched_at": slot,
     }
-    accepts_kwargs = any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in acquire_parameters.values())
-    if accepts_kwargs or "previous_state" in acquire_parameters:
+    accepts_previous_state = True
+    try:
+        acquire_signature.bind(**acquire_kwargs, previous_state=state)
+    except TypeError:
+        accepts_previous_state = False
+    accepts_previous_watermarks = True
+    try:
+        acquire_signature.bind(**acquire_kwargs, previous_watermarks=state.watermark if state is not None else {})
+    except TypeError:
+        accepts_previous_watermarks = False
+    if accepts_previous_state and accepts_previous_watermarks:
+        try:
+            acquire_signature.bind(
+                **acquire_kwargs,
+                previous_state=state,
+                previous_watermarks=state.watermark if state is not None else {},
+            )
+        except TypeError:
+            accepts_previous_state = True
+            accepts_previous_watermarks = False
+    if accepts_previous_state:
         acquire_kwargs["previous_state"] = state
-    if accepts_kwargs or "previous_watermarks" in acquire_parameters:
+    if accepts_previous_watermarks:
         acquire_kwargs["previous_watermarks"] = (
             state.watermark if state is not None and isinstance(state.watermark, dict) else previous_watermarks or {}
         )
@@ -200,7 +240,7 @@ def run_ingest(
     blob_store = store or open_blob_store(resolved.store_uri)
     pointers = pointer_registry or open_pointer_registry()
     current = pointers.get(binding.dataset_id for binding in config.datasets.values())
-    previous_state = load_previous_append_state(
+    previous_state = load_previous_acquisition_state(
         blob_store,
         config,
         current,
@@ -257,4 +297,9 @@ def run_ingest(
     )
 
 
-__all__ = ["load_previous_append_state", "run_ingest", "run_stage1_acquire"]
+__all__ = [
+    "load_previous_acquisition_state",
+    "load_previous_append_state",
+    "run_ingest",
+    "run_stage1_acquire",
+]
