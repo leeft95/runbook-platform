@@ -181,16 +181,24 @@ def catalogue_layout(kind: str) -> html.Div:
                 mb="sm",
                 wrap="wrap",
             ),
-            html.Div(id=f"{prefix}-summary", className="runbook-muted"),
-            dag.AgGrid(
-                id=f"{prefix}-grid",
-                rowData=[],
-                columnDefs=columns,
-                defaultColDef={"resizable": True, "sortable": True, "filter": True},
-                dashGridOptions={"pagination": True, "paginationPageSize": 50, "rowSelection": "single"},
-                style={"height": "450px", "width": "100%"},
+            dcc.Loading(
+                id=f"{prefix}-loading",
+                type="default",
+                children=html.Div(
+                    [
+                        html.Div(id=f"{prefix}-summary", className="runbook-muted"),
+                        dag.AgGrid(
+                            id=f"{prefix}-grid",
+                            rowData=[],
+                            columnDefs=columns,
+                            defaultColDef={"resizable": True, "sortable": True, "filter": True},
+                            dashGridOptions={"pagination": True, "paginationPageSize": 50, "rowSelection": "single"},
+                            style={"height": "450px", "width": "100%"},
+                        ),
+                        dcc.Store(id=f"{prefix}-error"),
+                    ]
+                ),
             ),
-            dcc.Store(id=f"{prefix}-error"),
         ]
     )
 

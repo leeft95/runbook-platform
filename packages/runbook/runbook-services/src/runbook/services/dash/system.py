@@ -33,9 +33,19 @@ def layout() -> html.Div:
                 align="flex-end",
                 mb="md",
             ),
-            html.Div(id=f"{PREFIX}-error"),
-            dmc.SimpleGrid(id=f"{PREFIX}-metrics", cols={"base": 1, "sm": 2, "lg": 4}, spacing="sm", mb="md"),
-            dmc.Card(id=f"{PREFIX}-details", withBorder=True, padding="md"),
+            dcc.Loading(
+                id=f"{PREFIX}-loading",
+                type="default",
+                children=html.Div(
+                    [
+                        html.Div(id=f"{PREFIX}-error"),
+                        dmc.SimpleGrid(
+                            id=f"{PREFIX}-metrics", cols={"base": 1, "sm": 2, "lg": 4}, spacing="sm", mb="md"
+                        ),
+                        dmc.Card(id=f"{PREFIX}-details", withBorder=True, padding="md"),
+                    ]
+                ),
+            ),
         ],
         className="runbook-detail-page",
     )
@@ -81,7 +91,7 @@ def register(dash_app: Any, sessions: Any) -> None:
             )
             return metrics, details, ""
         except Exception as exc:  # pragma: no cover - driver-specific failure rendering
-            return [], "", error_state(str(exc), retry_id=f"{PREFIX}-manual-refresh")
+            return [], "", error_state(f"Unable to load system data: {exc}", retry_id=f"{PREFIX}-manual-refresh")
 
 
 __all__ = ["register"]

@@ -14,6 +14,7 @@ from .operations import (
     copy_value,
     detail_row,
     empty_state,
+    error_state,
     exact_time,
     profile_source_ids,
     relative_time,
@@ -38,83 +39,90 @@ def _grid(component_id: str, columns: list[dict[str, Any]], height: str = "300px
     )
 
 
-def layout() -> html.Div:
+def layout() -> Any:
     """Build the profile operational drill-down page."""
-    return html.Div(
-        [
-            dcc.Location(id=f"{PREFIX}-location"),
-            dcc.Interval(id=f"{PREFIX}-refresh", interval=30_000, n_intervals=0),
-            html.Div(id=f"{PREFIX}-error"),
-            dmc.Breadcrumbs(
-                [dmc.Anchor("Profiles", href="/ui/profiles"), dmc.Text(id=f"{PREFIX}-breadcrumb")],
-                mb="xs",
-            ),
-            dmc.Group(
-                [
-                    dmc.Stack(
-                        [dmc.Title(id=f"{PREFIX}-title", order=2), dmc.Text(id=f"{PREFIX}-subtitle", c="dimmed")], gap=0
-                    ),
-                    dmc.Group(
-                        [
-                            dmc.Anchor("Configuration", href="/ui/profiles#runbook-ui-profiles-config", size="sm"),
-                            dmc.Button("Refresh", id=f"{PREFIX}-manual-refresh", variant="light", size="sm"),
-                        ],
-                        gap="xs",
-                    ),
-                ],
-                justify="space-between",
-                align="flex-end",
-                mb="md",
-            ),
-            dmc.SimpleGrid(id=f"{PREFIX}-metrics", cols={"base": 1, "sm": 2, "lg": 4}, spacing="sm", mb="md"),
-            dmc.Card(
-                [
-                    dmc.Title("Dependent sources", order=4),
-                    dmc.Text("Derived from this profile's current dataset bindings.", size="sm", c="dimmed", mb="xs"),
-                    _grid(
-                        f"{PREFIX}-sources-grid",
-                        [
-                            {
-                                "field": "source_link",
-                                "headerName": "Source",
-                                "cellRenderer": "markdown",
-                                "pinned": "left",
-                            },
-                            {"field": "status_text", "headerName": "Status"},
-                            {"field": "watermark", "headerName": "Latest watermark"},
-                            {"field": "last_success", "headerName": "Last success"},
-                            {"field": "age", "headerName": "Age"},
-                        ],
-                    ),
-                    html.Div(id=f"{PREFIX}-sources-empty"),
-                ],
-                withBorder=True,
-                padding="md",
-                mb="md",
-            ),
-            dmc.Card(
-                [
-                    dmc.Title("Run history", order=4),
-                    dmc.Text("Select a run to inspect details and immutable logs.", size="sm", c="dimmed", mb="xs"),
-                    _grid(
-                        f"{PREFIX}-runs-grid",
-                        [
-                            {"field": "run_id", "headerName": "Run ID", "pinned": "left"},
-                            {"field": "status_text", "headerName": "Status"},
-                            {"field": "slot", "headerName": "Slot"},
-                            {"field": "duration", "headerName": "Duration"},
-                            {"field": "trigger", "headerName": "Trigger"},
-                            {"field": "reason", "headerName": "Outcome"},
-                        ],
-                        height="360px",
-                    ),
-                    html.Div(id=f"{PREFIX}-runs-empty"),
-                ],
-                withBorder=True,
-                padding="md",
-            ),
-        ],
-        className="runbook-detail-page",
+    return dcc.Loading(
+        id=f"{PREFIX}-loading",
+        type="default",
+        children=html.Div(
+            [
+                dcc.Location(id=f"{PREFIX}-location"),
+                dcc.Interval(id=f"{PREFIX}-refresh", interval=30_000, n_intervals=0),
+                html.Div(id=f"{PREFIX}-error"),
+                dmc.Breadcrumbs(
+                    [dmc.Anchor("Profiles", href="/ui/profiles"), dmc.Text(id=f"{PREFIX}-breadcrumb")],
+                    mb="xs",
+                ),
+                dmc.Group(
+                    [
+                        dmc.Stack(
+                            [dmc.Title(id=f"{PREFIX}-title", order=2), dmc.Text(id=f"{PREFIX}-subtitle", c="dimmed")],
+                            gap=0,
+                        ),
+                        dmc.Group(
+                            [
+                                dmc.Anchor("Configuration", href="/ui/profiles#runbook-ui-profiles-config", size="sm"),
+                                dmc.Button("Refresh", id=f"{PREFIX}-manual-refresh", variant="light", size="sm"),
+                            ],
+                            gap="xs",
+                        ),
+                    ],
+                    justify="space-between",
+                    align="flex-end",
+                    mb="md",
+                ),
+                dmc.SimpleGrid(id=f"{PREFIX}-metrics", cols={"base": 1, "sm": 2, "lg": 4}, spacing="sm", mb="md"),
+                dmc.Card(
+                    [
+                        dmc.Title("Dependent sources", order=4),
+                        dmc.Text(
+                            "Derived from this profile's current dataset bindings.", size="sm", c="dimmed", mb="xs"
+                        ),
+                        _grid(
+                            f"{PREFIX}-sources-grid",
+                            [
+                                {
+                                    "field": "source_link",
+                                    "headerName": "Source",
+                                    "cellRenderer": "markdown",
+                                    "pinned": "left",
+                                },
+                                {"field": "status_text", "headerName": "Status"},
+                                {"field": "watermark", "headerName": "Latest watermark"},
+                                {"field": "last_success", "headerName": "Last success"},
+                                {"field": "age", "headerName": "Age"},
+                            ],
+                        ),
+                        html.Div(id=f"{PREFIX}-sources-empty"),
+                    ],
+                    withBorder=True,
+                    padding="md",
+                    mb="md",
+                ),
+                dmc.Card(
+                    [
+                        dmc.Title("Run history", order=4),
+                        dmc.Text("Select a run to inspect details and immutable logs.", size="sm", c="dimmed", mb="xs"),
+                        _grid(
+                            f"{PREFIX}-runs-grid",
+                            [
+                                {"field": "run_id", "headerName": "Run ID", "pinned": "left"},
+                                {"field": "status_text", "headerName": "Status"},
+                                {"field": "slot", "headerName": "Slot"},
+                                {"field": "duration", "headerName": "Duration"},
+                                {"field": "trigger", "headerName": "Trigger"},
+                                {"field": "reason", "headerName": "Outcome"},
+                            ],
+                            height="360px",
+                        ),
+                        html.Div(id=f"{PREFIX}-runs-empty"),
+                    ],
+                    withBorder=True,
+                    padding="md",
+                ),
+            ],
+            className="runbook-detail-page",
+        ),
     )
 
 
@@ -290,7 +298,7 @@ def register(dash_app: Any, sessions: Any) -> None:
                 "",
             )
         except Exception as exc:  # pragma: no cover - driver-specific failure rendering
-            return profile_id, "", profile_id, [], [], "", [], "", f"Unable to load profile: {exc}"
+            return profile_id, "", profile_id, [], [], "", [], "", error_state(f"Unable to load profile: {exc}")
 
 
 __all__ = ["register"]

@@ -3,16 +3,21 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from runbook.services.dash.catalogue import _latest_runs, _successful_runs, profile_rows, source_rows
+import dash_mantine_components as dmc
+from runbook.services.dash.catalogue import _latest_runs, _successful_runs, catalogue_layout, profile_rows, source_rows
 from runbook.services.dash.dashboard import _pointer_row
 from runbook.services.dash.operations import (
     dataset_ids,
+    error_state,
     format_duration,
     profile_source_ids,
     relative_time,
     status_label,
 )
+from runbook.services.dash.profile_detail import layout as profile_detail_layout
 from runbook.services.dash.run_drawer import _ROW_INPUTS, _run_id_from_rows
+from runbook.services.dash.source_detail import layout as source_detail_layout
+from runbook.services.dash.system import layout as system_layout
 
 
 def test_operations_formatting_and_dependency_derivation() -> None:
@@ -104,6 +109,19 @@ def test_dashboard_pointer_rows_and_drawer_inputs_use_run_selection() -> None:
     assert row["run_id"] == "source-run-1"
     assert "run_link" not in row
     assert "runbook-ui-dashboard-pointers-grid" in _ROW_INPUTS
+
+
+def test_async_pages_have_loading_surfaces_and_shared_error_alert() -> None:
+    pages = (
+        (catalogue_layout("profile"), "runbook-ui-profiles-catalogue-loading"),
+        (catalogue_layout("source"), "runbook-ui-sources-catalogue-loading"),
+        (profile_detail_layout(), "runbook-ui-profile-detail-loading"),
+        (source_detail_layout(), "runbook-ui-source-detail-loading"),
+        (system_layout(), "runbook-ui-system-loading"),
+    )
+    for page, loading_id in pages:
+        assert loading_id in str(page)
+    assert isinstance(error_state("database unavailable"), dmc.Alert)
 
 
 def test_run_drawer_accepts_all_table_selection_shapes() -> None:
