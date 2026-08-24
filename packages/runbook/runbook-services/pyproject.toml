@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.115,<1",
     "dash[fastapi]>=4.2,<5",
     "dash-ag-grid>=35,<36",
+    "dash-mantine-components>=2,<3",
     "sqlalchemy[asyncio]>=2,<3",
     "psycopg[binary]>=3,<4",
     "alembic>=1,<2",

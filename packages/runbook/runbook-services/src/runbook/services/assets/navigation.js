@@ -1,0 +1,73 @@
+(function () {
+    "use strict";
+
+    window.dash_clientside = Object.assign({}, window.dash_clientside, {
+        runbookNavigation: {
+            scrollToHash: function (_pathname, hash) {
+                const fragment = String(hash || "").replace(/^#/, "");
+                if (!fragment) {
+                    return window.dash_clientside.no_update;
+                }
+
+                let targetId;
+                try {
+                    targetId = decodeURIComponent(fragment);
+                } catch (_error) {
+                    return window.dash_clientside.no_update;
+                }
+                if (!targetId) {
+                    return window.dash_clientside.no_update;
+                }
+
+                const waitForTarget = function () {
+                    let observer;
+                    let timeoutId;
+                    let settleTimeoutId;
+                    let active = true;
+                    const cleanup = function () {
+                        active = false;
+                        if (observer) {
+                            observer.disconnect();
+                        }
+                        if (timeoutId) {
+                            window.clearTimeout(timeoutId);
+                        }
+                        if (settleTimeoutId) {
+                            window.clearTimeout(settleTimeoutId);
+                        }
+                    };
+                    const scrollToTarget = function () {
+                        const target = document.getElementById(targetId);
+                        if (!target) {
+                            return;
+                        }
+                        target.scrollIntoView({block: "start"});
+                    };
+                    const settle = function () {
+                        if (!active || settleTimeoutId) {
+                            return;
+                        }
+                        scrollToTarget();
+                        settleTimeoutId = window.setTimeout(function () {
+                            settleTimeoutId = undefined;
+                            settle();
+                        }, 80);
+                    };
+
+                    observer = new MutationObserver(settle);
+                    observer.observe(document.body, {childList: true, subtree: true});
+                    settle();
+                    timeoutId = window.setTimeout(cleanup, 2000);
+                };
+                window.requestAnimationFrame(waitForTarget);
+                return "";
+            },
+        },
+    });
+
+    const scrollToHash = window.dash_clientside.runbookNavigation.scrollToHash;
+    window.addEventListener("hashchange", function () {
+        scrollToHash(window.location.pathname, window.location.hash);
+    });
+    scrollToHash(window.location.pathname, window.location.hash);
+})();

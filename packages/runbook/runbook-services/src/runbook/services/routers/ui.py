@@ -9,11 +9,23 @@ from fastapi import Request
 def mount_ui(server: Any, *, sessions: Any, data_store: str | None, reports_root: str) -> Any:
     """Mount the multipage operations UI at ``/ui/``."""
     import dash
-    from dash import Dash, dcc, html
+    import dash_mantine_components as dmc
+    from dash import ClientsideFunction, Dash, Input, Output, dcc
     from dash.backends._fastapi import reset_current_request, set_current_request
     from fastapi.responses import HTMLResponse
 
-    from ..dash import dashboard, profiles, run_detail, run_logs, runs, sources
+    from ..dash import (
+        dashboard,
+        profile_detail,
+        profiles,
+        run_detail,
+        run_drawer,
+        run_logs,
+        runs,
+        source_detail,
+        sources,
+        system,
+    )
 
     dash_app = Dash(
         __name__,
@@ -32,23 +44,80 @@ def mount_ui(server: Any, *, sessions: Any, data_store: str | None, reports_root
     runs.register(dash_app, sessions)
     run_detail.register(dash_app, sessions)
     run_logs.register(dash_app, sessions, data_store or "")
-    dash_app.layout = html.Div(
+    profile_detail.register(dash_app, sessions)
+    source_detail.register(dash_app, sessions)
+    system.register(dash_app, sessions)
+    run_drawer.register(dash_app, sessions, data_store or "")
+
+    nav_items = [
+        ("Overview", "/ui/", "runbook-ui-nav-overview"),
+        ("Profiles", "/ui/profiles", "runbook-ui-nav-profiles"),
+        ("Sources", "/ui/sources", "runbook-ui-nav-sources"),
+        ("All Runs", "/ui/runs", "runbook-ui-nav-runs"),
+        ("System", "/ui/system", "runbook-ui-nav-system"),
+    ]
+    dash_app.layout = dmc.MantineProvider(
         [
-            html.H1("Runbook operations"),
-            html.Nav(
+            dcc.Location(id="runbook-ui-location"),
+            dcc.Store(id="runbook-ui-hash-scroll"),
+            dmc.AppShell(
                 [
-                    dcc.Link("Dashboard", href="/ui/"),
-                    html.Span(" · "),
-                    dcc.Link("Runs", href="/ui/runs"),
-                    html.Span(" · "),
-                    dcc.Link("Sources", href="/ui/sources"),
-                    html.Span(" · "),
-                    dcc.Link("Profiles", href="/ui/profiles"),
-                ]
+                    dmc.AppShellHeader(
+                        dmc.Group(
+                            [
+                                dmc.Text("Runbook Operations", fw=700),
+                                dmc.Text("Control plane", size="sm", c="dimmed"),
+                            ],
+                            h="100%",
+                            px="md",
+                            gap="sm",
+                        ),
+                        withBorder=True,
+                    ),
+                    dmc.AppShellNavbar(
+                        dmc.Stack(
+                            [
+                                dmc.NavLink(label=label, href=href, id=component_id)
+                                for label, href, component_id in nav_items
+                            ],
+                            gap=4,
+                            p="sm",
+                        ),
+                        withBorder=True,
+                    ),
+                    dmc.AppShellMain(dash.page_container),
+                ],
+                header={"height": 56},
+                navbar={"width": 220, "breakpoint": "sm"},
+                padding="md",
+                className="runbook-shell",
             ),
-            dash.page_container,
+            run_drawer.drawer(),
         ],
-        style={"maxWidth": "1400px", "margin": "0 auto", "padding": "24px"},
+        theme={
+            "primaryColor": "blue",
+            "defaultRadius": "sm",
+            "fontFamily": "Inter, ui-sans-serif, system-ui, sans-serif",
+        },
+    )
+
+    @dash_app.callback(
+        *(Output(component_id, "active") for _label, _href, component_id in nav_items),
+        Input("runbook-ui-location", "pathname"),
+    )
+    def active_navigation(pathname: str | None) -> tuple[bool, ...]:
+        """Keep active navigation obvious while preserving browser history."""
+        path = (pathname or "/ui/").rstrip("/") or "/"
+        return tuple(
+            path == href.rstrip("/") or (href != "/ui/" and path.startswith(href.rstrip("/") + "/"))
+            for _label, href, _component_id in nav_items
+        )
+
+    dash_app.clientside_callback(
+        ClientsideFunction(namespace="runbookNavigation", function_name="scrollToHash"),
+        Output("runbook-ui-hash-scroll", "data"),
+        Input("runbook-ui-location", "pathname"),
+        Input("runbook-ui-location", "hash"),
     )
 
     @server.get("/ui/{path:path}", include_in_schema=False)

@@ -39,6 +39,7 @@ myst-parser = ">=4,<5"
 furo = ">=2024.8"
 
 [pypi-dependencies]
+dash-mantine-components = ">=2,<3"
 runbook-core = { path = "packages/runbook/runbook-core", editable = true }
 runbook-data = { path = "packages/runbook/runbook-data", editable = true }
 runbook-sdk = { path = "packages/runbook/runbook-sdk", editable = true }
