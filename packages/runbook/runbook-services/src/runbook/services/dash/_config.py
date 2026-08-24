@@ -675,12 +675,20 @@ def _current_selected_row(
 
 
 def register_config_page(
-    dash_app: Any, sessions: Any, *, module: str, kind: str, path: str, name: str, order: int
+    dash_app: Any,
+    sessions: Any,
+    *,
+    module: str,
+    kind: str,
+    path: str,
+    name: str,
+    order: int,
+    page_layout: Any | None = None,
 ) -> None:
     """Register a generic database-backed config grid. Existing sources.py/profiles.py work unchanged."""
     spec = _spec(kind, name)
     prefix = f"runbook-ui-{kind}s"
-    register_page(module, path=path, name=name, order=order, layout=_page_layout(prefix, spec))
+    register_page(module, path=path, name=name, order=order, layout=page_layout or _page_layout(prefix, spec))
 
     @dash_app.callback(
         Output(f"{prefix}-grid", "rowData"),
