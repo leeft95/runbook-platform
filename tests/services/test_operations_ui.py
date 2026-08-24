@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import dash
 import dash_mantine_components as dmc
+from runbook.services.dash import run_drawer
 from runbook.services.dash.catalogue import _latest_runs, _successful_runs, catalogue_layout, profile_rows, source_rows
 from runbook.services.dash.dashboard import _pointer_row
 from runbook.services.dash.operations import (
@@ -127,3 +129,15 @@ def test_async_pages_have_loading_surfaces_and_shared_error_alert() -> None:
 def test_run_drawer_accepts_all_table_selection_shapes() -> None:
     assert _run_id_from_rows(None, [{"run_id": "run-1"}], None) == "run-1"
     assert _run_id_from_rows(None, [{"run_id": 3}]) is None
+
+
+def test_run_drawer_page_inputs_are_optional() -> None:
+    app = dash.Dash(__name__, use_pages=False)
+    run_drawer.register(app, None, "")
+    callback = next(
+        callback for output, callback in app.callback_map.items() if output.startswith(f"..{run_drawer.PREFIX}.opened")
+    )
+    selected_inputs = callback["inputs"][: len(_ROW_INPUTS)]
+    assert [item["id"] for item in selected_inputs] == list(_ROW_INPUTS)
+    assert all(item["allow_optional"] is True for item in selected_inputs)
+    assert _run_id_from_rows(None, [{"run_id": "profile-run"}], None) == "profile-run"

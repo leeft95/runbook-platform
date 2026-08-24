@@ -189,7 +189,7 @@ async def _read_logs(row: Any, config: Any | None, data_store: str) -> tuple[str
 
 def register(dash_app: Any, sessions: Any, data_store: str) -> None:
     """Register one callback for all run-table entry points and log refresh."""
-    inputs = [Input(f"{component}", "selectedRows") for component in _ROW_INPUTS]
+    inputs = [Input(f"{component}", "selectedRows", allow_optional=True) for component in _ROW_INPUTS]
 
     @dash_app.callback(
         Output(PREFIX, "opened"),
