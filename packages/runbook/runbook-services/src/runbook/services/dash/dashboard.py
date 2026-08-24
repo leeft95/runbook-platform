@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import dash_ag_grid as dag
+import dash_mantine_components as dmc
 from dash import Input, Output, dcc, html, register_page
 
 from ..repository import AsyncRunRepository
@@ -82,27 +83,10 @@ def _pointer_row(pointer: dict[str, Any]) -> dict[str, Any]:
 
 def _stat_card(label: str, component_id: str, *, note: str | None = None) -> html.Div:
     """Build one compact dashboard status card."""
-    children: list[Any] = [
-        html.Small(label, style={"opacity": 0.7}),
-        html.Div(
-            id=component_id,
-            children="—",
-            className="runbook-stat-value",
-            style={"fontSize": "28px", "fontWeight": 600, "lineHeight": "1.2"},
-        ),
-    ]
+    children: list[Any] = [dmc.Text(label, size="sm", c="dimmed"), dmc.Title(id=component_id, children="—", order=3)]
     if note:
-        children.append(html.Small(note, style={"opacity": 0.55}))
-    return html.Div(
-        children,
-        className="runbook-card",
-        style={
-            "minWidth": "150px",
-            "padding": "14px 16px",
-            "border": "1px solid #ddd",
-            "borderRadius": "8px",
-        },
-    )
+        children.append(dmc.Text(note, size="xs", c="dimmed"))
+    return dmc.Card(children, withBorder=True, padding="sm", radius="sm", className="runbook-metric")
 
 
 _STATUS_STYLE = {
@@ -246,8 +230,9 @@ def register(dash_app: Any, sessions: Any) -> None:
         Output(f"{prefix}-pointers-grid", "rowData"),
         Output(f"{prefix}-updated", "children"),
         Input(f"{prefix}-refresh", "n_intervals"),
+        Input(f"{prefix}-manual-refresh", "n_clicks"),
     )
-    async def refresh(_interval: int):
+    async def refresh(_interval: int, _clicks: int | None):
         """Refresh bounded dashboard summaries and live grid rows."""
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=24)
@@ -308,6 +293,7 @@ def register(dash_app: Any, sessions: Any) -> None:
                             id=f"{prefix}-updated",
                             style={"opacity": 0.55, "fontSize": "12px"},
                         ),
+                        dmc.Button("Refresh", id=f"{prefix}-manual-refresh", variant="light", size="sm"),
                     ],
                     style={
                         "display": "flex",
@@ -362,11 +348,11 @@ def register(dash_app: Any, sessions: Any) -> None:
                         html.Div(
                             [
                                 html.H3(
-                                    "Needs attention",
+                                    "Profiles and sources requiring attention",
                                     style={"marginBottom": "3px"},
                                 ),
                                 html.Div(
-                                    "Failed, waiting and not-ready operations from the previous 24 hours.",
+                                    "Recent failures, waiting, and not-ready operations from the previous 24 hours.",
                                     style={"opacity": 0.6, "fontSize": "13px"},
                                 ),
                             ],

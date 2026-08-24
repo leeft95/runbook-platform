@@ -99,6 +99,12 @@ def register(dash_app: Any, sessions: Any) -> None:
                     type="text",
                     style={"width": "180px"},
                 ),
+                dcc.Input(
+                    id=f"{prefix}-search",
+                    placeholder="search runs",
+                    type="text",
+                    style={"width": "180px"},
+                ),
                 html.Button("Cancel", id=f"{prefix}-cancel", disabled=True),
                 html.Span(id=f"{prefix}-cancel-result"),
                 dag.AgGrid(
@@ -130,7 +136,7 @@ def register(dash_app: Any, sessions: Any) -> None:
                             )
                         ],
                     ],
-                    dashGridOptions={"pagination": True},
+                    dashGridOptions={"pagination": True, "rowSelection": "single"},
                     style={"height": "360px", "width": "100%"},
                 ),
             ]
@@ -144,8 +150,15 @@ def register(dash_app: Any, sessions: Any) -> None:
         Input(f"{prefix}-kind", "value"),
         Input(f"{prefix}-status", "value"),
         Input(f"{prefix}-target", "value"),
+        Input(f"{prefix}-search", "value"),
     )
-    async def refresh(_interval: int, kind: str | None, status: str | None, target_id: str | None):
+    async def refresh(
+        _interval: int,
+        kind: str | None,
+        status: str | None,
+        target_id: str | None,
+        search: str | None,
+    ):
         """Refresh the recent-runs grid and summary."""
         async with sessions() as session:
             rows = await AsyncRunRepository(session).list_runs(
@@ -156,6 +169,9 @@ def register(dash_app: Any, sessions: Any) -> None:
             )
         if status == "cancelling":
             rows = [row for row in rows if row.cancel_requested_at is not None]
+        query = (search or "").strip().lower()
+        if query:
+            rows = [row for row in rows if query in f"{row.run_id} {row.kind} {row.target_id} {row.status}".lower()]
         return [_run_row(row) for row in rows], f"{len(rows)} recent runs"
 
     @dash_app.callback(
