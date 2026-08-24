@@ -73,6 +73,28 @@ binding or put the service behind an authenticated, appropriately secured
 boundary before exposing it to a network. See the repository [security
 policy](https://github.com/redcombojnr/runbook-platform/blob/main/SECURITY.md).
 
+### Operations UI navigation
+
+The UI is a profile-first operational surface, separate from the PDL report
+host:
+
+```text
+/ui/                    overview and triage
+/ui/profiles            profile catalogue and configuration management
+/ui/profiles/<id>       profile state, sources, and run history
+/ui/sources             source catalogue and configuration management
+/ui/sources/<id>        source outputs, freshness, dependants, and runs
+/ui/runs                secondary global run triage
+/ui/system              factual service/repository state
+```
+
+Selecting any run row opens one shared right-side drawer without changing the
+underlying page. Its metadata and log panes scroll independently. Use the
+drawer controls for manual log refresh, copy-all, and durable cancellation of
+queued/running runs. The legacy `/ui/runs/<id>` and `/ui/runs/<id>/logs` routes
+remain available for compatibility; they are not the canonical inspection
+surface.
+
 The local process backend is the first `ExecutionBackend` implementation;
 Kubernetes is the next backend direction. No retries, priority queue,
 heartbeat, broker, or PID adoption is performed.
