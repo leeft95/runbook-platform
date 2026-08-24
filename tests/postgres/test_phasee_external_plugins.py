@@ -5,7 +5,6 @@ import os
 import signal
 import subprocess
 import sys
-import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -15,6 +14,7 @@ from runbook.services.db import sync_sessions, upgrade_with_metadata
 from runbook.services.repository import RunRepository
 
 from scripts.run_postgres_tests import validate_database_url
+from tests.data.test_phasee_external_plugins import _build_isolated_site, _runtime_proof_prefix
 
 pytestmark = pytest.mark.postgres
 
@@ -25,23 +25,6 @@ def _database() -> str:
         pytest.fail("RUNBOOK_TEST_DATABASE_URL is required for PostgreSQL release tests")
         raise AssertionError("unreachable")
     return validate_database_url(value)
-
-
-def _build_external_fixture(tmp_path: Path) -> Path:
-    fixture = Path("tests/fixtures/external_plugin").resolve()
-    wheel_dir = tmp_path / "wheel"
-    wheel_dir.mkdir()
-    subprocess.run(
-        [sys.executable, "-m", "build", "--no-isolation", "--wheel", "--outdir", str(wheel_dir), str(fixture)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    installed = tmp_path / "installed"
-    installed.mkdir()
-    with zipfile.ZipFile(next(wheel_dir.glob("*.whl"))) as wheel:
-        wheel.extractall(installed)
-    return installed
 
 
 def _source_payload(source_id: str, state_path: Path) -> dict:
@@ -60,17 +43,32 @@ def _source_payload(source_id: str, state_path: Path) -> dict:
     }
 
 
-def _launch_worker(database: str, store_uri: str, run_id: str, installed: Path) -> subprocess.Popen[str]:
-    python_path = os.pathsep.join(filter(None, [str(installed), os.environ.get("PYTHONPATH", "")]))
+def _launch_worker(database: str, store_uri: str, run_id: str, isolated_site: Path) -> subprocess.Popen[str]:
+    script = (
+        _runtime_proof_prefix(isolated_site)
+        + """
+import os
+import runpy
+import sys
+os.environ["RUNBOOK_DATABASE_URL"] = r"__DATABASE__"
+os.environ["RUNBOOK_DATA_STORE_URI"] = r"__STORE__"
+sys.argv = ["runbook-worker", "--run-id", r"__RUN_ID__"]
+try:
+    runpy.run_module("runbook.worker", run_name="__main__")
+except SystemExit as exc:
+    exit_code = exc.code if isinstance(exc.code, int) else 1
+else:
+    exit_code = 0
+print(json.dumps({"exit_code": exit_code, "pid": os.getpid(), "proof": runtime_proof()}))
+raise SystemExit(exit_code)
+""".replace("__DATABASE__", database)
+        .replace("__STORE__", store_uri)
+        .replace("__RUN_ID__", run_id)
+    )
     process: subprocess.Popen[str] = subprocess.Popen(
-        [sys.executable, "-m", "runbook.worker", "--run-id", run_id],
-        cwd=Path.cwd(),
-        env={
-            **os.environ,
-            "PYTHONPATH": python_path,
-            "RUNBOOK_DATABASE_URL": database,
-            "RUNBOOK_DATA_STORE_URI": store_uri,
-        },
+        [sys.executable, "-I", "-c", script],
+        cwd=isolated_site.parent,
+        env={},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -89,7 +87,7 @@ def _launch_worker(database: str, store_uri: str, run_id: str, installed: Path) 
 def test_external_adapter_parser_and_previous_state_survive_worker_subprocess(tmp_path: Path) -> None:
     database = _database()
     upgrade_with_metadata(database)
-    installed = _build_external_fixture(tmp_path)
+    isolated_site = _build_isolated_site(tmp_path)
     source_id = f"phase-e-{uuid4().hex}"
     state_path = tmp_path / "previous-state.json"
     store_uri = f"file:{tmp_path / 'store'}"
@@ -109,9 +107,26 @@ def test_external_adapter_parser_and_previous_state_survive_worker_subprocess(tm
         )
         session.commit()
 
-    first_worker = _launch_worker(database, store_uri, first.run_id, installed)
+    first_worker = _launch_worker(database, store_uri, first.run_id, isolated_site)
     first_stdout, first_stderr = first_worker.communicate(timeout=30)
+    if first_worker.returncode != 0:
+        with sync_sessions(database)() as session:
+            saved = RunRepository(session).get_run(first.run_id)
+            raise AssertionError(
+                f"worker failed pid={first_worker.pid} row_status={saved.status if saved else None} "
+                f"row_worker={saved.worker_id if saved else None}: {first_stdout}{first_stderr}"
+            )
     assert first_worker.returncode == 0, first_stdout + first_stderr
+    first_info = json.loads(first_stdout.strip().splitlines()[-1])
+    assert first_info["exit_code"] == 0
+    assert set(first_info["proof"]["distributions"]) == {
+        "runbook-core",
+        "runbook-data",
+        "runbook-sdk",
+        "runbook-services",
+        "runbook-worker",
+        "runbook-test-external-plugin",
+    }
 
     with sync_sessions(database)() as session:
         repository = RunRepository(session)
@@ -127,9 +142,11 @@ def test_external_adapter_parser_and_previous_state_survive_worker_subprocess(tm
         )
         session.commit()
 
-    second_worker = _launch_worker(database, store_uri, second.run_id, installed)
+    second_worker = _launch_worker(database, store_uri, second.run_id, isolated_site)
     second_stdout, second_stderr = second_worker.communicate(timeout=30)
     assert second_worker.returncode == 0, second_stdout + second_stderr
+    second_info = json.loads(second_stdout.strip().splitlines()[-1])
+    assert second_info["exit_code"] == 0
 
     observed = json.loads(state_path.read_text(encoding="utf-8"))
     assert observed["watermark"] == {"prices": "2026-01-01T00:00:00Z"}
