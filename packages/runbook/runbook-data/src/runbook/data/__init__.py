@@ -1,6 +1,20 @@
 from runbook.core import BlobStore, DatasetBinding, ScheduleSpec, SourceConfig, open_blob_store
 from runbook.data.config import load_source_configs
-from runbook.data.ingest import run_ingest
+from runbook.data.ingest import (
+    AcquisitionResult,
+    AcquisitionStageResult,
+    CuratedFrame,
+    CurationResult,
+    IngestRequest,
+    IngestResult,
+    PreviousAcquisitionState,
+    RawArtifactRecord,
+    ReadinessResult,
+    ReadinessStatus,
+    SourceAdapter,
+    Stage2Parser,
+    run_ingest,
+)
 from runbook.data.manifests import (
     build_manifest,
     load_manifest,
@@ -32,6 +46,18 @@ __all__ = [
     "load_snapshot_dataset",
     "slot_key",
     "run_ingest",
+    "AcquisitionResult",
+    "AcquisitionStageResult",
+    "CuratedFrame",
+    "CurationResult",
+    "IngestRequest",
+    "IngestResult",
+    "PreviousAcquisitionState",
+    "RawArtifactRecord",
+    "ReadinessResult",
+    "ReadinessStatus",
+    "SourceAdapter",
+    "Stage2Parser",
     "open_blob_store",
     "create_pointer_schema",
     "open_pointer_registry",

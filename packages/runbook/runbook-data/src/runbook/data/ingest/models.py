@@ -11,11 +11,52 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Iterable, SupportsIndex
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from runbook.data.config import SourceConfig
 from runbook.data.pointers import DatasetPointerUpdate
+
+
+class _FrozenDict(dict[str, Any]):
+    """A JSON-compatible mapping that rejects all mutation."""
+
+    def _immutable(self, *_args: Any, **_kwargs: Any) -> None:
+        """Reject mutation attempts."""
+        raise TypeError("previous acquisition state is immutable")
+
+    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = _immutable  # type: ignore[assignment]
+
+    def __ior__(self, _other: Any, /) -> "_FrozenDict":  # type: ignore[override,misc]
+        self._immutable()
+        return self
+
+
+class _FrozenList(list[Any]):
+    """A JSON-compatible sequence that rejects all mutation."""
+
+    def _immutable(self, *_args: Any, **_kwargs: Any) -> None:
+        """Reject mutation attempts."""
+        raise TypeError("previous acquisition state is immutable")
+
+    __setitem__ = __delitem__ = append = clear = extend = insert = pop = remove = reverse = sort = _immutable  # type: ignore[assignment]
+
+    def __iadd__(self, _other: Iterable[Any], /) -> "_FrozenList":  # type: ignore[override,misc]
+        self._immutable()
+        return self
+
+    def __imul__(self, _count: SupportsIndex, /) -> "_FrozenList":  # type: ignore[override,misc]
+        self._immutable()
+        return self
+
+
+def _freeze_json(value: Any) -> Any:
+    """Recursively freeze a value while retaining JSON serialization."""
+    if isinstance(value, dict):
+        return _FrozenDict({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return _FrozenList(_freeze_json(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -60,6 +101,21 @@ class RawArtifactRecord(BaseModel):
     fetched_at: datetime
     content_type: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PreviousAcquisitionState(BaseModel):
+    """Generic state from the previous successful source acquisition."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    watermark: datetime | dict[str, datetime] | None = None
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+    def model_post_init(self, __context: Any) -> None:
+        """Freeze nested mappings and lists as well as model attributes."""
+        del __context
+        object.__setattr__(self, "watermark", _freeze_json(self.watermark))
+        object.__setattr__(self, "metadata", _freeze_json(self.metadata))
 
 
 class AcquisitionResult(BaseModel):
@@ -118,6 +174,7 @@ __all__ = [
     "CuratedFrame",
     "IngestRequest",
     "IngestResult",
+    "PreviousAcquisitionState",
     "RawArtifactRecord",
     "ReadinessResult",
     "ReadinessStatus",

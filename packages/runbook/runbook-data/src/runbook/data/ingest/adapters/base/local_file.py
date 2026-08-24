@@ -12,6 +12,7 @@ from loguru import logger
 from runbook.data.config import SourceConfig
 from runbook.data.ingest.models import (
     AcquisitionResult,
+    PreviousAcquisitionState,
     RawArtifactRecord,
     ReadinessResult,
     ReadinessStatus,
@@ -47,6 +48,7 @@ class LocalFileAdapter:
         readiness: ReadinessResult,
         fetched_at,
         previous_watermarks: Mapping[str, datetime] | None = None,
+        previous_state: PreviousAcquisitionState | None = None,
     ) -> AcquisitionResult:
         """Read the validated local file into an acquisition result."""
         self.validate(source_config)

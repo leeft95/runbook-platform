@@ -15,6 +15,7 @@ from runbook.data.ingest.adapters.base.templates import (
 )
 from runbook.data.ingest.models import (
     AcquisitionResult,
+    PreviousAcquisitionState,
     RawArtifactRecord,
     ReadinessResult,
     ReadinessStatus,
@@ -135,6 +136,7 @@ class HttpAdapter:
         readiness: ReadinessResult,
         fetched_at,
         previous_watermarks: Mapping[str, datetime] | None = None,
+        previous_state: PreviousAcquisitionState | None = None,
     ) -> AcquisitionResult:
         """Download the configured locator and return its raw bytes and metadata."""
         self.validate(source_config)
