@@ -181,6 +181,8 @@ def test_shell_hash_scroll_callback_and_config_offsets() -> None:
     assert "observer.disconnect()" in navigation_js
     assert "window.clearTimeout(timeoutId)" in navigation_js
     assert "window.setTimeout(cleanup, 2000)" in navigation_js
+    assert 'window.addEventListener("hashchange"' in navigation_js
+    assert "scrollToHash(window.location.pathname, window.location.hash)" in navigation_js
     css = (
         Path(__file__).resolve().parents[2]
         / "packages/runbook/runbook-services/src/runbook/services/assets/operations.css"

@@ -52,4 +52,10 @@
             },
         },
     });
+
+    const scrollToHash = window.dash_clientside.runbookNavigation.scrollToHash;
+    window.addEventListener("hashchange", function () {
+        scrollToHash(window.location.pathname, window.location.hash);
+    });
+    scrollToHash(window.location.pathname, window.location.hash);
 })();
