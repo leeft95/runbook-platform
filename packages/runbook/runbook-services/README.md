@@ -26,8 +26,8 @@ catalogues. This control-plane UI is separate from the PDL report host.
 
 The dashboard shows run status, elapsed time, provenance, and immutable worker
 diagnostics stored as small chunks in the configured blob store rather than
-PostgreSQL. The legacy run detail/log routes remain available for compatibility;
-the drawer is the canonical inspection surface.
+PostgreSQL. Selecting a run ID opens the shared inspection drawer, which is the
+canonical inspection surface.
 
 The API/UI and polling runner are separate long-lived processes. After applying
 `runbook-services db upgrade`, start `runbook-services serve` and

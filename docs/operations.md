@@ -91,9 +91,7 @@ host:
 Selecting any run row opens one shared right-side drawer without changing the
 underlying page. Its metadata and log panes scroll independently. Use the
 drawer controls for manual log refresh, copy-all, and durable cancellation of
-queued/running runs. The legacy `/ui/runs/<id>` and `/ui/runs/<id>/logs` routes
-remain available for compatibility; they are not the canonical inspection
-surface.
+queued/running runs.
 
 The local process backend is the first `ExecutionBackend` implementation;
 Kubernetes is the next backend direction. No retries, priority queue,

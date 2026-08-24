@@ -147,12 +147,6 @@ def entity_link(kind: str, entity_id: Any, *, label: str | None = None) -> Any:
     return dmc.Anchor(label or value, href=f"/ui/{kind}s/{value}", underline="hover")
 
 
-def run_link(run_id: Any) -> Any:
-    """Display a run identifier while retaining the legacy route as a fallback."""
-    value = str(run_id)
-    return dmc.Anchor(value, href=f"/ui/runs/{value}", underline="hover")
-
-
 def dataset_ids(payload: dict[str, Any] | None) -> set[str]:
     """Extract dataset IDs from either profile or source config payloads."""
     result: set[str] = set()
@@ -249,7 +243,6 @@ __all__ = [
     "profile_source_ids",
     "relative_time",
     "row_value",
-    "run_link",
     "run_status",
     "status_badge",
     "status_label",

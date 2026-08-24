@@ -152,6 +152,13 @@ def test_config_import_retains_deprecated_reports_root(monkeypatch, capsys) -> N
 def test_config_pages_use_grid_editors() -> None:
     create_app(database="postgresql+psycopg://postgres:postgres@localhost:5432/runbook")
 
+    dashboard_page = dash.page_registry["runbook.services.dash.dashboard"]["layout"]
+    dashboard_markup = str(dashboard_page)
+    assert "runbook-ui-dashboard-loading" in dashboard_markup
+    assert "runbook-ui-dashboard-active-empty" in dashboard_markup
+    assert "runbook-ui-dashboard-attention-empty" in dashboard_markup
+    assert "runbook-ui-dashboard-pointers-empty" in dashboard_markup
+
     expected = {"runbook.services.dash.sources": "source", "runbook.services.dash.profiles": "profile"}
     for module, kind in expected.items():
         children = dash.page_registry[module]["layout"].children
@@ -199,11 +206,12 @@ def test_config_pages_use_grid_editors() -> None:
     assert _cancel_state(SimpleNamespace(status="running", cancel_requested_at=datetime.now(timezone.utc)))[0] is True
     assert _cancel_state(SimpleNamespace(status="queued", cancel_requested_at=None)) == (False, "")
     run_page = dash.page_registry["runbook.services.dash.runs"]["layout"]
+    assert "runbook-ui-runs-loading" in str(run_page)
+    assert "runbook-ui-runs-state" in str(run_page)
     grid = next(child for child in run_page.children if getattr(child, "id", None) == "runbook-ui-runs-grid")
     assert grid.columnDefs[0] == {
-        "field": "run_link",
+        "field": "run_id",
         "headerName": "Run ID",
-        "cellRenderer": "markdown",
         "filter": "agTextColumnFilter",
     }
     serialized = runs._run_row(
@@ -222,7 +230,7 @@ def test_config_pages_use_grid_editors() -> None:
         )
     )
     assert serialized["run_id"] == "run-1"
-    assert serialized["run_link"] == "[run-1](/ui/runs/run-1)"
+    assert "run_link" not in serialized
 
 
 def test_new_config_rows_are_complete_and_disabled() -> None:

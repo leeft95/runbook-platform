@@ -7,6 +7,7 @@ import dash_ag_grid as dag
 from dash import Input, Output, dcc, html, register_page
 
 from ..repository import AsyncRunRepository
+from .operations import empty_state, error_state
 
 
 def _run_row(row: Any) -> dict[str, Any]:
@@ -29,7 +30,6 @@ def _run_row(row: Any) -> dict[str, Any]:
     ):
         value = getattr(row, name, None)
         result[name] = value.isoformat() if isinstance(value, datetime) else value
-    result["run_link"] = f"[{result['run_id']}](/ui/runs/{result['run_id']})"
     result["cancelling"] = result["status"] == "running" and result["cancel_requested_at"] is not None
     return result
 
@@ -57,6 +57,11 @@ def register(dash_app: Any, sessions: Any) -> None:
             [
                 html.H2("Runs"),
                 html.Div(id=f"{prefix}-summary"),
+                dcc.Loading(
+                    id=f"{prefix}-loading",
+                    type="default",
+                    children=html.Div(id=f"{prefix}-state"),
+                ),
                 dcc.Interval(id=f"{prefix}-refresh", interval=5000, n_intervals=0),
                 dcc.Dropdown(
                     id=f"{prefix}-kind",
@@ -112,9 +117,8 @@ def register(dash_app: Any, sessions: Any) -> None:
                     rowData=[],
                     columnDefs=[
                         {
-                            "field": "run_link",
+                            "field": "run_id",
                             "headerName": "Run ID",
-                            "cellRenderer": "markdown",
                             "filter": "agTextColumnFilter",
                         },
                         *[
@@ -146,6 +150,7 @@ def register(dash_app: Any, sessions: Any) -> None:
     @dash_app.callback(
         Output(f"{prefix}-grid", "rowData"),
         Output(f"{prefix}-summary", "children"),
+        Output(f"{prefix}-state", "children"),
         Input(f"{prefix}-refresh", "n_intervals"),
         Input(f"{prefix}-kind", "value"),
         Input(f"{prefix}-status", "value"),
@@ -160,19 +165,31 @@ def register(dash_app: Any, sessions: Any) -> None:
         search: str | None,
     ):
         """Refresh the recent-runs grid and summary."""
-        async with sessions() as session:
-            rows = await AsyncRunRepository(session).list_runs(
-                kind=kind,
-                status="running" if status == "cancelling" else status,
-                target_id=target_id or None,
-                limit=100,
-            )
+        try:
+            async with sessions() as session:
+                rows = await AsyncRunRepository(session).list_runs(
+                    kind=kind,
+                    status="running" if status == "cancelling" else status,
+                    target_id=target_id or None,
+                    limit=100,
+                )
+        except Exception as exc:  # pragma: no cover - driver-specific failure rendering
+            return [], "Refresh failed", error_state(f"Unable to load runs: {exc}")
         if status == "cancelling":
             rows = [row for row in rows if row.cancel_requested_at is not None]
         query = (search or "").strip().lower()
         if query:
             rows = [row for row in rows if query in f"{row.run_id} {row.kind} {row.target_id} {row.status}".lower()]
-        return [_run_row(row) for row in rows], f"{len(rows)} recent runs"
+        serialized = [_run_row(row) for row in rows]
+        state = (
+            ""
+            if serialized
+            else empty_state(
+                "No runs match these filters",
+                "Try clearing a filter or refresh when a run is available.",
+            )
+        )
+        return serialized, f"{len(rows)} recent runs", state
 
     @dash_app.callback(
         Output(f"{prefix}-cancel", "disabled"),

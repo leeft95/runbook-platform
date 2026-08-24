@@ -25,7 +25,11 @@ from .operations import (
 
 def _latest_runs(rows: list[Any], kind: str) -> dict[str, Any]:
     """Return the newest run for each target from a bounded run query."""
-    return {row.target_id: row for row in rows if row.kind == kind}
+    result: dict[str, Any] = {}
+    for row in rows:
+        if row.kind == kind:
+            result.setdefault(row.target_id, row)
+    return result
 
 
 def _successful_runs(rows: list[Any], kind: str) -> dict[str, Any]:

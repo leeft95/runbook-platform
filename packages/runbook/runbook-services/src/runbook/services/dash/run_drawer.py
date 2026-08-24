@@ -19,6 +19,7 @@ _ROW_INPUTS = (
     "runbook-ui-runs-grid",
     "runbook-ui-dashboard-active-grid",
     "runbook-ui-dashboard-attention-grid",
+    "runbook-ui-dashboard-pointers-grid",
     "runbook-ui-profile-detail-runs-grid",
     "runbook-ui-source-detail-runs-grid",
 )

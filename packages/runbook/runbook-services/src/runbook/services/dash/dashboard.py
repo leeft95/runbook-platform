@@ -8,6 +8,7 @@ import dash_mantine_components as dmc
 from dash import Input, Output, dcc, html, register_page
 
 from ..repository import AsyncRunRepository
+from .operations import empty_state, error_state
 
 REFRESH_MS = 5_000
 ACTIVE_LIMIT = 250
@@ -35,16 +36,10 @@ def _terminal_time(row: Any) -> str:
     return _text(_aware(value))
 
 
-def _run_link(run_id: str) -> str:
-    """Return a markdown link to a run detail page."""
-    return f"[{run_id}](/ui/runs/{run_id})"
-
-
 def _active_row(row: Any, now: datetime) -> dict[str, Any]:
     """Serialize an active run for AG Grid."""
     return {
         "run_id": row.run_id,
-        "run_link": _run_link(row.run_id),
         "kind": row.kind,
         "target_id": row.target_id,
         "status": row.status,
@@ -60,7 +55,6 @@ def _attention_row(row: Any) -> dict[str, Any]:
     """Serialize a failed, waiting, or not-ready run for AG Grid."""
     return {
         "run_id": row.run_id,
-        "run_link": _run_link(row.run_id),
         "kind": row.kind,
         "target_id": row.target_id,
         "status": row.status,
@@ -77,7 +71,7 @@ def _pointer_row(pointer: dict[str, Any]) -> dict[str, Any]:
         "source_id": pointer["source_id"],
         "watermark": _text(pointer["watermark"]),
         "published_at": _text(pointer["published_at"]),
-        "run_link": _run_link(run_id),
+        "run_id": run_id,
     }
 
 
@@ -109,9 +103,8 @@ _STATUS_STYLE = {
 
 ACTIVE_COLUMNS = [
     {
-        "field": "run_link",
+        "field": "run_id",
         "headerName": "Run",
-        "cellRenderer": "markdown",
         "minWidth": 200,
         "pinned": "left",
     },
@@ -132,9 +125,8 @@ ACTIVE_COLUMNS = [
 
 ATTENTION_COLUMNS = [
     {
-        "field": "run_link",
+        "field": "run_id",
         "headerName": "Run",
-        "cellRenderer": "markdown",
         "minWidth": 200,
         "pinned": "left",
     },
@@ -168,9 +160,8 @@ POINTER_COLUMNS = [
     {"field": "watermark", "headerName": "Watermark", "minWidth": 210},
     {"field": "published_at", "headerName": "Published (UTC)", "minWidth": 210},
     {
-        "field": "run_link",
+        "field": "run_id",
         "headerName": "Originating run",
-        "cellRenderer": "markdown",
         "minWidth": 210,
     },
 ]
@@ -229,6 +220,10 @@ def register(dash_app: Any, sessions: Any) -> None:
         Output(f"{prefix}-attention-grid", "rowData"),
         Output(f"{prefix}-pointers-grid", "rowData"),
         Output(f"{prefix}-updated", "children"),
+        Output(f"{prefix}-active-empty", "children"),
+        Output(f"{prefix}-attention-empty", "children"),
+        Output(f"{prefix}-pointers-empty", "children"),
+        Output(f"{prefix}-state", "children"),
         Input(f"{prefix}-refresh", "n_intervals"),
         Input(f"{prefix}-manual-refresh", "n_clicks"),
     )
@@ -237,33 +232,52 @@ def register(dash_app: Any, sessions: Any) -> None:
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=24)
 
-        async with sessions() as session:
-            repository = AsyncRunRepository(session)
+        try:
+            async with sessions() as session:
+                repository = AsyncRunRepository(session)
 
-            active_counts = await repository.status_counts({"queued", "running"})
-            window_counts = await repository.status_counts(
-                {"success", "failed", "waiting", "not_ready"},
-                since=cutoff,
-            )
-            active = await repository.list_active_runs(limit=ACTIVE_LIMIT)
-            attention = await repository.list_attention_runs(
-                cutoff,
-                limit=ATTENTION_LIMIT,
-            )
-            pointers = await repository.list_pointers(limit=POINTER_LIMIT)
+                active_counts = await repository.status_counts({"queued", "running"})
+                window_counts = await repository.status_counts(
+                    {"success", "failed", "waiting", "not_ready"},
+                    since=cutoff,
+                )
+                active = await repository.list_active_runs(limit=ACTIVE_LIMIT)
+                attention = await repository.list_attention_runs(
+                    cutoff,
+                    limit=ATTENTION_LIMIT,
+                )
+                pointers = await repository.list_pointers(limit=POINTER_LIMIT)
+        except Exception as exc:  # pragma: no cover - driver-specific failure rendering
+            message = f"Unable to refresh operations data: {exc}"
+            return ("—", "—", "—", "—", "—", [], [], [], "Refresh failed", "", "", "", error_state(message))
 
         waiting = window_counts.get("waiting", 0) + window_counts.get("not_ready", 0)
 
+        active_rows = [_active_row(row, now) for row in active]
+        attention_rows = [_attention_row(row) for row in attention]
+        pointer_rows = [_pointer_row(pointer) for pointer in pointers]
         return (
             str(active_counts.get("queued", 0)),
             str(active_counts.get("running", 0)),
             str(window_counts.get("success", 0)),
             str(window_counts.get("failed", 0)),
             str(waiting),
-            [_active_row(row, now) for row in active],
-            [_attention_row(row) for row in attention],
-            [_pointer_row(pointer) for pointer in pointers],
+            active_rows,
+            attention_rows,
+            pointer_rows,
             f"Updated {_text(now)} · refreshes every {REFRESH_MS // 1000}s",
+            "" if active_rows else empty_state("No active operations", "There are no queued or running operations."),
+            ""
+            if attention_rows
+            else empty_state(
+                "No operations need attention", "No failed, waiting, or not-ready runs were found in the last 24 hours."
+            ),
+            ""
+            if pointer_rows
+            else empty_state("No dataset pointers", "No published dataset pointers are currently available."),
+            ""
+            if active_rows or attention_rows or pointer_rows
+            else empty_state("No current operations", "Refresh when runs or dataset pointers are available."),
         )
 
     register_page(
@@ -277,6 +291,11 @@ def register(dash_app: Any, sessions: Any) -> None:
                     id=f"{prefix}-refresh",
                     interval=REFRESH_MS,
                     n_intervals=0,
+                ),
+                dcc.Loading(
+                    id=f"{prefix}-loading",
+                    type="default",
+                    children=html.Div(id=f"{prefix}-state"),
                 ),
                 html.Div(
                     [
@@ -340,6 +359,7 @@ def register(dash_app: Any, sessions: Any) -> None:
                             height="330px",
                             row_id_field="run_id",
                         ),
+                        html.Div(id=f"{prefix}-active-empty"),
                     ],
                     style={"marginBottom": "26px"},
                 ),
@@ -366,6 +386,7 @@ def register(dash_app: Any, sessions: Any) -> None:
                             pagination=True,
                             page_size=50,
                         ),
+                        html.Div(id=f"{prefix}-attention-empty"),
                     ],
                     style={"marginBottom": "26px"},
                 ),
@@ -389,6 +410,7 @@ def register(dash_app: Any, sessions: Any) -> None:
                             pagination=True,
                             page_size=50,
                         ),
+                        html.Div(id=f"{prefix}-pointers-empty"),
                     ]
                 ),
             ]

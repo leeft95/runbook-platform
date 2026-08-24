@@ -215,6 +215,7 @@ def register(dash_app: Any, sessions: Any) -> None:
                 profile = await repository.latest_config("profile", profile_id)
                 sources = await repository.list_latest_configs("source")
                 runs = await repository.list_runs(kind="profile", target_id=profile_id, limit=100)
+                source_runs = await repository.list_runs(kind="source", limit=500)
                 pointers = await repository.list_pointers(limit=500)
             if profile is None:
                 return (
@@ -269,7 +270,7 @@ def register(dash_app: Any, sessions: Any) -> None:
             source_data = _source_rows(
                 profile,
                 sources,
-                await repository.list_runs(kind="source", limit=500),
+                source_runs,
                 pointers,
             )
             run_data = [dict(detail_row(row), status_text=status_label(run_status(row))) for row in runs]

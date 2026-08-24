@@ -187,6 +187,7 @@ def test_dashboard_repository_queries_and_elapsed_serialization() -> None:
             reason="boom",
         )
     )
-    assert attention["run_link"] == "[run-2](/ui/runs/run-2)"
+    assert attention["run_id"] == "run-2"
+    assert "run_link" not in attention
     assert attention["finished_at"] == finished.isoformat()
     assert attention["reason"] == "boom"

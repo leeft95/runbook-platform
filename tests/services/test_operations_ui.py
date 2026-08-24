@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from runbook.services.dash.catalogue import profile_rows, source_rows
+from runbook.services.dash.catalogue import _latest_runs, _successful_runs, profile_rows, source_rows
+from runbook.services.dash.dashboard import _pointer_row
 from runbook.services.dash.operations import (
     dataset_ids,
     format_duration,
@@ -11,7 +12,7 @@ from runbook.services.dash.operations import (
     relative_time,
     status_label,
 )
-from runbook.services.dash.run_drawer import _run_id_from_rows
+from runbook.services.dash.run_drawer import _ROW_INPUTS, _run_id_from_rows
 
 
 def test_operations_formatting_and_dependency_derivation() -> None:
@@ -52,6 +53,57 @@ def test_catalogues_project_operational_state_and_reverse_dependencies() -> None
     data = {"profiles": [profile], "sources": [source], "runs": [run], "pointers": []}
     assert profile_rows(data)[0]["source_count"] == 1
     assert source_rows(data)[0]["used_by"] == 1
+
+
+def test_catalogues_keep_newest_descending_run_and_success_lookup() -> None:
+    stamp = datetime(2026, 8, 24, 12, tzinfo=timezone.utc)
+    profile = SimpleNamespace(
+        config_id="pnl",
+        revision=1,
+        created_at=stamp,
+        payload={"enabled": True, "datasets": {}},
+    )
+    newest = SimpleNamespace(
+        kind="profile",
+        target_id="pnl",
+        status="failed",
+        snapshot_id="new-snapshot",
+        snapshot_payload={"watermark": "2026-08-24"},
+        finished_at=stamp,
+        requested_at=stamp,
+    )
+    older = SimpleNamespace(
+        kind="profile",
+        target_id="pnl",
+        status="waiting",
+        snapshot_id="old-snapshot",
+        snapshot_payload={"watermark": "2026-08-23"},
+        finished_at=stamp,
+        requested_at=stamp,
+    )
+    rows = [newest, older]
+    assert _latest_runs(rows, "profile")["pnl"] is newest
+    successful = SimpleNamespace(**{**vars(older), "status": "success"})
+    assert _successful_runs([newest, successful], "profile")["pnl"] is successful
+    projected = profile_rows({"profiles": [profile], "sources": [], "runs": rows, "pointers": []})[0]
+    assert projected["status"] == "failed"
+    assert projected["snapshot_id"] == "new-snapshot"
+    assert projected["as_of"] == "2026-08-24"
+
+
+def test_dashboard_pointer_rows_and_drawer_inputs_use_run_selection() -> None:
+    row = _pointer_row(
+        {
+            "dataset_id": "prices",
+            "source_id": "market",
+            "watermark": "2026-08-24",
+            "published_at": "2026-08-24T12:00:00+00:00",
+            "source_run_id": "source-run-1",
+        }
+    )
+    assert row["run_id"] == "source-run-1"
+    assert "run_link" not in row
+    assert "runbook-ui-dashboard-pointers-grid" in _ROW_INPUTS
 
 
 def test_run_drawer_accepts_all_table_selection_shapes() -> None:
