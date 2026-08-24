@@ -177,6 +177,10 @@ def test_shell_hash_scroll_callback_and_config_offsets() -> None:
     assert "scrollToHash" in navigation_js
     assert "decodeURIComponent" in navigation_js
     assert 'scrollIntoView({block: "start"})' in navigation_js
+    assert "MutationObserver" in navigation_js
+    assert "observer.disconnect()" in navigation_js
+    assert "window.clearTimeout(timeoutId)" in navigation_js
+    assert "window.setTimeout(cleanup, 2000)" in navigation_js
     css = (
         Path(__file__).resolve().parents[2]
         / "packages/runbook/runbook-services/src/runbook/services/assets/operations.css"
