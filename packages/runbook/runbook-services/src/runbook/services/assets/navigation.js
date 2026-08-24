@@ -22,29 +22,41 @@
                 const waitForTarget = function () {
                     let observer;
                     let timeoutId;
+                    let settleTimeoutId;
+                    let active = true;
                     const cleanup = function () {
+                        active = false;
                         if (observer) {
                             observer.disconnect();
                         }
                         if (timeoutId) {
                             window.clearTimeout(timeoutId);
                         }
+                        if (settleTimeoutId) {
+                            window.clearTimeout(settleTimeoutId);
+                        }
                     };
                     const scrollToTarget = function () {
                         const target = document.getElementById(targetId);
                         if (!target) {
-                            return false;
+                            return;
                         }
                         target.scrollIntoView({block: "start"});
-                        cleanup();
-                        return true;
+                    };
+                    const settle = function () {
+                        if (!active || settleTimeoutId) {
+                            return;
+                        }
+                        scrollToTarget();
+                        settleTimeoutId = window.setTimeout(function () {
+                            settleTimeoutId = undefined;
+                            settle();
+                        }, 80);
                     };
 
-                    if (scrollToTarget()) {
-                        return;
-                    }
-                    observer = new MutationObserver(scrollToTarget);
+                    observer = new MutationObserver(settle);
                     observer.observe(document.body, {childList: true, subtree: true});
+                    settle();
                     timeoutId = window.setTimeout(cleanup, 2000);
                 };
                 window.requestAnimationFrame(waitForTarget);

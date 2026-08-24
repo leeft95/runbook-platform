@@ -180,6 +180,11 @@ def test_shell_hash_scroll_callback_and_config_offsets() -> None:
     assert "MutationObserver" in navigation_js
     assert "observer.disconnect()" in navigation_js
     assert "window.clearTimeout(timeoutId)" in navigation_js
+    assert "window.clearTimeout(settleTimeoutId)" in navigation_js
+    assert "let settleTimeoutId" in navigation_js
+    assert "settleTimeoutId = undefined" in navigation_js
+    assert "window.setTimeout(function ()" in navigation_js
+    assert "}, 80)" in navigation_js
     assert "window.setTimeout(cleanup, 2000)" in navigation_js
     assert 'window.addEventListener("hashchange"' in navigation_js
     assert "scrollToHash(window.location.pathname, window.location.hash)" in navigation_js
