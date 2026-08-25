@@ -38,11 +38,14 @@ def _run_id_for_trigger(
     rows: tuple[list[dict[str, Any]] | None, ...],
     selected_state: str | None,
 ) -> str | None:
-    """Use stored selection only for explicit drawer actions."""
-    current = _run_id_from_rows(*rows)
+    """Resolve selection from the grid or stored drawer state that triggered it."""
     if triggered_id in {f"{PREFIX}-log-refresh", f"{PREFIX}-cancel"}:
-        return selected_state or current
-    return current
+        return selected_state
+    try:
+        row_index = _ROW_INPUTS.index(triggered_id or "")
+    except ValueError:
+        return None
+    return _run_id_from_rows(rows[row_index]) if row_index < len(rows) else None
 
 
 def _aware_slot(value: datetime) -> datetime:
@@ -228,8 +231,6 @@ def register(dash_app: Any, sessions: Any, data_store: str) -> None:
             selected,
             selected_state if isinstance(selected_state, str) else None,
         )
-        if ctx.triggered_id == f"{PREFIX}-cancel" and cancel_clicks:
-            run_id = selected_state if isinstance(selected_state, str) else run_id
         if ctx.triggered_id in {f"{PREFIX}-cancel", f"{PREFIX}-log-refresh"} and not run_id:
             return (
                 False,

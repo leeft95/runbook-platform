@@ -147,12 +147,37 @@ def test_run_drawer_page_inputs_are_optional() -> None:
 
 
 def test_run_drawer_does_not_reopen_stale_selection_on_navigation() -> None:
-    grid = "runbook-ui-profile-detail-runs-grid"
-    assert run_drawer._run_id_for_trigger(grid, ([{"run_id": "current-run"}],), "stale-run") == "current-run"
-    assert run_drawer._run_id_for_trigger(f"{run_drawer.PREFIX}-log-refresh", (None,), "stored-run") == "stored-run"
-    assert run_drawer._run_id_for_trigger(f"{run_drawer.PREFIX}-cancel", (None,), "stored-run") == "stored-run"
+    rows = (None,) * len(_ROW_INPUTS)
+    assert run_drawer._run_id_for_trigger("runbook-ui-profile-detail-runs-grid", rows, "stale-run") is None
+    assert run_drawer._run_id_for_trigger(f"{run_drawer.PREFIX}-log-refresh", rows, "stored-run") == "stored-run"
+    assert run_drawer._run_id_for_trigger(f"{run_drawer.PREFIX}-cancel", rows, "stored-run") == "stored-run"
     assert run_drawer._run_id_for_trigger("runbook-ui-location", (None,) * len(_ROW_INPUTS), "stale-run") is None
-    assert run_drawer._run_id_for_trigger(grid, ([{"run_id": "different-run"}],), "stored-run") == "different-run"
+
+
+def test_run_drawer_uses_the_grid_that_triggered_selection() -> None:
+    rows: list[list[dict[str, object]] | None] = [None] * len(_ROW_INPUTS)
+    rows[_ROW_INPUTS.index("runbook-ui-dashboard-attention-grid")] = [{"run_id": "attention-run"}]
+    rows[_ROW_INPUTS.index("runbook-ui-dashboard-pointers-grid")] = [{"run_id": "pointer-run"}]
+    rows[_ROW_INPUTS.index("runbook-ui-dashboard-active-grid")] = [{"run_id": "active-run"}]
+    rows[_ROW_INPUTS.index("runbook-ui-runs-grid")] = [{"run_id": "other-run"}]
+
+    assert (
+        run_drawer._run_id_for_trigger("runbook-ui-dashboard-pointers-grid", tuple(rows), "attention-run")
+        == "pointer-run"
+    )
+    assert (
+        run_drawer._run_id_for_trigger("runbook-ui-dashboard-active-grid", tuple(rows), "attention-run") == "active-run"
+    )
+    assert run_drawer._run_id_for_trigger("runbook-ui-runs-grid", tuple(rows), "attention-run") == "other-run"
+
+
+def test_run_drawer_ignores_malformed_or_missing_triggering_selection() -> None:
+    rows: list[list[dict[str, object]] | None] = [None] * len(_ROW_INPUTS)
+    attention_index = _ROW_INPUTS.index("runbook-ui-dashboard-attention-grid")
+    rows[attention_index] = [{"run_id": 42}]
+    assert run_drawer._run_id_for_trigger(_ROW_INPUTS[attention_index], tuple(rows), "stale-run") is None
+    rows[attention_index] = []
+    assert run_drawer._run_id_for_trigger(_ROW_INPUTS[attention_index], tuple(rows), "stale-run") is None
 
 
 def test_shell_hash_scroll_callback_and_config_offsets() -> None:
