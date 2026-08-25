@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .contracts import DatasetBinding, ReportProfile, ScheduleSpec, SourceConfig, load_profiles, load_source_configs
 from .storage import BlobStore, open_blob_store
@@ -15,6 +15,7 @@ __all__ = [
     "DatasetBinding",
     "DatasetFile",
     "DatasetManifest",
+    "SnapshotProducer",
     "ReportProfile",
     "ScheduleSpec",
     "Snapshot",
@@ -83,6 +84,8 @@ class Snapshot(BaseModel):
     watermark: datetime
     as_of: datetime | None = None
     datasets: dict[str, str]
+    producer_provenance: tuple["SnapshotProducer", ...] = ()
+    warnings: tuple[str, ...] = ()
 
     @field_validator("snapshot_id")
     @classmethod
@@ -92,3 +95,61 @@ class Snapshot(BaseModel):
         if not re.fullmatch(_SHA256, value):
             raise ValueError("snapshot_id must be a lowercase full SHA-256 digest")
         return value
+
+    @field_validator("warnings", mode="before")
+    @classmethod
+    def normalize_warnings(cls, value: Any) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        return tuple(sorted({str(item) for item in value}))
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_provenance_alias(cls, value: Any) -> Any:
+        """Accept the shorter historical ``provenance`` spelling."""
+        if (
+            isinstance(value, dict)
+            and "producer_provenance" not in value
+            and ("provenance" in value or "producers" in value or "producer_runs" in value)
+        ):
+            value = dict(value)
+            value["producer_provenance"] = value.pop(
+                "provenance", value.pop("producers", value.pop("producer_runs", ()))
+            )
+        return value
+
+    @property
+    def provenance(self) -> tuple["SnapshotProducer", ...]:
+        """Backward-compatible short spelling for producer provenance."""
+        return self.producer_provenance
+
+    @property
+    def producers(self) -> tuple["SnapshotProducer", ...]:
+        """Convenient alias used by diagnostics and older integrations."""
+        return self.producer_provenance
+
+    @property
+    def producer_runs(self) -> tuple["SnapshotProducer", ...]:
+        """Alias for callers that describe provenance as producer runs."""
+        return self.producer_provenance
+
+
+class SnapshotProducer(BaseModel):
+    """Immutable producer evidence carried by a resolved snapshot."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    producer_id: str
+    source_run_id: str
+    slot: datetime
+    aliases: tuple[str, ...]
+
+    @field_validator("aliases", mode="before")
+    @classmethod
+    def normalize_aliases(cls, value: Any) -> tuple[str, ...]:
+        if value is None:
+            raise ValueError("producer provenance must include at least one alias")
+        aliases = tuple(sorted({str(item) for item in value}))
+        if not aliases:
+            raise ValueError("producer provenance must include at least one alias")
+        return aliases

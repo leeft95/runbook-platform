@@ -22,6 +22,15 @@ DEFAULT_GRID_CSS = """.rb-page {
   background: #fff;
 }
 
+.rb-warnings {
+  border: 2px solid #b45309;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  background: #fff7ed;
+  color: #7c2d12;
+}
+
 .rb-block table {
   width: 100%;
   border-collapse: collapse;
@@ -72,12 +81,21 @@ def render_html(store: BlobStore, manifest: PDLManifest, prefix: str) -> str:
         blocks.append(f'<section class="rb-block" style="{position}">{title}{body}</section>')
     css_link = f'<link rel="stylesheet" href="{escape(manifest.style.css_ref, quote=True)}">' if manifest.style else ""
     columns = page.columns or 1
+    warnings = "".join(f"<li>{escape(warning)}</li>" for warning in manifest.warnings)
+    warning_markup = (
+        '<aside class="rb-warnings" role="alert" '
+        'style="border:2px solid #b45309;border-radius:8px;padding:10px 14px;'
+        'margin-bottom:16px;background:#fff7ed;color:#7c2d12;">'
+        f"<strong>Warnings</strong><ul>{warnings}</ul></aside>"
+        if warnings
+        else ""
+    )
     return (
         "<!doctype html><html><head><meta charset='utf-8'><title>"
         + escape(manifest.title)
         + "</title>"
         + css_link
-        + f'</head><body><main class="rb-page" style="--rb-columns: {columns};">'
+        + f'</head><body>{warning_markup}<main class="rb-page" style="--rb-columns: {columns};">'
         + "".join(blocks)
         + "</main></body></html>"
     )

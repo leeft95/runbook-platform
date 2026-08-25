@@ -226,6 +226,15 @@ class PDLManifest(BaseModel):
     style: PDLStyle | None = None
     page: PDLPage
     artifacts: PDLArtifacts | None = None
+    # Immutable snapshot/runtime notices rendered outside the author grid.
+    warnings: tuple[NonEmptyStr, ...] = ()
     # describes what extension this manifest can be used for,
     # e.g. plotly dash with a specific component/styling system.
     extensions: dict[str, dict[str, Any]] | None = None
+
+    @field_validator("warnings", mode="before")
+    @classmethod
+    def normalize_warnings(cls, value: Any) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        return tuple(dict.fromkeys(str(item) for item in value))

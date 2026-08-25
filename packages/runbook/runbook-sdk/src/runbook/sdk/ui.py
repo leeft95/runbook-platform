@@ -66,6 +66,7 @@ def manifest(
     title: str | None = None,
     style: PDLStyle | None = None,
     extensions: dict[str, Any] | None = None,
+    warnings: Sequence[str] | None = None,
 ) -> PDLManifest:
     """Build a canonical PDL manifest from context and page structure."""
     resolved_title = title
@@ -97,6 +98,7 @@ def manifest(
         style=style,
         page=page,
         artifacts=_build_artifacts(page),
+        warnings=warnings or (),
         extensions=serialized_extensions,
     )
 

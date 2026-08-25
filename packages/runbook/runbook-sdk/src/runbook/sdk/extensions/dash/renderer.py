@@ -51,6 +51,7 @@ def render_dash_page(
         return html.Div(
             [
                 html.H1(manifest.title),
+                _warning_component(manifest),
                 html.Div(
                     components,
                     style={
@@ -67,6 +68,26 @@ def render_dash_page(
         _register_callbacks(app, manifest, extension, definition, ctx, ids)
 
     return DashPage(layout_factory=layout_factory, callback_registrar=callback_registrar, namespace=namespace)
+
+
+def _warning_component(manifest: PDLManifest) -> Any:
+    """Render immutable snapshot warnings outside the report grid."""
+    if not manifest.warnings:
+        return None
+    from dash import html
+
+    return html.Div(
+        [html.Strong("Warnings"), html.Ul([html.Li(warning) for warning in manifest.warnings])],
+        role="alert",
+        style={
+            "border": "2px solid #b45309",
+            "borderRadius": "8px",
+            "padding": "10px 14px",
+            "marginBottom": "16px",
+            "background": "#fff7ed",
+            "color": "#7c2d12",
+        },
+    )
 
 
 def _build_components(manifest: PDLManifest, extension: DashExtension | None, ctx: Any, ids: DashIds) -> list[Any]:

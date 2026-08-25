@@ -1,3 +1,3 @@
-from runbook.core.data import Snapshot
+from runbook.core.data import Snapshot, SnapshotProducer
 
-__all__ = ["Snapshot"]
+__all__ = ["Snapshot", "SnapshotProducer"]

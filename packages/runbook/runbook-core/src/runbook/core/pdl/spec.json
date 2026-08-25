@@ -22,6 +22,11 @@
       "type": "string",
       "format": "date-time"
     },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
     "style": {
       "type": "object",
       "additionalProperties": false,

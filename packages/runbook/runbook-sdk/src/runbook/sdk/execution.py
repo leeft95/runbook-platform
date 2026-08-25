@@ -195,7 +195,15 @@ def execute_report(
         raise ValueError("report code mutated execution config or context hash")
     if not isinstance(result, PDLManifest):
         raise TypeError("report page must return a pdl-core/0.1 PDLManifest")
-    manifest = result.model_copy(update={"snapshot_id": snapshot.snapshot_id, "as_of": snapshot.watermark})
+    # Snapshot notices are authoritative: report code cannot hide an immutable
+    # warning or add a misleading authored replacement.
+    manifest = result.model_copy(
+        update={
+            "snapshot_id": snapshot.snapshot_id,
+            "as_of": snapshot.watermark,
+            "warnings": tuple(getattr(snapshot, "warnings", ()) or ()),
+        }
+    )
     payloads = ctx.artifact.payloads()
     for ref, payload in sorted(payloads.plot_jsons.items()):
         store.put_immutable(

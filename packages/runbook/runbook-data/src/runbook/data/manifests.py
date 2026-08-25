@@ -5,10 +5,10 @@ import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
-from typing import Iterable
+from typing import Any, Iterable
 
 import pandas as pd
-from runbook.core.data import DatasetFile, DatasetManifest, Snapshot
+from runbook.core.data import DatasetFile, DatasetManifest, Snapshot, SnapshotProducer
 from runbook.core.utils.hashing import canonical_json, sha256_bytes, sha256_json
 from runbook.data.pointers import DatabasePointerRegistry, DatasetPointerUpdate
 from runbook.data.store import BlobStore
@@ -177,6 +177,9 @@ def resolve_snapshot(
     *,
     pointer_registry: DatabasePointerRegistry,
     as_of: datetime | None = None,
+    producer_provenance: Iterable[SnapshotProducer] = (),
+    warnings: Iterable[str] = (),
+    provenance: Iterable[SnapshotProducer] | None = None,
 ) -> Snapshot:
     """Resolve dataset bindings to one deterministic latest or historical snapshot."""
     pointers = pointer_registry.get(bindings.values())
@@ -202,14 +205,29 @@ def resolve_snapshot(
         selected[alias] = ref
         manifests.append(manifest)
     watermark = min((manifest.watermark for manifest in manifests), default=datetime(1970, 1, 1, tzinfo=timezone.utc))
-    payload = {
+    if provenance is not None:
+        producer_provenance = provenance
+    normalized_provenance = tuple(sorted(producer_provenance, key=lambda item: (item.producer_id, item.source_run_id)))
+    normalized_warnings = tuple(sorted({str(item) for item in warnings}))
+    payload: dict[str, Any] = {
         "schema_version": "snapshot/1",
         "watermark": _utc(watermark).isoformat(),
         "as_of": _utc(as_of).isoformat() if as_of is not None else None,
         "datasets": selected,
     }
+    if normalized_provenance:
+        payload["producer_provenance"] = [item.model_dump(mode="json") for item in normalized_provenance]
+    if normalized_warnings:
+        payload["warnings"] = list(normalized_warnings)
     normalized_as_of = _utc(as_of) if as_of is not None else None
-    return Snapshot(snapshot_id=sha256_json(payload), watermark=watermark, as_of=normalized_as_of, datasets=selected)
+    return Snapshot(
+        snapshot_id=sha256_json(payload),
+        watermark=watermark,
+        as_of=normalized_as_of,
+        datasets=selected,
+        producer_provenance=normalized_provenance,
+        warnings=normalized_warnings,
+    )
 
 
 def _partition_matches(partition: Mapping[str, str], filters: Mapping[str, object]) -> bool:
