@@ -104,12 +104,27 @@ def run_stage1_acquire(
     slot = slot.astimezone(timezone.utc)
     run = slot_key(slot)
     adapter = get_adapter(config)
+    state = previous_state
+    if state is None and previous_watermarks:
+        state = PreviousAcquisitionState(watermark=previous_watermarks)
     logger.info("stage=1A readiness source={} slot={}", config.source_id, run)
-    readiness = adapter.check(
-        source_config=config,
-        acquisition_run=run,
-        observed_at=slot,
-    )
+    check_kwargs: dict[str, Any] = {
+        "source_config": config,
+        "acquisition_run": run,
+        "observed_at": slot,
+    }
+    try:
+        check_signature = inspect.signature(adapter.check)
+    except (TypeError, ValueError):
+        pass
+    else:
+        previous_state_parameter = check_signature.parameters.get("previous_state")
+        if previous_state_parameter is not None and previous_state_parameter.kind in {
+            inspect.Parameter.KEYWORD_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }:
+            check_kwargs["previous_state"] = state
+    readiness = adapter.check(**check_kwargs)
     logger.info(
         "stage=1A readiness source={} slot={} status={}",
         config.source_id,
@@ -130,9 +145,6 @@ def run_stage1_acquire(
         run,
         config.adapter,
     )
-    state = previous_state
-    if state is None and previous_watermarks:
-        state = PreviousAcquisitionState(watermark=previous_watermarks)
     acquire_signature: inspect.Signature
     try:
         acquire_signature = inspect.signature(adapter.acquire)

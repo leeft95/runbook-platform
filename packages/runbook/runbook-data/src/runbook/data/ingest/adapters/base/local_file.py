@@ -27,8 +27,16 @@ class LocalFileAdapter:
         if not isinstance(path, str) or not path:
             raise ValueError("local_file adapter requires params.local_path")
 
-    def check(self, *, source_config: SourceConfig, acquisition_run: str, observed_at) -> ReadinessResult:
+    def check(
+        self,
+        *,
+        source_config: SourceConfig,
+        acquisition_run: str,
+        observed_at,
+        previous_state: PreviousAcquisitionState | None = None,
+    ) -> ReadinessResult:
         """Check local file availability without reading its contents."""
+        del previous_state
         self.validate(source_config)
         path = Path(source_config.params["local_path"])
         return ReadinessResult(

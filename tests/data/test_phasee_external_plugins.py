@@ -209,6 +209,72 @@ def test_direct_stage1_passes_previous_state(monkeypatch: pytest.MonkeyPatch, tm
     assert received == [state]
 
 
+def test_direct_stage1_passes_previous_state_to_compatible_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    received: list[PreviousAcquisitionState | None] = []
+
+    class Adapter:
+        def validate(self, source_config):
+            pass
+
+        def check(self, *, source_config, acquisition_run, observed_at, previous_state=None):
+            received.append(previous_state)
+            return ReadinessResult(
+                source_id=source_config.source_id,
+                acquisition_run=acquisition_run,
+                status=ReadinessStatus.not_ready,
+                observed_at=observed_at,
+            )
+
+        def acquire(self, *, source_config, readiness, fetched_at, previous_state=None):
+            raise AssertionError("not-ready source must not acquire")
+
+    monkeypatch.setattr("runbook.data.ingest.runner.get_adapter", lambda _config: Adapter())
+    state = PreviousAcquisitionState(watermark={"prices": datetime(2026, 1, 1, tzinfo=timezone.utc)})
+    result = run_stage1_acquire(
+        source_config=_config(),
+        slot=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        store=open_blob_store(f"file:{tmp_path / 'store'}"),
+        previous_state=state,
+    )
+    assert result.status is ReadinessStatus.not_ready
+    assert received == [state]
+
+
+def test_direct_stage1_does_not_pass_previous_state_to_legacy_kwargs_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    received: list[dict[str, object]] = []
+
+    class Adapter:
+        def validate(self, source_config):
+            pass
+
+        def check(self, *, source_config, acquisition_run, observed_at, **kwargs):
+            received.append(kwargs)
+            return ReadinessResult(
+                source_id=source_config.source_id,
+                acquisition_run=acquisition_run,
+                status=ReadinessStatus.not_ready,
+                observed_at=observed_at,
+            )
+
+        def acquire(self, *, source_config, readiness, fetched_at, previous_state=None):
+            raise AssertionError("not-ready source must not acquire")
+
+    monkeypatch.setattr("runbook.data.ingest.runner.get_adapter", lambda _config: Adapter())
+    state = PreviousAcquisitionState(watermark={"prices": datetime(2026, 1, 1, tzinfo=timezone.utc)})
+    result = run_stage1_acquire(
+        source_config=_config(),
+        slot=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        store=open_blob_store(f"file:{tmp_path / 'store'}"),
+        previous_state=state,
+    )
+    assert result.status is ReadinessStatus.not_ready
+    assert received == [{}]
+
+
 def test_previous_state_materializes_all_partition_keys(tmp_path: Path, pointer_registry) -> None:
     store = open_blob_store(f"file:{tmp_path / 'store'}")
     manifest_ref = "curated/phase_e_prices/manifests/sha256=state.json"

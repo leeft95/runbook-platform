@@ -86,8 +86,16 @@ class HttpAdapter:
         if not any(source_config.params.get(key) for key in {*_READINESS_KEYS, *_DOWNLOAD_KEYS}):
             raise ValueError("http adapter requires a URL or URL template")
 
-    def check(self, *, source_config: SourceConfig, acquisition_run: str, observed_at) -> ReadinessResult:
+    def check(
+        self,
+        *,
+        source_config: SourceConfig,
+        acquisition_run: str,
+        observed_at,
+        previous_state: PreviousAcquisitionState | None = None,
+    ) -> ReadinessResult:
         """Stream a readiness GET and classify HTTP status without downloading the body."""
+        del previous_state
         self.validate(source_config)
         if requests is None and self.session is None:
             raise ImportError("requests is required for http readiness checks")

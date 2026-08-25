@@ -19,11 +19,12 @@ vendor_v1 = "my_package.parsers:parse_vendor"
 ```
 
 The adapter is a zero-argument class implementing the public
-`SourceAdapter` contract. Its `acquire` method may receive the generic,
-frozen `PreviousAcquisitionState`:
+`SourceAdapter` contract. Its `check` and `acquire` methods may receive the
+generic, frozen `PreviousAcquisitionState`:
 
 ```python
 class VendorAdapter:
+    def check(self, *, source_config, acquisition_run, observed_at, previous_state=None): ...
     def acquire(self, *, source_config, readiness, fetched_at, previous_state=None): ...
 ```
 
@@ -78,6 +79,7 @@ class SourceAdapter(Protocol):
         source_config: SourceConfig,
         acquisition_run: str,
         observed_at: datetime,
+        previous_state: PreviousAcquisitionState | None = None,
     ) -> ReadinessResult: ...
     def acquire(
         self,
@@ -96,6 +98,9 @@ The methods have distinct jobs:
 - `check` performs a cheap, non-destructive readiness check. Return `ready`
   only when `acquire` can proceed, `not_ready` when expected data is not yet
   available, and `failed` for authentication, server, or protocol failures.
+  It may inspect persisted `previous_state` metadata, but Stage 1A must not
+  download or parse the vendor business payload. The runner passes state only
+  to compatible signatures, so legacy three-keyword checks remain supported.
 - `acquire` reads the source and returns its raw payload. It may interpret the
   adapter-owned metadata in `previous_state` for an incremental request.
 

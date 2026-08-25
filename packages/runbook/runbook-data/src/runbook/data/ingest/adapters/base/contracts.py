@@ -20,6 +20,7 @@ class SourceAdapter(Protocol):
         source_config: SourceConfig,
         acquisition_run: str,
         observed_at: datetime,
+        previous_state: PreviousAcquisitionState | None = None,
     ) -> ReadinessResult: ...
 
     def acquire(
