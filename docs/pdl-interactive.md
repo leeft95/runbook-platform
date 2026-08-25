@@ -38,6 +38,12 @@ HTML ignores extension namespaces it does not implement. A report with
 Parquet-backed table as complete HTML. This is the required static-first
 baseline.
 
+Service execution may attach immutable snapshot warnings to the manifest. The
+SDK replaces report-authored warnings with those snapshot warnings and writes
+them to both Stage 3 and Stage 4 manifests. Static HTML and Dash render the
+warning panel outside the author grid, leaving block coordinates, IDs, and
+interaction callbacks unchanged.
+
 The interactive renderer translates PDL semantics into AG Grid definitions.
 Dimensions, identifiers, and time fields are groupable and pivotable; measures
 are value-enabled with their declared aggregation. Numeric, date, and text

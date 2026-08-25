@@ -241,6 +241,14 @@ snapshot-pinned.
 - Raw artifacts, curated files, and manifests are immutable.
 - Manifests are complete dataset views and are content-addressed.
 - Dataset pointers advance only after the new outputs are ready.
-- Snapshot identity is SHA-256 over canonical resolved inputs.
+- Snapshot identity is SHA-256 over canonical resolved inputs. When present,
+  immutable producer provenance (producer ID, successful source run ID, slot,
+  and aliases) and warnings are included deterministically; legacy empty
+  metadata retains its historical identity.
 - Source acquisition belongs to Stage 1; business parsing belongs to Stage 2.
 - Reports and renderers never call source systems.
+
+Service-pinned snapshots preserve the exact pointer and producer evidence used
+for dispatch. Report execution copies immutable snapshot warnings into both
+PDL manifests; report-authored warnings cannot remove them. This keeps a manual
+barrier bypass visible in static HTML and interactive Dash output.

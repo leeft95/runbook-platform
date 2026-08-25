@@ -74,11 +74,23 @@ runbook-services run --workers 4 --poll-interval 5
 `runbook-services tick` remains a bounded compatibility/debugging cycle. The
 long-lived runner schedules due sources, dispatches at most `--workers`
 addressable `runbook-worker` processes, polls them non-blockingly, and releases
-settled profile snapshots. PostgreSQL is the durable FIFO-among-eligible queue;
+settled profile snapshots. For multi-source profiles, a dataset-triggered
+snapshot advances only when every configured producer has a current valid
+pointer from a different successful source run than that profile revision's
+latest automatic baseline. The first complete snapshot establishes that
+baseline; producer slots need not match (for example, A at 07:00 and B at
+09:00). PostgreSQL is the durable FIFO-among-eligible queue;
 same-source source runs serialize while unrelated sources continue. Excess
 work stays queued, and `POST /api/v1/runs/{run_id}/cancel` records durable
 cancellation intent. The local backend owns only its transient `Popen`
 handles; restart treats unowned running rows as failed/cancelled orphans.
+Repeated reconciliation is idempotent by profile revision/hash and snapshot
+identity. Queued or running future source work does not block a complete
+current pointer set, while failed, cancelled, not-ready, or pointerless
+producers leave the dependency release marker unset. Manual profile runs pin
+the latest pointers at dispatch time and carry immutable provenance and a prominent
+warning that the barrier was bypassed; they never establish an automatic
+baseline.
 
 `runbook-services serve` binds to `127.0.0.1` by default and has no
 authentication. Do not expose it directly to an untrusted network; place it

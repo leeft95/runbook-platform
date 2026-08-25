@@ -92,6 +92,13 @@ Use `--code-version` when Git metadata is unavailable, or set
 `RUNBOOK_CODE_VERSION`. Use `--output` to copy the generated HTML from blob
 storage to a local file. Preview does not advance dataset pointers.
 
+Service execution pins one immutable snapshot before dispatch. Its optional
+producer provenance records each producer, successful source run, slot, and
+profile aliases. Snapshot warnings are authoritative and are rendered above
+the report grid in HTML and Dash; report code cannot suppress them. Automatic
+snapshots have no warnings. Manual profile runs deliberately bypass the
+multi-source advancement barrier and therefore retain a visible warning.
+
 ## Interactive PDL reports
 
 The page function returns one canonical PDL manifest. The same manifest is the

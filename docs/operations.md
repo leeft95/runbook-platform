@@ -54,6 +54,34 @@ restart never adopts PIDs: unowned running rows become failed or cancelled with
 `worker ownership lost / runner restarted`. SIGINT/SIGTERM stop scheduling and
 dispatch, then cancel only local workers with bounded termination.
 
+### Staggered multi-source settlement
+
+Profile releases are based on advancement, not an exact shared clock slot. The
+runner validates and locks every current pointer, verifies its manifest, and
+requires the pointer's source run to be a durable success for the configured
+producer. All aliases owned by one producer must use one source run; multiple
+successful attempts coalesce to the run represented by the current pointer.
+
+The first complete automatic pointer set is accepted as that profile revision's
+baseline. Later releases require every producer to advance to a different
+successful source run. For example, A0/B0 establishes a baseline, A1 at 07:00
+waits while B is still B0, and B1 at 09:00 releases the A1/B1 snapshot. Queued
+or running future work is ignored. Failed, cancelled, not-ready, invalid, or
+pointerless work leaves `dependencies_released_at` null. A source row may be
+reconciled repeatedly; the profile identity key means only one pinned run is
+queued, including when multiple source rows observe the same snapshot.
+
+Automatic baselines are scoped to the exact profile revision and config hash,
+and include runs in any lifecycle state. Legacy baselines without producer
+provenance fall back to per-producer manifest-reference comparison. A new
+revision starts with no baseline. Manual profile actions use the latest
+pointers without waiting for advancement, require confirmation in the UI, and
+persist immutable provenance plus warnings listing non-advanced producers (or
+that no baseline was available). Manual runs never become baselines.
+This advancement rule is not a calendar/SLA guarantee and does not add a DAG,
+retry policy, or cross-run scheduler; operators must diagnose and rerun failed
+source work through the existing controls.
+
 ## Serve the API and UI
 
 Start the service locally with:

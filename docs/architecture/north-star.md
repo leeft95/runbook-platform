@@ -62,6 +62,16 @@ and dispatch and cancel only locally owned workers.
 
 The operations dashboard is an operational surface for the durable ledger. It
 shows run status, provenance, elapsed time, and immutable worker log chunks.
+
+Profile settlement is intentionally a small advancement barrier layered on the
+existing run ledger and pointer registry. A complete current pointer set is
+resolved and locked; the first automatic set establishes a baseline for the
+exact profile revision/hash, and later sets must advance every producer. Slots
+may differ, so a 07:00 A refresh and a 09:00 B refresh can settle one report.
+This is not a calendar SLA, retry policy, DAG, or scheduler: future queued work
+is ignored, failures leave the release marker unset, and identity keys make
+reconciliation idempotent. Manual profile runs bypass the barrier and retain
+immutable provenance and warnings.
 Stage 2 emits progress checkpoints so a slow or failed curation run remains
 diagnosable without a separate stage-state table.
 

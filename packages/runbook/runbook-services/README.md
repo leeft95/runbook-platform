@@ -38,6 +38,15 @@ control-plane ledger for production runs; blob storage retains immutable data,
 manifests, report artifacts, and worker logs. Profiles are manual or
 dataset-triggered; only source schedules create scheduled roots.
 
+Dataset-triggered multi-source profiles use advancement settlement. A complete
+current pointer set establishes the baseline for the exact profile revision;
+later snapshots require every producer to use a different successful source
+run, even when producer slots differ. Future queued work is ignored, failed or
+invalid pointers do not release dependencies, and repeated ticks are
+identity-idempotent. Profile manual actions pin latest pointers after
+confirmation, record producer provenance, and display an immutable barrier
+bypass warning; they never establish an automatic baseline.
+
 For local development, enable Uvicorn auto-reload with:
 
 ```bash
