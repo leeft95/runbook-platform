@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import dash_mantine_components as dmc
-from dash import Input, Output, State, ctx, dcc, html
+from dash import Input, Output, State, ctx, dcc, html, no_update
 from runbook.core import open_blob_store
 
 from ..logging import RunLogIdentity, read_log_tail
@@ -19,33 +19,38 @@ _ROW_INPUTS = (
     "runbook-ui-runs-grid",
     "runbook-ui-dashboard-active-grid",
     "runbook-ui-dashboard-attention-grid",
-    "runbook-ui-dashboard-pointers-grid",
     "runbook-ui-profile-detail-runs-grid",
     "runbook-ui-source-detail-runs-grid",
 )
 
 
-def _run_id_from_rows(*rows: list[dict[str, Any]] | None) -> str | None:
-    """Return the selected run ID from any supported table entry point."""
-    for selected in rows:
-        if selected and isinstance(selected[0].get("run_id"), str):
-            return selected[0]["run_id"]
-    return None
+def _run_id_from_click(event: dict[str, Any] | None) -> str | None:
+    """Return the stable row ID emitted by an AG Grid cell click."""
+    if not event:
+        return None
+
+    run_id = event.get("rowId")
+    return run_id if isinstance(run_id, str) else None
 
 
 def _run_id_for_trigger(
     triggered_id: str | None,
-    rows: tuple[list[dict[str, Any]] | None, ...],
+    events: tuple[dict[str, Any] | None, ...],
     selected_state: str | None,
 ) -> str | None:
-    """Resolve selection from the grid or stored drawer state that triggered it."""
+    """Resolve selection from the grid that triggered it."""
     if triggered_id in {f"{PREFIX}-log-refresh", f"{PREFIX}-cancel"}:
         return selected_state
+
     try:
-        row_index = _ROW_INPUTS.index(triggered_id or "")
+        event_index = _ROW_INPUTS.index(triggered_id or "")
     except ValueError:
         return None
-    return _run_id_from_rows(rows[row_index]) if row_index < len(rows) else None
+
+    if event_index >= len(events):
+        return None
+
+    return _run_id_from_click(events[event_index])
 
 
 def _aware_slot(value: datetime) -> datetime:
@@ -204,7 +209,7 @@ async def _read_logs(row: Any, config: Any | None, data_store: str) -> tuple[str
 
 def register(dash_app: Any, sessions: Any, data_store: str) -> None:
     """Register one callback for all run-table entry points and log refresh."""
-    inputs = [Input(f"{component}", "selectedRows", allow_optional=True) for component in _ROW_INPUTS]
+    inputs = [Input(component, "cellClicked", allow_optional=True) for component in _ROW_INPUTS]
 
     @dash_app.callback(
         Output(PREFIX, "opened"),
@@ -222,13 +227,13 @@ def register(dash_app: Any, sessions: Any, data_store: str) -> None:
         State(f"{PREFIX}-selected", "data"),
     )
     async def inspect(*args: Any):
-        """Open, refresh, or cancel the selected run without changing its route."""
-        selected = args[: len(_ROW_INPUTS)]
+        """Open, refresh, or cancel the clicked run without changing its route."""
+        events = args[: len(_ROW_INPUTS)]
         cancel_clicks = args[len(_ROW_INPUTS) + 1]
         selected_state = args[len(_ROW_INPUTS) + 2]
         run_id = _run_id_for_trigger(
             ctx.triggered_id,
-            selected,
+            events,
             selected_state if isinstance(selected_state, str) else None,
         )
         if ctx.triggered_id in {f"{PREFIX}-cancel", f"{PREFIX}-log-refresh"} and not run_id:
@@ -245,15 +250,15 @@ def register(dash_app: Any, sessions: Any, data_store: str) -> None:
             )
         if not run_id:
             return (
-                False,
-                "Run inspection",
-                empty_state("Select a run", "Select any run row to inspect metadata and logs."),
-                "",
-                "",
-                "",
-                True,
-                "",
-                None,
+                no_update,  # opened
+                no_update,  # title
+                no_update,  # details
+                no_update,  # logs
+                no_update,  # log status
+                no_update,  # clipboard
+                no_update,  # cancel disabled
+                no_update,  # cancel result
+                no_update,  # selected run
             )
         message = ""
         async with sessions() as session:
@@ -291,4 +296,4 @@ def register(dash_app: Any, sessions: Any, data_store: str) -> None:
         )
 
 
-__all__ = ["PREFIX", "_run_id_from_rows", "_run_id_for_trigger", "drawer", "register"]
+__all__ = ["PREFIX", "_run_id_from_click", "_run_id_for_trigger", "drawer", "register"]

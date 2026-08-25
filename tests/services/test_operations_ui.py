@@ -9,7 +9,6 @@ import dash_mantine_components as dmc
 from fastapi import FastAPI
 from runbook.services.dash import run_drawer
 from runbook.services.dash.catalogue import _latest_runs, _successful_runs, catalogue_layout, profile_rows, source_rows
-from runbook.services.dash.dashboard import _pointer_row
 from runbook.services.dash.operations import (
     dataset_ids,
     error_state,
@@ -19,7 +18,7 @@ from runbook.services.dash.operations import (
     status_label,
 )
 from runbook.services.dash.profile_detail import layout as profile_detail_layout
-from runbook.services.dash.run_drawer import _ROW_INPUTS, _run_id_from_rows
+from runbook.services.dash.run_drawer import _ROW_INPUTS, _run_id_for_trigger, _run_id_from_click
 from runbook.services.dash.source_detail import layout as source_detail_layout
 from runbook.services.dash.system import layout as system_layout
 from runbook.services.routers.ui import mount_ui
@@ -101,21 +100,6 @@ def test_catalogues_keep_newest_descending_run_and_success_lookup() -> None:
     assert projected["as_of"] == "2026-08-24"
 
 
-def test_dashboard_pointer_rows_and_drawer_inputs_use_run_selection() -> None:
-    row = _pointer_row(
-        {
-            "dataset_id": "prices",
-            "source_id": "market",
-            "watermark": "2026-08-24",
-            "published_at": "2026-08-24T12:00:00+00:00",
-            "source_run_id": "source-run-1",
-        }
-    )
-    assert row["run_id"] == "source-run-1"
-    assert "run_link" not in row
-    assert "runbook-ui-dashboard-pointers-grid" in _ROW_INPUTS
-
-
 def test_async_pages_have_loading_surfaces_and_shared_error_alert() -> None:
     pages = (
         (catalogue_layout("profile"), "runbook-ui-profiles-catalogue-loading"),
@@ -129,55 +113,212 @@ def test_async_pages_have_loading_surfaces_and_shared_error_alert() -> None:
     assert isinstance(error_state("database unavailable"), dmc.Alert)
 
 
-def test_run_drawer_accepts_all_table_selection_shapes() -> None:
-    assert _run_id_from_rows(None, [{"run_id": "run-1"}], None) == "run-1"
-    assert _run_id_from_rows(None, [{"run_id": 3}]) is None
+def test_run_drawer_does_not_reopen_stale_selection_on_navigation() -> None:
+    events: tuple[dict[str, object] | None, ...] = (None,) * len(_ROW_INPUTS)
+
+    assert (
+        _run_id_for_trigger(
+            "runbook-ui-profile-detail-runs-grid",
+            events,
+            "stale-run",
+        )
+        is None
+    )
+
+    assert (
+        _run_id_for_trigger(
+            "runbook-ui-dashboard-active-grid",
+            events,
+            "stale-run",
+        )
+        is None
+    )
+
+    assert (
+        _run_id_for_trigger(
+            "runbook-ui-location",
+            events,
+            "stale-run",
+        )
+        is None
+    )
+
+    assert (
+        _run_id_for_trigger(
+            f"{run_drawer.PREFIX}-log-refresh",
+            events,
+            "stored-run",
+        )
+        == "stored-run"
+    )
+
+    assert (
+        _run_id_for_trigger(
+            f"{run_drawer.PREFIX}-cancel",
+            events,
+            "stored-run",
+        )
+        == "stored-run"
+    )
+
+
+def test_run_drawer_accepts_all_table_click_shapes() -> None:
+    assert _run_id_from_click({"rowId": "run-1"}) == "run-1"
+    assert _run_id_from_click({"data": {"run_id": 3}}) is None
+    assert _run_id_from_click(None) is None
+    assert _run_id_from_click({}) is None
 
 
 def test_run_drawer_page_inputs_are_optional() -> None:
     app = dash.Dash(__name__, use_pages=False)
     run_drawer.register(app, None, "")
+
     callback = next(
         callback for output, callback in app.callback_map.items() if output.startswith(f"..{run_drawer.PREFIX}.opened")
     )
-    selected_inputs = callback["inputs"][: len(_ROW_INPUTS)]
-    assert [item["id"] for item in selected_inputs] == list(_ROW_INPUTS)
-    assert all(item["allow_optional"] is True for item in selected_inputs)
-    assert _run_id_from_rows(None, [{"run_id": "profile-run"}], None) == "profile-run"
+
+    click_inputs = callback["inputs"][: len(_ROW_INPUTS)]
+
+    assert [item["id"] for item in click_inputs] == list(_ROW_INPUTS)
+    assert all(item["property"] == "cellClicked" for item in click_inputs)
+    assert all(item["allow_optional"] is True for item in click_inputs)
+
+    assert _run_id_from_click({"rowId": "profile-run"}) == "profile-run"
 
 
-def test_run_drawer_does_not_reopen_stale_selection_on_navigation() -> None:
-    rows = (None,) * len(_ROW_INPUTS)
-    assert run_drawer._run_id_for_trigger("runbook-ui-profile-detail-runs-grid", rows, "stale-run") is None
-    assert run_drawer._run_id_for_trigger(f"{run_drawer.PREFIX}-log-refresh", rows, "stored-run") == "stored-run"
-    assert run_drawer._run_id_for_trigger(f"{run_drawer.PREFIX}-cancel", rows, "stored-run") == "stored-run"
-    assert run_drawer._run_id_for_trigger("runbook-ui-location", (None,) * len(_ROW_INPUTS), "stale-run") is None
-
-
-def test_run_drawer_uses_the_grid_that_triggered_selection() -> None:
-    rows: list[list[dict[str, object]] | None] = [None] * len(_ROW_INPUTS)
-    rows[_ROW_INPUTS.index("runbook-ui-dashboard-attention-grid")] = [{"run_id": "attention-run"}]
-    rows[_ROW_INPUTS.index("runbook-ui-dashboard-pointers-grid")] = [{"run_id": "pointer-run"}]
-    rows[_ROW_INPUTS.index("runbook-ui-dashboard-active-grid")] = [{"run_id": "active-run"}]
-    rows[_ROW_INPUTS.index("runbook-ui-runs-grid")] = [{"run_id": "other-run"}]
+def test_run_drawer_preserves_selected_run_when_click_has_no_run_id() -> None:
+    events: tuple[dict[str, object] | None, ...] = (
+        {},
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
 
     assert (
-        run_drawer._run_id_for_trigger("runbook-ui-dashboard-pointers-grid", tuple(rows), "attention-run")
-        == "pointer-run"
+        _run_id_for_trigger(
+            _ROW_INPUTS[0],
+            events,
+            "existing-run",
+        )
+        is None
     )
+
+
+def test_run_id_from_click() -> None:
+    assert _run_id_from_click({"rowId": "run-1"}) == "run-1"
+    assert _run_id_from_click({"rowId": 3}) is None
+    assert _run_id_from_click(None) is None
+
+
+def test_run_drawer_uses_stored_run_for_drawer_actions() -> None:
+    events = (None,) * len(_ROW_INPUTS)
+
     assert (
-        run_drawer._run_id_for_trigger("runbook-ui-dashboard-active-grid", tuple(rows), "attention-run") == "active-run"
+        _run_id_for_trigger(
+            f"{run_drawer.PREFIX}-log-refresh",
+            events,
+            "existing-run",
+        )
+        == "existing-run"
     )
-    assert run_drawer._run_id_for_trigger("runbook-ui-runs-grid", tuple(rows), "attention-run") == "other-run"
+
+    assert (
+        _run_id_for_trigger(
+            f"{run_drawer.PREFIX}-cancel",
+            events,
+            "existing-run",
+        )
+        == "existing-run"
+    )
 
 
-def test_run_drawer_ignores_malformed_or_missing_triggering_selection() -> None:
-    rows: list[list[dict[str, object]] | None] = [None] * len(_ROW_INPUTS)
+def test_run_drawer_uses_the_grid_that_triggered_click() -> None:
+    events: list[dict[str, object] | None] = [None] * len(_ROW_INPUTS)
+
+    events[_ROW_INPUTS.index("runbook-ui-dashboard-attention-grid")] = {
+        "rowId": "attention-run",
+        "colId": "status",
+        "value": "failed",
+    }
+
+    events[_ROW_INPUTS.index("runbook-ui-dashboard-active-grid")] = {
+        "rowId": "active-run",
+        "colId": "status",
+        "value": "running",
+    }
+
+    events[_ROW_INPUTS.index("runbook-ui-runs-grid")] = {
+        "rowId": "other-run",
+        "colId": "status",
+        "value": "success",
+    }
+
+    assert (
+        run_drawer._run_id_for_trigger(
+            "runbook-ui-dashboard-attention-grid",
+            tuple(events),
+            "stale-run",
+        )
+        == "attention-run"
+    )
+
+    assert (
+        run_drawer._run_id_for_trigger(
+            "runbook-ui-dashboard-active-grid",
+            tuple(events),
+            "stale-run",
+        )
+        == "active-run"
+    )
+
+    assert (
+        run_drawer._run_id_for_trigger(
+            "runbook-ui-runs-grid",
+            tuple(events),
+            "stale-run",
+        )
+        == "other-run"
+    )
+
+
+def test_run_drawer_ignores_malformed_or_missing_click() -> None:
+    events: list[dict[str, object] | None] = [None] * len(_ROW_INPUTS)
     attention_index = _ROW_INPUTS.index("runbook-ui-dashboard-attention-grid")
-    rows[attention_index] = [{"run_id": 42}]
-    assert run_drawer._run_id_for_trigger(_ROW_INPUTS[attention_index], tuple(rows), "stale-run") is None
-    rows[attention_index] = []
-    assert run_drawer._run_id_for_trigger(_ROW_INPUTS[attention_index], tuple(rows), "stale-run") is None
+
+    events[attention_index] = {"rowId": 42}
+
+    assert (
+        run_drawer._run_id_for_trigger(
+            _ROW_INPUTS[attention_index],
+            tuple(events),
+            "stale-run",
+        )
+        is None
+    )
+
+    events[attention_index] = {}
+
+    assert (
+        run_drawer._run_id_for_trigger(
+            _ROW_INPUTS[attention_index],
+            tuple(events),
+            "stale-run",
+        )
+        is None
+    )
+
+    events[attention_index] = None
+
+    assert (
+        run_drawer._run_id_for_trigger(
+            _ROW_INPUTS[attention_index],
+            tuple(events),
+            "stale-run",
+        )
+        is None
+    )
 
 
 def test_shell_hash_scroll_callback_and_config_offsets() -> None:

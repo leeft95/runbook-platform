@@ -180,7 +180,6 @@ def _grid(
     options: dict[str, Any] = {
         "animateRows": True,
         "getRowId": {"function": f"params.data.{row_id_field}"},
-        "rowSelection": "single",
         "suppressCellFocus": False,
         "rowBuffer": 10,
     }

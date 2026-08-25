@@ -140,7 +140,11 @@ def register(dash_app: Any, sessions: Any) -> None:
                             )
                         ],
                     ],
-                    dashGridOptions={"pagination": True, "rowSelection": "single"},
+                    dashGridOptions={
+                        "pagination": True,
+                        "getRowId": {"function": "params.data.run_id"},
+                        "rowSelection": "single",
+                    },
                     style={"height": "360px", "width": "100%"},
                 ),
             ]
