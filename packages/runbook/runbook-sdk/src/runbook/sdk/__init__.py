@@ -6,6 +6,7 @@ from runbook.sdk.client import RunbookClient, create_client
 from runbook.sdk.context import Ctx
 from runbook.sdk.execution import ReportResult, execute_report, resolve_code_version
 from runbook.sdk.live import LiveCapabilityUnavailableError, LiveDataResolver, LiveQuerySource
+from runbook.sdk.live_report_preview import compose_report_page
 from runbook.sdk.live_sqlite import (
     LiveQueryProvenance,
     SQLiteLiveDataResolver,
@@ -54,6 +55,7 @@ __all__ = [
     "LiveDataResolver",
     "LiveQuerySource",
     "LiveQueryProvenance",
+    "compose_report_page",
     "SQLiteLiveDataResolver",
     "SQLiteLiveQuerySource",
     "build_demo_live_provider",
