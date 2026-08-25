@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from runbook.data import DatasetPointerUpdate, build_manifest, open_blob_store, write_manifests
+from runbook.data import DatasetPointerUpdate, build_manifest, open_blob_store, resolve_snapshot, write_manifests
 from runbook.services import cli
 from runbook.services.db import sync_sessions, upgrade_with_metadata
 from runbook.services.repository import RunRepository
@@ -11,7 +11,8 @@ from runbook.services.runner import ServiceRunner
 from runbook.services.worker_backends import WorkerState
 
 
-def _source(repository: RunRepository, source_id: str):
+def _source(repository: RunRepository, source_id: str, bindings: dict[str, str] | None = None):
+    bindings = bindings or {source_id: source_id}
     return repository.save_config(
         "source",
         source_id,
@@ -19,11 +20,12 @@ def _source(repository: RunRepository, source_id: str):
             "adapter": "local_file",
             "schedule": {"cron": "0 * * * *", "timezone": "UTC"},
             "datasets": {
-                source_id: {
-                    "dataset_id": source_id,
+                alias: {
+                    "dataset_id": dataset_id,
                     "parser_id": "csv_timeseries_v1",
                     "update_mode": "full",
                 }
+                for alias, dataset_id in bindings.items()
             },
             "params": {"local_path": "unused.csv", "timestamp_column": "timestamp"},
         },
@@ -425,7 +427,7 @@ def test_dependency_release_ignores_future_generation_work(tmp_path) -> None:
         assert repository.get_run(future.run_id).status == "queued"
 
 
-def test_dependency_release_does_not_mix_newer_and_older_producer_generations(tmp_path) -> None:
+def test_dependency_release_establishes_baseline_with_staggered_generations(tmp_path) -> None:
     database = f"sqlite:///{tmp_path / 'runs.db'}"
     store_uri = f"file:{tmp_path / 'store'}"
     upgrade_with_metadata(database)
@@ -473,10 +475,180 @@ def test_dependency_release_does_not_mix_newer_and_older_producer_generations(tm
             "test",
         )
         session.flush()
-        assert repository.list_runs(kind="profile") == []
+        profiles = repository.list_runs(kind="profile")
+        assert len(profiles) == 1
+        assert profiles[0].trigger == "dataset"
+        assert {item["producer_id"] for item in profiles[0].snapshot_payload["producer_provenance"]} == {
+            "generation-a",
+            "generation-b",
+        }
 
 
-def test_dependency_release_rejects_pointer_overwritten_by_newer_generation(tmp_path) -> None:
+def test_dependency_release_legacy_baseline_compares_manifest_refs(tmp_path) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    store_uri = f"file:{tmp_path / 'store'}"
+    upgrade_with_metadata(database)
+    stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    newer_stamp = stamp + timedelta(days=1)
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        source = _source(repository, "legacy-source")
+        profile = repository.save_config(
+            "profile", "legacy-profile", {"report_id": "report", "datasets": {"data": "legacy-source"}}
+        )
+        store = open_blob_store(store_uri)
+        old_manifest, old_digest = build_manifest(
+            dataset_id="legacy-source", watermark=stamp, published_at=stamp, files=[]
+        )
+        old_ref = write_manifests(store, [(old_manifest, old_digest)])["legacy-source"]
+        old_run = repository.queue_run(
+            kind="source", target_id=source.config_id, slot=stamp, trigger="manual", force=True, config=source
+        )
+        old_run.status = "success"
+        repository.pointer_registry.publish(
+            source_id=source.config_id,
+            source_run_id=old_run.run_id,
+            updates=[DatasetPointerUpdate("legacy-source", old_ref, stamp, stamp)],
+        )
+        legacy_snapshot = resolve_snapshot(
+            store, profile.payload["datasets"], pointer_registry=repository.pointer_registry
+        )
+        legacy_payload = legacy_snapshot.model_dump(mode="json")
+        legacy_payload.pop("producer_provenance", None)
+        baseline = repository.queue_run(
+            kind="profile",
+            target_id=profile.config_id,
+            slot=stamp,
+            trigger="dataset",
+            force=True,
+            config=profile,
+            identity_key="legacy-baseline",
+            snapshot_id=legacy_snapshot.snapshot_id,
+            snapshot_payload=legacy_payload,
+            context_hash="legacy",
+        )
+        baseline.status = "success"
+        newer_run = repository.queue_run(
+            kind="source", target_id=source.config_id, slot=newer_stamp, trigger="manual", force=True, config=source
+        )
+        newer_run.status = "success"
+        runner = ServiceRunner(database=database, data_store=store_uri)
+        runner._release_dependencies(repository, [source], [profile], {"legacy-source": source.config_id}, "test")
+        session.flush()
+        assert len(repository.list_runs(kind="profile")) == 1
+        assert newer_run.dependencies_released_at is None
+
+        newer_manifest, newer_digest = build_manifest(
+            dataset_id="legacy-source", watermark=newer_stamp, published_at=newer_stamp, files=[]
+        )
+        newer_ref = write_manifests(store, [(newer_manifest, newer_digest)])["legacy-source"]
+        repository.pointer_registry.publish(
+            source_id=source.config_id,
+            source_run_id=newer_run.run_id,
+            updates=[DatasetPointerUpdate("legacy-source", newer_ref, newer_stamp, newer_stamp)],
+        )
+        runner._release_dependencies(repository, [source], [profile], {"legacy-source": source.config_id}, "test")
+        session.flush()
+        profiles = repository.list_runs(kind="profile")
+        assert len(profiles) == 2
+        assert profiles[0].snapshot_payload["datasets"] == {"data": newer_ref}
+
+
+def test_dependency_release_requires_one_source_run_for_all_owned_aliases(tmp_path) -> None:
+    database = f"sqlite:///{tmp_path / 'runs.db'}"
+    store_uri = f"file:{tmp_path / 'store'}"
+    upgrade_with_metadata(database)
+    stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        source = _source(repository, "multi-alias-source", {"first": "alias-a", "second": "alias-b"})
+        profile = repository.save_config(
+            "profile",
+            "multi-alias-profile",
+            {"report_id": "report", "datasets": {"left": "alias-a", "right": "alias-b"}},
+        )
+        store = open_blob_store(store_uri)
+
+        def publish(run_id: str, when: datetime) -> dict[str, str]:
+            refs: dict[str, str] = {}
+            for dataset_id in ("alias-a", "alias-b"):
+                manifest, digest = build_manifest(dataset_id=dataset_id, watermark=when, published_at=when, files=[])
+                refs[dataset_id] = write_manifests(store, [(manifest, digest)])[dataset_id]
+            repository.pointer_registry.publish(
+                source_id=source.config_id,
+                source_run_id=run_id,
+                updates=[
+                    DatasetPointerUpdate(dataset_id, refs[dataset_id], when, when)
+                    for dataset_id in ("alias-a", "alias-b")
+                ],
+            )
+            return refs
+
+        baseline_run = repository.queue_run(
+            kind="source", target_id=source.config_id, slot=stamp, trigger="manual", force=True, config=source
+        )
+        baseline_run.status = "success"
+        publish(baseline_run.run_id, stamp)
+        runner = ServiceRunner(database=database, data_store=store_uri)
+        producer_by_dataset = {"alias-a": source.config_id, "alias-b": source.config_id}
+        runner._release_dependencies(repository, [source], [profile], producer_by_dataset, "test")
+        session.flush()
+        assert len(repository.list_runs(kind="profile")) == 1
+
+        mismatch_a = repository.queue_run(
+            kind="source",
+            target_id=source.config_id,
+            slot=stamp + timedelta(days=1),
+            trigger="manual",
+            force=True,
+            config=source,
+        )
+        mismatch_b = repository.queue_run(
+            kind="source",
+            target_id=source.config_id,
+            slot=stamp + timedelta(days=1),
+            trigger="manual",
+            force=True,
+            config=source,
+        )
+        mismatch_a.status = mismatch_b.status = "success"
+        mismatched_refs = publish(mismatch_a.run_id, stamp + timedelta(days=1))
+        repository.pointer_registry.publish(
+            source_id=source.config_id,
+            source_run_id=mismatch_b.run_id,
+            updates=[
+                DatasetPointerUpdate(
+                    "alias-b", mismatched_refs["alias-b"], stamp + timedelta(days=1), stamp + timedelta(days=1)
+                )
+            ],
+        )
+        runner._release_dependencies(repository, [source], [profile], producer_by_dataset, "test")
+        session.flush()
+        assert len(repository.list_runs(kind="profile")) == 1
+        assert mismatch_a.dependencies_released_at is None
+
+        aligned = repository.queue_run(
+            kind="source",
+            target_id=source.config_id,
+            slot=stamp + timedelta(days=2),
+            trigger="manual",
+            force=True,
+            config=source,
+        )
+        aligned.status = "success"
+        aligned_refs = publish(aligned.run_id, stamp + timedelta(days=2))
+        runner._release_dependencies(repository, [source], [profile], producer_by_dataset, "test")
+        session.flush()
+        profiles = repository.list_runs(kind="profile")
+        assert len(profiles) == 2
+        assert profiles[0].snapshot_payload["datasets"] == {
+            "left": aligned_refs["alias-a"],
+            "right": aligned_refs["alias-b"],
+        }
+        assert profiles[0].snapshot_payload["producer_provenance"][0]["aliases"] == ["left", "right"]
+
+
+def test_dependency_release_uses_latest_pointer_as_initial_baseline(tmp_path) -> None:
     database = f"sqlite:///{tmp_path / 'runs.db'}"
     store_uri = f"file:{tmp_path / 'store'}"
     upgrade_with_metadata(database)
@@ -536,7 +708,12 @@ def test_dependency_release_rejects_pointer_overwritten_by_newer_generation(tmp_
             "test",
         )
         session.flush()
-        assert repository.list_runs(kind="profile") == []
+        profiles = repository.list_runs(kind="profile")
+        assert len(profiles) == 1
+        assert profiles[0].snapshot_payload["datasets"] == {
+            "a": refs["a_new"],
+            "b": refs["b_old"],
+        }
 
         repository.pointer_registry.publish(
             source_id="overwrite-a",
@@ -554,7 +731,7 @@ def test_dependency_release_rejects_pointer_overwritten_by_newer_generation(tmp_
         profiles = repository.list_runs(kind="profile")
         assert len(profiles) == 1
         assert profiles[0].snapshot_payload["datasets"] == {
-            "a": refs["a_old"],
+            "a": refs["a_new"],
             "b": refs["b_old"],
         }
 

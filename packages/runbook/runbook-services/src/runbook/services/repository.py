@@ -327,6 +327,22 @@ class RunRepository:
         """Return the run with an exact effective identity, in any lifecycle state."""
         return self.session.scalar(select(Run).where(Run.identity_key == identity_key).limit(1))
 
+    def latest_automatic_profile(self, profile_id: str, config_revision: int, config_hash: str) -> Run | None:
+        """Return the newest dataset-triggered profile snapshot for one revision."""
+        return self.session.scalar(
+            select(Run)
+            .where(
+                Run.kind == "profile",
+                Run.target_id == profile_id,
+                Run.trigger == "dataset",
+                Run.config_revision == config_revision,
+                Run.config_hash == config_hash,
+                Run.snapshot_payload.is_not(None),
+            )
+            .order_by(desc(Run.requested_at), desc(Run.run_id))
+            .limit(1)
+        )
+
     def unreleased_successful_sources(self) -> list[Run]:
         """Return successful source roots whose durable release marker is unset."""
         return list(
@@ -338,47 +354,6 @@ class RunRepository:
                     Run.dependencies_released_at.is_(None),
                 )
                 .order_by(Run.finished_at, Run.run_id)
-            ).all()
-        )
-
-    def has_queued_or_running_source(self, source_ids: set[str], *, slot: datetime | None = None) -> bool:
-        """Return whether named sources have durable active work for a generation."""
-        if not source_ids:
-            return False
-        conditions = [
-            Run.kind == "source",
-            Run.target_id.in_(source_ids),
-            Run.status.in_(["queued", "running"]),
-        ]
-        if slot is not None:
-            normalized_slot = (
-                slot.replace(tzinfo=timezone.utc) if slot.tzinfo is None else slot.astimezone(timezone.utc)
-            )
-            conditions.append(Run.slot == normalized_slot)
-        return (self.session.scalar(select(func.count()).select_from(Run).where(*conditions)) or 0) > 0
-
-    def source_runs_at(self, source_id: str, slot: datetime) -> list[Run]:
-        """Return producer attempts in one exact refresh generation."""
-        normalized_slot = slot.replace(tzinfo=timezone.utc) if slot.tzinfo is None else slot.astimezone(timezone.utc)
-        return list(
-            self.session.scalars(
-                select(Run)
-                .where(
-                    Run.kind == "source",
-                    Run.target_id == source_id,
-                    Run.slot == normalized_slot,
-                )
-                .order_by(Run.requested_at, Run.run_id)
-            ).all()
-        )
-
-    def source_runs_since(self, source_id: str, slot: datetime) -> list[Run]:
-        """Return producer attempts for one refresh opportunity in order."""
-        return list(
-            self.session.scalars(
-                select(Run)
-                .where(Run.kind == "source", Run.target_id == source_id, Run.slot >= slot)
-                .order_by(Run.slot, Run.requested_at, Run.run_id)
             ).all()
         )
 

@@ -197,11 +197,13 @@ def test_lifecycle_diagnostics_include_cycle_and_lock_release(tmp_path, monkeypa
     assert "tick lock released" in messages
 
 
-def test_dependency_release_requires_current_pointer_for_each_successful_producer(tmp_path: Path) -> None:
+def test_dependency_release_accepts_staggered_slots_but_rejects_failed_run(tmp_path: Path) -> None:
     database = f"sqlite:///{tmp_path / 'runs.db'}"
     store_uri = f"file:{tmp_path / 'store'}"
     upgrade_with_metadata(database)
     slot = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    old_slot = slot - timedelta(days=1)
+    next_slot = slot + timedelta(days=1)
     with sync_sessions(database)() as session:
         repository = RunRepository(session)
         source_a = _source(repository, "producer_a")
@@ -211,56 +213,91 @@ def test_dependency_release_requires_current_pointer_for_each_successful_produce
             "profile",
             {"report_id": "report", "datasets": {"a": "producer_a", "b": "producer_b"}},
         )
-        attempts = {}
-        for source_id, config in (("producer_a", source_a), ("producer_b", source_b)):
-            attempt = repository.queue_run(
-                kind="source",
-                target_id=source_id,
-                slot=slot,
-                trigger="manual",
-                force=True,
-                config=config,
-            )
-            attempt.status = "success"
-            attempts[source_id] = attempt
+        baseline_a = repository.queue_run(
+            kind="source", target_id="producer_a", slot=slot, trigger="manual", force=True, config=source_a
+        )
+        baseline_b = repository.queue_run(
+            kind="source", target_id="producer_b", slot=old_slot, trigger="manual", force=True, config=source_b
+        )
+        baseline_a.status = baseline_b.status = "success"
         store = open_blob_store(store_uri)
         refs = {}
-        for dataset_id in ("producer_a", "producer_b"):
-            manifest, digest = build_manifest(dataset_id=dataset_id, watermark=slot, published_at=slot, files=[])
+        for dataset_id, watermark in (("producer_a", slot), ("producer_b", old_slot)):
+            manifest, digest = build_manifest(
+                dataset_id=dataset_id, watermark=watermark, published_at=watermark, files=[]
+            )
             refs[dataset_id] = write_manifests(store, [(manifest, digest)])[dataset_id]
         repository.pointer_registry.publish(
             source_id="producer_a",
-            source_run_id=attempts["producer_a"].run_id,
+            source_run_id=baseline_a.run_id,
             updates=[DatasetPointerUpdate("producer_a", refs["producer_a"], slot, slot)],
         )
+        repository.pointer_registry.publish(
+            source_id="producer_b",
+            source_run_id=baseline_b.run_id,
+            updates=[DatasetPointerUpdate("producer_b", refs["producer_b"], old_slot, old_slot)],
+        )
         runner = ServiceRunner(database=database, data_store=store_uri)
-        profile = runner._model(profile_config)
-        assert not runner._producer_settled(repository, profile, {"producer_a", "producer_b"}, slot)
+        runner._release_dependencies(
+            repository,
+            [source_a, source_b],
+            [profile_config],
+            {"producer_a": "producer_a", "producer_b": "producer_b"},
+            "test",
+        )
+        session.flush()
+        assert len(repository.list_runs(kind="profile")) == 1
+        assert baseline_a.dependencies_released_at is not None
+        assert baseline_b.dependencies_released_at is not None
 
-        old = slot - timedelta(days=1)
-        old_manifest, old_digest = build_manifest(dataset_id="producer_b", watermark=old, published_at=old, files=[])
-        old_ref = write_manifests(store, [(old_manifest, old_digest)])["producer_b"]
+        next_a = repository.queue_run(
+            kind="source", target_id="producer_a", slot=next_slot, trigger="manual", force=True, config=source_a
+        )
+        next_b = repository.queue_run(
+            kind="source", target_id="producer_b", slot=next_slot, trigger="manual", force=True, config=source_b
+        )
+        next_a.status = "success"
+        next_b.status = "failed"
+        next_refs = {}
+        for dataset_id in ("producer_a", "producer_b"):
+            manifest, digest = build_manifest(
+                dataset_id=dataset_id, watermark=next_slot, published_at=next_slot, files=[]
+            )
+            next_refs[dataset_id] = write_manifests(store, [(manifest, digest)])[dataset_id]
+        repository.pointer_registry.publish(
+            source_id="producer_a",
+            source_run_id=next_a.run_id,
+            updates=[DatasetPointerUpdate("producer_a", next_refs["producer_a"], next_slot, next_slot)],
+        )
         repository.pointer_registry.publish(
             source_id="producer_b",
-            source_run_id=attempts["producer_b"].run_id,
-            updates=[DatasetPointerUpdate("producer_b", old_ref, old, old)],
+            source_run_id=next_b.run_id,
+            updates=[DatasetPointerUpdate("producer_b", next_refs["producer_b"], next_slot, next_slot)],
         )
-        assert not runner._producer_settled(repository, profile, {"producer_a", "producer_b"}, slot)
+        runner._release_dependencies(
+            repository,
+            [source_a, source_b],
+            [profile_config],
+            {"producer_a": "producer_a", "producer_b": "producer_b"},
+            "test",
+        )
+        session.flush()
+        assert len(repository.list_runs(kind="profile")) == 1
+        assert next_a.dependencies_released_at is None
+        assert next_b.dependencies_released_at is None
 
-        attempts["producer_b"].status = "failed"
-        repository.pointer_registry.publish(
-            source_id="producer_b",
-            source_run_id=attempts["producer_b"].run_id,
-            updates=[DatasetPointerUpdate("producer_b", refs["producer_b"], slot, slot)],
+        next_b.status = "success"
+        runner._release_dependencies(
+            repository,
+            [source_a, source_b],
+            [profile_config],
+            {"producer_a": "producer_a", "producer_b": "producer_b"},
+            "test",
         )
-        assert not runner._producer_settled(repository, profile, {"producer_a", "producer_b"}, slot)
-        attempts["producer_b"].status = "success"
-        repository.pointer_registry.publish(
-            source_id="producer_b",
-            source_run_id=attempts["producer_b"].run_id,
-            updates=[DatasetPointerUpdate("producer_b", refs["producer_b"], slot, slot)],
-        )
-        assert runner._producer_settled(repository, profile, {"producer_a", "producer_b"}, slot)
+        session.flush()
+        assert len(repository.list_runs(kind="profile")) == 2
+        assert next_a.dependencies_released_at is not None
+        assert next_b.dependencies_released_at is not None
 
 
 def test_dependency_release_rolls_back_without_marker_on_profile_queue_failure(tmp_path: Path, monkeypatch) -> None:

@@ -615,16 +615,30 @@ def _editor_modal(prefix: str) -> html.Div:
 
 def _page_layout(prefix: str, spec: ConfigGridSpec) -> html.Div:
     """Main page layout"""
+    profile_run = spec.kind == "profile"
     return html.Div(
         [
             dcc.Store(id=f"{prefix}-editor-context"),
+            dcc.ConfirmDialog(
+                id=f"{prefix}-run-confirm",
+                message="Run the latest pinned snapshot? This manually bypasses the automatic dependency barrier.",
+            )
+            if profile_run
+            else None,
             html.H2(spec.title),
             html.Div(
                 [
                     html.Button(f"+ New {spec.kind}", id=f"{prefix}-new", n_clicks=0),
                     html.Button("Validate", id=f"{prefix}-validate", n_clicks=0),
                     html.Button("Save", id=f"{prefix}-save", n_clicks=0),
-                    html.Button("Run selected", id=f"{prefix}-run", n_clicks=0),
+                    html.Button(
+                        "Run latest snapshot (manual)",
+                        id=f"{prefix}-run",
+                        n_clicks=0,
+                        title="Requires confirmation and bypasses the automatic dependency barrier.",
+                    )
+                    if profile_run
+                    else html.Button("Run selected", id=f"{prefix}-run", n_clicks=0),
                     html.Button("Disable", id=f"{prefix}-disable", n_clicks=0),
                     html.Button("Refresh", id=f"{prefix}-refresh", n_clicks=0),
                 ],
@@ -690,6 +704,19 @@ def register_config_page(
     prefix = f"runbook-ui-{kind}s"
     register_page(module, path=path, name=name, order=order, layout=page_layout or _page_layout(prefix, spec))
 
+    if kind == "profile":
+
+        @dash_app.callback(
+            Output(f"{prefix}-run-confirm", "displayed"),
+            Input(f"{prefix}-run", "n_clicks"),
+            prevent_initial_call=True,
+        )
+        def confirm_profile_run(_n_clicks):
+            return True
+
+    run_trigger = f"{prefix}-run-confirm" if kind == "profile" else f"{prefix}-run"
+    run_input = run_trigger
+
     @dash_app.callback(
         Output(f"{prefix}-grid", "rowData"),
         Output(f"{prefix}-result", "children"),
@@ -697,7 +724,7 @@ def register_config_page(
         Input(f"{prefix}-new", "n_clicks"),
         Input(f"{prefix}-validate", "n_clicks"),
         Input(f"{prefix}-save", "n_clicks"),
-        Input(f"{prefix}-run", "n_clicks"),
+        Input(run_input, "submit_n_clicks" if kind == "profile" else "n_clicks"),
         Input(f"{prefix}-disable", "n_clicks"),
         State(f"{prefix}-grid", "rowData"),
         State(f"{prefix}-grid", "selectedRows"),
@@ -767,7 +794,7 @@ def register_config_page(
             except Exception as exc:
                 return no_update, f"Disable failed: {exc}"
 
-        if triggered == f"{prefix}-run":
+        if triggered == run_trigger:
             selected = _current_selected_row(row_data, selected_rows)
             if selected is None or selected.get("_new"):
                 return no_update, "Select a saved row first."

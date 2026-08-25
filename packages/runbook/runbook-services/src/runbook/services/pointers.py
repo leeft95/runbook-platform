@@ -7,8 +7,9 @@ import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
-from runbook.core import BlobStore, DatasetManifest, Snapshot
+from runbook.core import BlobStore, DatasetManifest, Snapshot, SnapshotProducer
 from runbook.core.utils.hashing import sha256_json
 from sqlalchemy import Column, DateTime, MetaData, String, Table, func, select
 from sqlalchemy.engine import Connection, Engine
@@ -228,6 +229,9 @@ def resolve_snapshot(
     *,
     pointer_registry: DatabasePointerRegistry,
     as_of: datetime | None = None,
+    producer_provenance: Iterable[SnapshotProducer] = (),
+    warnings: Iterable[str] = (),
+    provenance: Iterable[SnapshotProducer] | None = None,
 ) -> Snapshot:
     """Resolve current pointers into a deterministic immutable snapshot."""
     pointers = pointer_registry.get(bindings.values())
@@ -251,14 +255,27 @@ def resolve_snapshot(
         selected[alias] = ref
         manifests.append(manifest)
     watermark = min((manifest.watermark for manifest in manifests), default=datetime(1970, 1, 1, tzinfo=timezone.utc))
-    payload = {
+    if provenance is not None:
+        producer_provenance = provenance
+    normalized_provenance = tuple(sorted(producer_provenance, key=lambda item: (item.producer_id, item.source_run_id)))
+    normalized_warnings = tuple(sorted({str(item) for item in warnings}))
+    payload: dict[str, Any] = {
         "schema_version": "snapshot/1",
         "watermark": _utc(watermark).isoformat(),
         "as_of": _utc(as_of).isoformat() if as_of else None,
         "datasets": selected,
     }
+    if normalized_provenance:
+        payload["producer_provenance"] = [item.model_dump(mode="json") for item in normalized_provenance]
+    if normalized_warnings:
+        payload["warnings"] = list(normalized_warnings)
     return Snapshot(
-        snapshot_id=sha256_json(payload), watermark=watermark, as_of=_utc(as_of) if as_of else None, datasets=selected
+        snapshot_id=sha256_json(payload),
+        watermark=watermark,
+        as_of=_utc(as_of) if as_of else None,
+        datasets=selected,
+        producer_provenance=normalized_provenance,
+        warnings=normalized_warnings,
     )
 
 

@@ -1099,73 +1099,145 @@ def test_postgres_runner_signal_cancels_active_worker(tmp_path: Path, signum: in
         _stop_process(fixture)
 
 
-def test_postgres_two_source_durable_settlement_releases_one_profile(tmp_path: Path) -> None:
-    """Two real source workers settle one exact generation before one profile run."""
+def test_postgres_staggered_settlement_real_workers_and_manual_warning(tmp_path: Path) -> None:
+    """Exercise baseline, staggered advancement, manual bypass, and pinning."""
     database = _database()
     _upgrade(database)
-    identity = f"phaseb-two-source-{uuid4().hex}"
+    identity = f"phaseb-staggered-{uuid4().hex}"
     store_uri = f"file:{tmp_path / 'store'}"
     reports_root = tmp_path / "reports"
-    _write_report_module(reports_root, f"{identity}_report", title="two-source", aliases=("prices", "other"))
-    slot = datetime(2026, 1, 25, tzinfo=timezone.utc)
+    _write_report_module(reports_root, f"{identity}_report", title="staggered", aliases=("a", "b"))
+    slots = {
+        "a0": datetime(2026, 1, 1, 7, tzinfo=timezone.utc),
+        "b0": datetime(2026, 1, 1, 9, tzinfo=timezone.utc),
+        "a1": datetime(2026, 1, 2, 7, tzinfo=timezone.utc),
+        "b1": datetime(2026, 1, 2, 9, tzinfo=timezone.utc),
+    }
     with sync_sessions(database)() as session:
         repository = RunRepository(session)
-        source_configs = []
+        source_configs = {}
         for suffix in ("a", "b"):
             source_id = f"{identity}-{suffix}"
             dataset_id = f"{source_id}-dataset"
-            payload = _source_payload(dataset_id)
-            config = repository.save_config("source", source_id, payload)
-            repository.queue_run(
-                kind="source", target_id=source_id, slot=slot, trigger="manual", force=True, config=config
+            source_configs[suffix] = (
+                repository.save_config("source", source_id, _source_payload(dataset_id)),
+                dataset_id,
             )
-            source_configs.append((source_id, dataset_id))
         profile = repository.save_config(
             "profile",
             f"{identity}-profile",
             {
                 "report_id": f"{identity}_report",
-                "datasets": {"prices": source_configs[0][1], "other": source_configs[1][1]},
+                "datasets": {"a": source_configs["a"][1], "b": source_configs["b"][1]},
             },
         )
+        initial = {
+            suffix: repository.queue_run(
+                kind="source",
+                target_id=source_configs[suffix][0].config_id,
+                slot=slots[f"{suffix}0"],
+                trigger="manual",
+                force=True,
+                config=source_configs[suffix][0],
+            )
+            for suffix in ("a", "b")
+        }
         session.commit()
-    runner = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "runbook.services.cli",
-            "--database",
-            database,
-            "run",
-            "--store",
-            store_uri,
-            "--reports-root",
-            str(reports_root),
-            "--workers",
-            "2",
-            "--poll-interval",
-            "0.1",
-        ],
-        cwd=Path.cwd(),
-        env=_worker_environment(database, store_uri, str(reports_root)),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        for source_id, _dataset_id in source_configs:
-            _wait_target(database, "source", source_id, {"success"})
-        profile_row = _wait_target(database, "profile", profile.config_id, {"success"})
-        assert profile_row.snapshot_payload and profile_row.snapshot_id
-        assert set(profile_row.snapshot_payload["datasets"]) == {"prices", "other"}
-        with sync_sessions(database)() as session:
-            rows = RunRepository(session).list_runs(kind="profile", target_id=profile.config_id)
-            assert len(rows) == 1
-    finally:
-        _stop_process(runner)
+    for suffix in ("a", "b"):
+        with _worker_process(database, store_uri, initial[suffix].run_id) as process:
+            assert _wait_worker(database, initial[suffix].run_id, process).status == "success"
+
+    runner = ServiceRunner(database=database, data_store=store_uri, report_root=reports_root, workers=2)
+    runner.tick(code_version="staggered-test")
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        automatic = [
+            row for row in repository.list_runs(kind="profile", target_id=profile.config_id) if row.trigger == "dataset"
+        ]
+        assert len(automatic) == 1
+        baseline_payload = automatic[0].snapshot_payload
+        assert baseline_payload["warnings"] == []
+
+        a1 = repository.queue_run(
+            kind="source",
+            target_id=source_configs["a"][0].config_id,
+            slot=slots["a1"],
+            trigger="manual",
+            force=True,
+            config=source_configs["a"][0],
+        )
+        session.commit()
+    with _worker_process(database, store_uri, a1.run_id) as process:
+        assert _wait_worker(database, a1.run_id, process).status == "success"
+    runner.tick(code_version="staggered-test")
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        automatic = [
+            row for row in repository.list_runs(kind="profile", target_id=profile.config_id) if row.trigger == "dataset"
+        ]
+        assert len(automatic) == 1
+        assert repository.get_run(a1.run_id).dependencies_released_at is None
+        manual = repository.queue_run(
+            kind="profile",
+            target_id=profile.config_id,
+            slot=slots["a1"],
+            trigger="manual",
+            force=True,
+            config=profile,
+        )
+        session.commit()
+    runner.tick(code_version="staggered-test")
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        saved_manual = repository.get_run(manual.run_id)
+        assert saved_manual is not None and "barrier" in " ".join(saved_manual.snapshot_payload["warnings"])
+
+        b1 = repository.queue_run(
+            kind="source",
+            target_id=source_configs["b"][0].config_id,
+            slot=slots["b1"],
+            trigger="manual",
+            force=True,
+            config=source_configs["b"][0],
+        )
+        session.commit()
+    with _worker_process(database, store_uri, b1.run_id) as process:
+        assert _wait_worker(database, b1.run_id, process).status == "success"
+    runner.tick(code_version="staggered-test")
+    runner.tick(code_version="staggered-test")
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        automatic = [
+            row for row in repository.list_runs(kind="profile", target_id=profile.config_id) if row.trigger == "dataset"
+        ]
+        assert len(automatic) == 2
+        advanced = next(row for row in automatic if row.snapshot_id != baseline_payload.get("snapshot_id"))
+        assert advanced.snapshot_payload["warnings"] == []
+
+        # Pointer mutation after pinning cannot alter the immutable profile row.
+        old_payload = dict(advanced.snapshot_payload)
+        newer_manifest, digest = build_manifest(
+            dataset_id=source_configs["a"][1],
+            watermark=slots["b1"] + timedelta(days=1),
+            published_at=slots["b1"] + timedelta(days=1),
+            files=[],
+        )
+        newer_ref = write_manifests(open_blob_store(store_uri), [(newer_manifest, digest)])[source_configs["a"][1]]
+        repository.pointer_registry.publish(
+            source_id=source_configs["a"][0].config_id,
+            source_run_id="post-pin-mutation",
+            updates=[
+                DatasetPointerUpdate(
+                    source_configs["a"][1], newer_ref, newer_manifest.watermark, newer_manifest.published_at
+                )
+            ],
+        )
+        session.flush()
+        assert repository.get_run(advanced.run_id).snapshot_payload == old_payload
 
 
-def test_postgres_runner_rejects_pointer_overwritten_by_newer_generation(tmp_path: Path) -> None:
-    """A newer A pointer cannot combine with an older B generation."""
+def test_postgres_runner_establishes_baseline_with_staggered_generations(tmp_path: Path) -> None:
+    """The first staggered pointer set establishes the automatic baseline."""
     database = _database()
     _upgrade(database)
     identity = f"phaseb-generation-overwrite-{uuid4().hex}"
@@ -1210,6 +1282,9 @@ def test_postgres_runner_rejects_pointer_overwritten_by_newer_generation(tmp_pat
         session.commit()
     with _worker_process(database, store_uri, a_new.run_id) as process:
         assert _wait_worker(database, a_new.run_id, process).status == "success"
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        a_new_pointer = repository.pointer_registry.get([f"{identity}-a-dataset"])[f"{identity}-a-dataset"]
 
     with sync_sessions(database)() as session:
         repository = RunRepository(session)
@@ -1249,7 +1324,13 @@ def test_postgres_runner_rejects_pointer_overwritten_by_newer_generation(tmp_pat
     )
     assert first_tick.returncode == 0, first_tick.stderr
     with sync_sessions(database)() as session:
-        assert RunRepository(session).list_runs(kind="profile", target_id=profile.config_id) == []
+        rows = RunRepository(session).list_runs(kind="profile", target_id=profile.config_id)
+        assert len(rows) == 1
+        assert rows[0].status == "success"
+        assert rows[0].snapshot_payload["datasets"] == {
+            "a": a_new_pointer.manifest_ref,
+            "b": b_old_pointer.manifest_ref,
+        }
 
         repository = RunRepository(session)
         repository.pointer_registry.publish(
@@ -1295,7 +1376,7 @@ def test_postgres_runner_rejects_pointer_overwritten_by_newer_generation(tmp_pat
         assert len(rows) == 1
         assert rows[0].status == "success"
         assert rows[0].snapshot_payload["datasets"] == {
-            "a": a_old_pointer.manifest_ref,
+            "a": a_new_pointer.manifest_ref,
             "b": b_old_pointer.manifest_ref,
         }
 

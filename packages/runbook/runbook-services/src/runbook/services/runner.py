@@ -11,7 +11,7 @@ from threading import Event
 from typing import Any
 
 from loguru import logger
-from runbook.core import ReportProfile, SourceConfig, open_blob_store
+from runbook.core import ReportProfile, Snapshot, SnapshotProducer, SourceConfig, open_blob_store
 from runbook.core.keying import build_context_hash
 
 from .config import database_url, reports_root, store_uri, validate_config
@@ -246,9 +246,12 @@ class ServiceRunner:
         if isinstance(row.snapshot_payload, dict):
             return True
         try:
-            snapshot = resolve_snapshot(
-                open_blob_store(self.data_store), profile.datasets, pointer_registry=repository.pointer_registry
-            )
+            if row.trigger == "manual":
+                snapshot = self._manual_snapshot(repository, row, profile)
+            else:
+                snapshot = resolve_snapshot(
+                    open_blob_store(self.data_store), profile.datasets, pointer_registry=repository.pointer_registry
+                )
         except ValueError as exc:
             if str(exc).startswith("no pointer exists"):
                 repository.finish(row, status="waiting", reason=str(exc))
@@ -261,6 +264,130 @@ class ServiceRunner:
         row.snapshot_payload = snapshot.model_dump(mode="json")
         row.context_hash = build_context_hash(profile.execution_config())
         return True
+
+    def _pointer_provenance(
+        self,
+        repository: RunRepository,
+        profile: ReportProfile,
+        *,
+        require_success: bool,
+        expected_producers: dict[str, str] | None = None,
+    ) -> tuple[SnapshotProducer, ...] | None:
+        """Validate current pointers and collect one run per producer."""
+        pointers = repository.pointer_registry.get(profile.datasets.values(), for_update=True)
+        aliases: dict[str, list[str]] = defaultdict(list)
+        runs: dict[str, Run] = {}
+        for alias, dataset_id in sorted(profile.datasets.items()):
+            pointer = pointers.get(dataset_id)
+            if pointer is None:
+                return None
+            producer = pointer.source_id
+            if expected_producers is not None and expected_producers.get(dataset_id) != producer:
+                return None
+            aliases[producer].append(alias)
+            prior = runs.get(producer)
+            if prior is not None and prior.run_id != pointer.source_run_id:
+                # All aliases owned by one source must describe one durable run.
+                return None
+            source_run = repository.get_run(pointer.source_run_id)
+            if source_run is None or source_run.kind != "source" or source_run.target_id != producer:
+                return None
+            if require_success and source_run.status != "success":
+                return None
+            runs[producer] = source_run
+        return tuple(
+            SnapshotProducer(
+                producer_id=producer,
+                source_run_id=runs[producer].run_id,
+                slot=_aware_utc(runs[producer].slot),
+                aliases=tuple(aliases[producer]),
+            )
+            for producer in sorted(runs)
+        )
+
+    def _manual_snapshot(self, repository: RunRepository, row: Run, profile: ReportProfile) -> Snapshot:
+        """Pin latest pointers and preserve an explicit barrier-bypass notice."""
+        store = open_blob_store(self.data_store)
+        expected = self._configured_producers(repository, profile)
+        provenance = self._pointer_provenance(
+            repository,
+            profile,
+            require_success=True,
+            expected_producers=expected,
+        )
+        if provenance is None:
+            raise ValueError("current pointer provenance is incomplete")
+        baseline = repository.latest_automatic_profile(profile.profile_id, row.config_revision, row.config_hash)
+        warnings = ["Automatic dependency barrier bypassed by manual profile run."]
+        if baseline is None:
+            warnings.append("Automatic baseline unavailable; producer advancement was not checked.")
+        else:
+            base = self._snapshot_from_run(baseline)
+            if base is None:
+                warnings.append("Automatic baseline unavailable; producer advancement was not checked.")
+            else:
+                current = resolve_snapshot(
+                    store,
+                    profile.datasets,
+                    pointer_registry=repository.pointer_registry,
+                    producer_provenance=provenance,
+                )
+                for producer in self._non_advanced_producers(current, base):
+                    warnings.append(f"Producer {producer!r} did not advance beyond the latest automatic baseline.")
+        return resolve_snapshot(
+            store,
+            profile.datasets,
+            pointer_registry=repository.pointer_registry,
+            producer_provenance=provenance,
+            warnings=warnings,
+        )
+
+    def _configured_producers(self, repository: RunRepository, profile: ReportProfile) -> dict[str, str]:
+        """Resolve configured ownership for every dataset used by a profile."""
+        owners: dict[str, str] = {}
+        for config in repository.list_latest_configs("source"):
+            model = self._model(config)
+            if not isinstance(model, SourceConfig):
+                continue
+            for binding in model.datasets.values():
+                owners.setdefault(binding.dataset_id, model.source_id)
+        return {dataset_id: owners[dataset_id] for dataset_id in profile.datasets.values() if dataset_id in owners}
+
+    @staticmethod
+    def _snapshot_from_run(row: Run) -> Snapshot | None:
+        """Parse one persisted pinned snapshot, tolerating legacy payloads."""
+        if not isinstance(row.snapshot_payload, dict):
+            return None
+        try:
+            return Snapshot.model_validate(row.snapshot_payload)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _non_advanced_producers(
+        current: Snapshot,
+        baseline: Snapshot,
+    ) -> list[str]:
+        """Return producer IDs whose current provenance/ref did not advance."""
+        current_by_id = {item.producer_id: item for item in current.producer_provenance}
+        baseline_by_id = {item.producer_id: item for item in baseline.producer_provenance}
+        if baseline_by_id:
+            return sorted(
+                producer
+                for producer in set(current_by_id) | set(baseline_by_id)
+                if producer not in current_by_id
+                or producer not in baseline_by_id
+                or current_by_id[producer].source_run_id == baseline_by_id[producer].source_run_id
+            )
+        # Legacy snapshots have no producer evidence. Compare each producer's
+        # aliases to the old manifest refs instead.
+        result: list[str] = []
+        for producer, evidence in current_by_id.items():
+            baseline_refs = {alias: baseline.datasets.get(alias) for alias in evidence.aliases}
+            current_refs = {alias: current.datasets.get(alias) for alias in evidence.aliases}
+            if current_refs == baseline_refs:
+                result.append(producer)
+        return result
 
     def _reconcile_cancellations(self, session: Any, repository: RunRepository) -> None:
         """Stop only locally owned workers with durable cancellation intent."""
@@ -335,7 +462,6 @@ class ServiceRunner:
         code_version: str | None,
     ) -> None:
         """Durably release settled source dependencies and pin profile snapshots."""
-        store = open_blob_store(self.data_store)
         for source_row in repository.unreleased_successful_sources():
             if self._stop.is_set():
                 return
@@ -356,17 +482,11 @@ class ServiceRunner:
                 continue
             all_represented = True
             for config, profile, producers in affected:
-                if not self._producer_settled(
-                    repository,
-                    profile,
-                    producers,
-                    source_row.slot,
-                ):
-                    all_represented = False
-                    continue
-                try:
-                    snapshot = resolve_snapshot(store, profile.datasets, pointer_registry=repository.pointer_registry)
-                except ValueError:
+                # Resolve and validate the current identity before applying
+                # the baseline barrier. This also makes a second source row
+                # in one reconciliation see a snapshot queued by the first.
+                snapshot = self._settled_snapshot(repository, profile, producers)
+                if snapshot is None:
                     all_represented = False
                     continue
                 if self._stop.is_set():
@@ -377,6 +497,15 @@ class ServiceRunner:
                 )
                 existing = repository.get_identity(identity)
                 if existing is None:
+                    baseline_row = repository.latest_automatic_profile(
+                        profile.profile_id,
+                        config.revision,
+                        config.config_hash,
+                    )
+                    baseline = self._snapshot_from_run(baseline_row) if baseline_row is not None else None
+                    if baseline is not None and self._non_advanced_producers(snapshot, baseline):
+                        all_represented = False
+                        continue
                     if self._stop.is_set():
                         return
                     repository.queue_run(
@@ -401,41 +530,32 @@ class ServiceRunner:
             if all_represented:
                 source_row.dependencies_released_at = datetime.now(timezone.utc)
 
-    def _producer_settled(
+    def _settled_snapshot(
         self,
         repository: RunRepository,
         profile: ReportProfile,
         producers: set[str | None],
-        slot: datetime,
-    ) -> bool:
-        """Require one successful, current producer attempt per dataset.
-
-        A pointer left behind by an older or failed attempt is not a settled
-        refresh generation.  This explicit source->dataset rule avoids
-        releasing a profile from a mixed old/new snapshot without introducing
-        a general dependency graph.  Pointer rows stay locked until the
-        caller commits the queued snapshot.
-        """
+    ) -> Snapshot | None:
+        """Resolve current pointers with durable provenance and no slot gate."""
         if None in producers:
-            return False
-        if repository.has_queued_or_running_source({item for item in producers if item}, slot=slot):
-            return False
-        # Lock the current pointers for the rest of this transaction.  The
-        # subsequent snapshot resolution therefore cannot observe a pointer
-        # replacement after this generation check.
-        pointers = repository.pointer_registry.get(profile.datasets.values(), for_update=True)
-        for dataset_id in profile.datasets.values():
-            pointer = pointers.get(dataset_id)
-            if pointer is None or pointer.source_id not in producers:
-                return False
-            producer = pointer.source_id
-            attempts = repository.source_runs_at(producer, slot)
-            successful_run_ids = {attempt.run_id for attempt in attempts if attempt.status == "success"}
-            if pointer.source_run_id not in successful_run_ids:
-                return False
-            if _aware_utc(pointer.watermark) < _aware_utc(slot):
-                return False
-        return True
+            return None
+        provenance = self._pointer_provenance(
+            repository,
+            profile,
+            require_success=True,
+            expected_producers=self._configured_producers(repository, profile),
+        )
+        if provenance is None or {item.producer_id for item in provenance} != {item for item in producers if item}:
+            return None
+        try:
+            return resolve_snapshot(
+                open_blob_store(self.data_store),
+                profile.datasets,
+                pointer_registry=repository.pointer_registry,
+                producer_provenance=provenance,
+            )
+        except (OSError, TypeError, ValueError):
+            return None
 
     def _dispatch(self, session: Any, repository: RunRepository, *, code_version: str | None) -> None:
         """Claim and spawn no more than the configured local capacity."""
