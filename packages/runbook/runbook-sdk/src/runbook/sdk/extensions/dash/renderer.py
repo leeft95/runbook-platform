@@ -41,27 +41,28 @@ def render_dash_page(
     extension = parse_dash_extension(manifest)
     validate_dash_manifest(manifest, extension, definition)
     ids = DashIds(namespace)
-    components = _build_components(manifest, extension, ctx, ids)
+    controls = _build_controls(extension, ctx, ids) if extension else []
+    components = _build_components(manifest, ctx, ids)
 
     def layout_factory() -> Any:
         """Build the page layout without creating or owning a Dash app."""
         from dash import html
 
         columns = manifest.page.columns or 1
-        return html.Div(
-            [
-                html.H1(manifest.title),
-                _warning_component(manifest),
-                html.Div(
-                    components,
-                    style={
-                        "display": "grid",
-                        "gridTemplateColumns": f"repeat({columns}, minmax(0, 1fr))",
-                        "gap": "16px",
-                    },
-                ),
-            ]
+        children = [html.H1(manifest.title), _warning_component(manifest)]
+        if controls:
+            children.append(html.Div(controls))
+        children.append(
+            html.Div(
+                components,
+                style={
+                    "display": "grid",
+                    "gridTemplateColumns": f"repeat({columns}, minmax(0, 1fr))",
+                    "gap": "16px",
+                },
+            )
         )
+        return html.Div(children)
 
     def callback_registrar(app: Any) -> None:
         """Register this page's callbacks on the host-owned app."""
@@ -90,13 +91,12 @@ def _warning_component(manifest: PDLManifest) -> Any:
     )
 
 
-def _build_components(manifest: PDLManifest, extension: DashExtension | None, ctx: Any, ids: DashIds) -> list[Any]:
+def _build_components(manifest: PDLManifest, ctx: Any, ids: DashIds) -> list[Any]:
     """Translate PDL blocks to Dash components and place them in the PDL grid."""
     import dash_ag_grid as dag
     from dash import dcc, html
 
-    controls = _build_controls(extension, ctx, ids) if extension else []
-    components: list[Any] = list(controls)
+    components: list[Any] = []
     for block in manifest.page.blocks:
         title = html.H2(block.title) if block.title else None
         body: Any

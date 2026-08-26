@@ -28,6 +28,23 @@ def _manifest(title: str, *, handler: str = "filter") -> PDLManifest:
     )
 
 
+def test_dash_controls_render_before_report_grid() -> None:
+    manifest = _manifest("Layout")
+    page = render_dash_page(
+        manifest,
+        ReportDefinition([], {}, lambda _ctx: manifest, {"filter": lambda _ctx, _state: {}}),
+        SimpleNamespace(),
+        namespace="layout",
+    )
+    layout = page.layout()
+    controls, report_grid = layout.children[2], layout.children[3]
+
+    assert controls.children[0].children[1].id == page.ids.control("book")
+    assert layout.children.index(controls) < layout.children.index(report_grid)
+    assert controls not in report_grid.children
+    assert report_grid.children[0].id == page.ids.block("summary") + "-container"
+
+
 def test_two_dash_pages_compose_with_host_owned_navigation() -> None:
     definition = ReportDefinition(
         [],
