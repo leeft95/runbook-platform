@@ -41,28 +41,27 @@ def render_dash_page(
     extension = parse_dash_extension(manifest)
     validate_dash_manifest(manifest, extension, definition)
     ids = DashIds(namespace)
-    controls = _build_controls(extension, ctx, ids) if extension else []
-    components = _build_components(manifest, ctx, ids)
+    components = _build_components(manifest, extension, ctx, ids)
 
     def layout_factory() -> Any:
         """Build the page layout without creating or owning a Dash app."""
         from dash import html
 
         columns = manifest.page.columns or 1
-        children = [html.H1(manifest.title), _warning_component(manifest)]
-        if controls:
-            children.append(html.Div(controls))
-        children.append(
-            html.Div(
-                components,
-                style={
-                    "display": "grid",
-                    "gridTemplateColumns": f"repeat({columns}, minmax(0, 1fr))",
-                    "gap": "16px",
-                },
-            )
+        return html.Div(
+            [
+                html.H1(manifest.title),
+                _warning_component(manifest),
+                html.Div(
+                    components,
+                    style={
+                        "display": "grid",
+                        "gridTemplateColumns": f"repeat({columns}, minmax(0, 1fr))",
+                        "gap": "16px",
+                    },
+                ),
+            ]
         )
-        return html.Div(children)
 
     def callback_registrar(app: Any) -> None:
         """Register this page's callbacks on the host-owned app."""
@@ -91,11 +90,16 @@ def _warning_component(manifest: PDLManifest) -> Any:
     )
 
 
-def _build_components(manifest: PDLManifest, ctx: Any, ids: DashIds) -> list[Any]:
+def _build_components(manifest: PDLManifest, extension: DashExtension | None, ctx: Any, ids: DashIds) -> list[Any]:
     """Translate PDL blocks to Dash components and place them in the PDL grid."""
     import dash_ag_grid as dag
     from dash import dcc, html
 
+    controls = _build_controls(extension, ctx, ids) if extension else []
+    control_block = next(
+        (block for block in manifest.page.blocks if isinstance(block, PDLTableBlock)),
+        next(iter(manifest.page.blocks), None),
+    )
     components: list[Any] = []
     for block in manifest.page.blocks:
         title = html.H2(block.title) if block.title else None
@@ -114,7 +118,7 @@ def _build_components(manifest: PDLManifest, ctx: Any, ids: DashIds) -> list[Any
             # the renderer schema from the same logical columns to avoid exposing
             # parquet's synthetic __index_level_0__ field in AG Grid.
             schema = pa.Schema.from_pandas(frame, preserve_index=False)
-            body = dag.AgGrid(
+            grid = dag.AgGrid(
                 id=ids.block(block.name),
                 rowData=_records(frame, block.columns),
                 columnDefs=build_ag_grid_column_defs(schema, block.columns),
@@ -125,8 +129,11 @@ def _build_components(manifest: PDLManifest, ctx: Any, ids: DashIds) -> list[Any
                 # trusted preloaded d3 namespace; PDL has no JS escape hatch.
                 enableEnterpriseModules=True,
             )
+            body = grid
         else:
             raise ValueError(f"unsupported PDL block type: {block.type!r}")
+        if controls and block is control_block:
+            body = html.Div([*controls, body])
         position = {
             "gridRow": f"{block.row} / span {block.row_span}",
             "gridColumn": f"{block.col} / span {block.col_span}",

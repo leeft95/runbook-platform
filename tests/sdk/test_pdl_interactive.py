@@ -318,11 +318,19 @@ def test_rendered_table_uses_logical_schema_and_trusted_grid_props(tmp_path) -> 
                 )
             ],
         ),
-        extensions={"dash": dashboard().model_dump(mode="json")},
+        extensions={"dash": dashboard(controls=[multi_select("book", options=["Alpha"])]).model_dump(mode="json")},
     )
     definition = ReportDefinition([], {}, lambda _: manifest, {})
     page = render_dash_page(manifest, definition, ctx, namespace="grid")
     layout = page.layout()
+    report_grid = layout.children[2]
+    report_block = report_grid.children[0]
+    body = report_block.children[0]
+    assert len(report_grid.children) == 1
+    assert body.__class__.__name__ == "Div"
+    assert body.children[0].children[1].id == page.ids.control("book")
+    assert body.children[1].__class__.__name__ == "AgGrid"
+    assert body.children[1].id == page.ids.block("positions")
 
     def find_grid(node):
         if node.__class__.__name__ == "AgGrid":
