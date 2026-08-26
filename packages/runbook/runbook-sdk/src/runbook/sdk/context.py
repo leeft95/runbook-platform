@@ -60,9 +60,14 @@ class Ctx:
         validate_artifact_name(name)
         self._calc_fns[name] = fn
 
-    def dataset(self, alias: str) -> pd.DataFrame:
+    def dataset(self, alias: str, *, filters: Mapping[str, object] | None = None) -> pd.DataFrame:
         """Load one immutable snapshot dataset by report alias."""
-        return load_snapshot_dataset(self._store, self.snapshot, alias)
+        return load_snapshot_dataset(
+            self._store,
+            self.snapshot,
+            alias,
+            filters=filters or None,
+        )
 
     def get_params(self, model: type[TParams]) -> TParams:
         """Validate the JSON report parameters with a Pydantic or dataclass model."""
