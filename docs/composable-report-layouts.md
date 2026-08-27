@@ -48,6 +48,12 @@ coordinates in normal authoring. Placement is stable first-fit, left-to-right
 and then top-to-bottom. `col_span` and `row_span` are optional, and invalid
 spans fail before rendering.
 
+Blocks added directly to a `Report` or `Section` are full width. Use a `Grid`
+when horizontal span or multi-column placement is required.
+
+Headings are authoring-level layout elements lowered to the existing PDL text
+representation; renderers display them as heading-only blocks.
+
 Non-empty logical grids share one PDL page width. Their column counts are
 combined with `math.lcm`; each local position is scaled into those tracks. The
 default `layout.max_columns` limit is 12. A larger LCM requires explicitly
