@@ -1,5 +1,23 @@
 # Getting started
 
+For normal reports, start with ordinary Python and the composable layout API:
+
+```python
+from runbook.sdk.layout import Report
+
+page = Report("Prices")
+with page.section("Markets") as markets:
+    with markets.grid(columns=2) as cards:
+        for symbol in symbols:
+            cards.table(ctx.artifact.table(make_table(symbol), name=symbol), title=symbol)
+            cards.plot(ctx.artifact.plot(make_chart(symbol), name=f"{symbol}-chart"), title=symbol)
+return page
+```
+
+The execution layer compiles this `Report` to the existing PDL manifest, then
+the same manifest can render to HTML or Dash. See [Composable report
+layouts](composable-report-layouts) for list/generator and span examples.
+
 Runbook development uses Python 3.11 and Pixi. The repository's normal test
 and lint commands are:
 

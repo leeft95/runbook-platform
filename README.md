@@ -6,6 +6,11 @@ calculations, and one canonical plain-JSON report manifest (PDL). That
 manifest renders as portable HTML and, when enabled, as an embeddable
 interactive DashPage.
 
+Analysts normally compose `Report`, `Section`, and `Grid` objects with ordinary
+Python loops. The SDK compiles that layout to canonical PDL before HTML or
+Dash rendering; raw PDL remains an escape hatch for unusual cases. See
+[Composable report layouts](docs/composable-report-layouts.md).
+
 ## Packages
 
 - `runbook-core`: pure contracts, hashing, analysis, tables, and plots.
@@ -47,6 +52,7 @@ as the deterministic append key and watermark.
 ## Documentation
 
 - [Runbook documentation site](https://redcombojnr.github.io/runbook-platform/)
+- [Composable report layouts](docs/composable-report-layouts.md): ordinary Python, grids, spans, and compilation.
 - [Data guide](docs/data.md): ingest the synthetic fixtures, configure sources,
   understand manifests, and load current or historical datasets.
 - [PDL interactive reports](docs/pdl-interactive.md): semantic tables, HTML

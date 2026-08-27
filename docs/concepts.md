@@ -8,8 +8,10 @@ Runbook has four bounded stages:
    and a complete content-addressed manifest.
 3. **Calculation** resolves a dataset snapshot and evaluates report
    calculations lazily, with immutable cache entries.
-4. **Rendering** turns the canonical PDL page manifest and its artifacts into
-   HTML or an optional interactive DashPage.
+4. **Layout and rendering** compose a report with ordinary Python
+   `Report`/`Section`/`Grid` objects, lower the result to the canonical PDL
+   page manifest, and render its artifacts as HTML or an optional interactive
+   DashPage.
 
 The service plane coordinates these stages, while the blob store retains
 immutable data and artifacts.

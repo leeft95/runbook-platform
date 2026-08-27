@@ -1,7 +1,8 @@
 # Interactive PDL reports
 
 PDL is the canonical semantic report product. A report author writes ordinary
-Python that produces one `pdl-core/0.1` JSON manifest. The manifest is useful
+Python that composes `Report`/`Section`/`Grid`; the SDK lowers it to one
+`pdl-core/0.1` JSON manifest. The manifest is useful
 without an interactive runtime and can be rendered by multiple consumers:
 
 ```text
@@ -11,6 +12,11 @@ snapshot -> report code -> canonical PDL
                                       |-> standalone preview
                                       |-> host-owned multi-page app
 ```
+
+Layout compilation is renderer-neutral. Tables and plots receive existing
+artifact references, and interactive names/extensions pass through unchanged.
+The public Dash renderer sees only compiled PDL, so static HTML remains the
+first compatibility check.
 
 ## Semantic tables
 

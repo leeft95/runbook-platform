@@ -14,6 +14,8 @@ The documentation is organized around the work you need to do:
 getting-started
 concepts
 reports
+composable-report-layouts
+maintaining-layout-authoring
 pdl-interactive
 dash-renderer-extensions
 data

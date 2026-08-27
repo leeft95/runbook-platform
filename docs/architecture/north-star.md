@@ -17,6 +17,7 @@ source config
     -> source-blind Stage 2 curation and prepared pointer update
     -> pinned dataset snapshot
     -> deterministic report execution
+    -> Report / Section / Grid layout compilation
     -> canonical PDL manifest
         -> portable HTML artifact
         -> optional interactive DashPage
@@ -82,6 +83,10 @@ navigation metadata. AG Grid handles table-native operations client-side;
 plain Python interaction handlers update analytical outputs. Optional live
 providers are injected capabilities addressed by logical names, never
 credentials in PDL or profiles.
+
+Layout authoring is an SDK concern: ordinary Python is stored in plain
+Report/Section/Grid objects, then compiled once to the canonical PDL contract.
+Renderers and the service plane do not receive layout objects.
 
 The local rules are:
 

@@ -1,8 +1,32 @@
 # Author and run reports
 
 Reports are ordinary Python modules. They declare dataset aliases, register
-named calculations, and return a PDL page manifest. The SDK runs the same
-report code for preview and service execution.
+named calculations, and return a `Report` layout. The SDK compiles that
+layout to one canonical PDL manifest and runs the same report code for preview
+and service execution. Raw PDL remains available when the high-level API
+cannot express a requirement.
+
+## Compose a page
+
+Use `Report`, `Section`, and `Grid` from `runbook.sdk.layout`. Add blocks in
+ordinary loops; do not calculate row or column coordinates:
+
+```python
+from runbook.sdk.layout import Report
+
+page = Report("Weekly prices")
+with page.section("Markets") as markets:
+    with markets.grid(columns=2) as cards:
+        for symbol in symbols:
+            cards.table(ctx.artifact.table(make_table(symbol), name=symbol), title=symbol)
+            cards.plot(ctx.artifact.plot(make_chart(symbol), name=f"{symbol}-plot"), title=symbol)
+return page
+```
+
+`Report`/`Section` support `add`, `extend`, and `heading`; `Grid` supports
+`add`, `extend`, `table`, `plot`, and `text`. The functional helpers
+`report`, `section`, and `grid` accept the same plain lists, tuples, and
+generators. Empty grids and sections are omitted, and names are deterministic.
 
 ## Declare aliases and calculations
 
