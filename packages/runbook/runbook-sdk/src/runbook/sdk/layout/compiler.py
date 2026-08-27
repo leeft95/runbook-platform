@@ -107,6 +107,16 @@ def _validate_grid(grid: GridLayout, owner: str) -> None:
             )
 
 
+def _validate_direct_block(block: LayoutBlock) -> None:
+    """Reject horizontal spans that direct blocks cannot express."""
+    if block.col_span != 1:
+        raise ValueError(
+            f"Direct block {block.name or '<unnamed>'!r} cannot specify "
+            f"col_span={block.col_span}; place the block inside a Grid "
+            "to control horizontal span."
+        )
+
+
 def _configured_limit(ctx: Any) -> int:
     """Read and validate the optional report page-width limit."""
     config = getattr(ctx, "config", {})
@@ -219,6 +229,7 @@ def compile_layout(ctx: Any, report: Report | ReportLayout) -> Any:
     def add_direct(block: LayoutBlock, owner: str) -> None:
         """Append one direct full-width block."""
         nonlocal row_cursor, auto_index
+        _validate_direct_block(block)
         auto_index += 1
         name = _block_name(block, owner, auto_index)
         pdl_blocks.append(

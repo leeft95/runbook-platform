@@ -71,6 +71,53 @@ def test_invalid_spans_have_grid_context() -> None:
             report_grid.text("bad", row_span=0)
 
 
+def test_direct_report_block_rejects_col_span() -> None:
+    layout = Report("Direct")
+    layout.add(text("hello", name="summary", col_span=2))
+
+    with pytest.raises(ValueError, match="Direct block.*col_span=2.*inside a Grid"):
+        compile_layout(_ctx(), layout)
+
+    unnamed = Report("Direct")
+    unnamed_block = unnamed.add(text("hello", col_span=2))
+    unnamed_block.name = None
+    with pytest.raises(ValueError, match="Direct block '<unnamed>'.*inside a Grid"):
+        compile_layout(_ctx(), unnamed)
+
+
+def test_direct_section_block_rejects_col_span() -> None:
+    layout = Report("Direct")
+    with layout.section("Details") as details:
+        details.add(text("hello", name="summary", col_span=2))
+
+    with pytest.raises(ValueError, match="Direct block.*col_span=2.*inside a Grid"):
+        compile_layout(_ctx(), layout)
+
+
+def test_direct_blocks_are_full_width_and_preserve_row_span() -> None:
+    layout = Report("Direct")
+    layout.add(text("hello", row_span=2))
+    with layout.grid(columns=2) as report_grid:
+        report_grid.text("grid")
+
+    blocks = compile_layout(_ctx(), layout).page.blocks
+    assert (blocks[0].col, blocks[0].col_span, blocks[0].row_span) == (1, 2, 2)
+    assert (blocks[1].row, blocks[1].col, blocks[1].col_span) == (3, 1, 1)
+
+
+def test_direct_section_block_is_full_width_and_preserves_row_span() -> None:
+    layout = Report("Direct")
+    with layout.section("Details") as details:
+        details.add(text("hello", row_span=2))
+        with details.grid(columns=2) as report_grid:
+            report_grid.text("grid")
+
+    manifest = compile_layout(_ctx(), layout)
+    direct = manifest.page.blocks[1]
+    assert (direct.col, direct.col_span, direct.row_span) == (1, manifest.page.columns, 2)
+    assert manifest.page.columns == 2
+
+
 def test_functional_collections_and_empty_sections() -> None:
     blocks = [text("a"), text("b")]
     empty_items: tuple[str, ...] = ()
