@@ -65,5 +65,11 @@ def _missing(path: Path) -> list[str]:
 
 def test_runtime_callables_have_docstrings() -> None:
     roots = [Path("packages"), Path("reports")]
-    missing = [entry for root in roots for path in root.rglob("*.py") for entry in _missing(path)]
+    missing = [
+        entry
+        for root in roots
+        for path in root.rglob("*.py")
+        if "build" not in path.parts and "dist" not in path.parts
+        for entry in _missing(path)
+    ]
     assert not missing, "Missing callable docstrings:\n" + "\n".join(missing)

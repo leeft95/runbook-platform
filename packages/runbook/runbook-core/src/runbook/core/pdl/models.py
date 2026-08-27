@@ -178,7 +178,7 @@ class PDLPage(BaseModel):
 
     page_type: PDLPageType
     rows: int | None = Field(default=None, ge=1)
-    columns: int | None = Field(default=None, ge=1, le=12)
+    columns: int | None = Field(default=None, ge=1)
     blocks: list[PDLBlock] = Field(min_length=1)
 
     @model_validator(mode="after")

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pandas as pd
 import plotly.graph_objects as go
-from runbook.sdk import column, currency, date, manifest, percent, plot, report, required_aliases, table, text
+from runbook.sdk import column, currency, date, percent, report, required_aliases
 from runbook.sdk.extensions.dash import dashboard, dataset_values, date_range, interaction, multi_select, select
+from runbook.sdk.layout import Report
 from runbook.sdk.live import LiveCapabilityUnavailableError
-from runbook.sdk.ui import grid
 
 ALIASES = required_aliases(pnl="pnl")
 
@@ -122,33 +122,8 @@ def page(ctx):
     table_frame = frame.assign(date=frame["date"].dt.date)
     table_ref = ctx.artifact.table(table_frame, name="positions")
     chart_ref = ctx.artifact.plot(build_chart(frame), name="pnl_chart")
-    return manifest(
-        ctx,
-        title="PnL Explorer",
-        page=grid(
-            rows=3,
-            columns=12,
-            blocks=[
-                text(name="summary", text=build_summary(frame), row=1, col=1, col_span=12),
-                plot(name="pnl_chart", ref=chart_ref, row=2, col=1, col_span=12),
-                table(
-                    name="positions",
-                    ref=table_ref,
-                    row=3,
-                    col=1,
-                    col_span=12,
-                    columns=[
-                        column("date", role="time", format=date()),
-                        column("book", role="dimension"),
-                        column("strategy", role="dimension"),
-                        column("instrument", role="identifier"),
-                        column("pnl", role="measure", aggregation="sum", format=currency("GBP", decimals=0)),
-                        column("exposure", role="measure", aggregation="sum", format=currency("GBP", decimals=0)),
-                        column("return", role="measure", aggregation="avg", format=percent(decimals=2)),
-                    ],
-                ),
-            ],
-        ),
+    layout = Report(
+        "PnL Explorer",
         extensions={
             "dash": dashboard(
                 controls=[
@@ -166,3 +141,21 @@ def page(ctx):
             )
         },
     )
+    with layout.grid(columns=12) as report_grid:
+        report_grid.text(build_summary(frame), name="summary", col_span=12)
+        report_grid.plot(chart_ref, name="pnl_chart", col_span=12)
+        report_grid.table(
+            table_ref,
+            name="positions",
+            col_span=12,
+            columns=[
+                column("date", role="time", format=date()),
+                column("book", role="dimension"),
+                column("strategy", role="dimension"),
+                column("instrument", role="identifier"),
+                column("pnl", role="measure", aggregation="sum", format=currency("GBP", decimals=0)),
+                column("exposure", role="measure", aggregation="sum", format=currency("GBP", decimals=0)),
+                column("return", role="measure", aggregation="avg", format=percent(decimals=2)),
+            ],
+        )
+    return layout

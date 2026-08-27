@@ -21,6 +21,7 @@ from runbook.core.utils.hashing import sha256_json
 from runbook.sdk.context import Ctx
 from runbook.sdk.discovery import discover_report_definition
 from runbook.sdk.html import DEFAULT_GRID_CSS, DEFAULT_GRID_CSS_REF, render_html
+from runbook.sdk.layout import Report, compile_layout
 from runbook.sdk.live import LiveDataResolver
 from runbook.sdk.profiles import ReportProfile, resolve_report_path
 
@@ -187,6 +188,8 @@ def execute_report(
     for name, function in definition.calc_fns.items():
         ctx.register_calc(name, function)
     result = definition.page_fn(ctx)
+    if isinstance(result, Report):
+        result = compile_layout(ctx, result)
     if (
         ctx.config != original_config
         or ctx.context_hash != context_hash

@@ -1,5 +1,6 @@
 import pandas as pd
 from runbook.sdk import plot_line, report, required_aliases
+from runbook.sdk.layout import Report
 from runbook.sdk.table_style import (
     action,
     condition,
@@ -9,7 +10,6 @@ from runbook.sdk.table_style import (
     table_style,
     target_columns,
 )
-from runbook.sdk.ui import grid, manifest, plot, table
 
 ALIASES = required_aliases(prices="prices")
 
@@ -110,41 +110,10 @@ def page(ctx):
     returns_plot_ref = ctx.artifact.plot(fig_returns, name="returns")
     vol_plot_ref = ctx.artifact.plot(fig_vol, name="vol")
 
-    return manifest(
-        ctx,
-        title=ctx.config.get("title", "Range Vol (PoC)"),
-        page=grid(
-            rows=2,
-            columns=2,
-            blocks=[
-                table(
-                    name="returns_table",
-                    title="Returns",
-                    ref=returns_ref,
-                    row=1,
-                    col=1,
-                ),
-                plot(
-                    name="returns_plot",
-                    title="Returns Plot",
-                    ref=returns_plot_ref,
-                    row=1,
-                    col=2,
-                ),
-                table(
-                    name="vol_table",
-                    title="Volatility",
-                    ref=vol_ref,
-                    row=2,
-                    col=1,
-                ),
-                plot(
-                    name="vol_plot",
-                    title="Volatility Plot",
-                    ref=vol_plot_ref,
-                    row=2,
-                    col=2,
-                ),
-            ],
-        ),
-    )
+    layout = Report(ctx.config.get("title", "Range Vol (PoC)"))
+    with layout.grid(columns=2) as report_grid:
+        report_grid.table(returns_ref, name="returns_table", title="Returns")
+        report_grid.plot(returns_plot_ref, name="returns_plot", title="Returns Plot")
+        report_grid.table(vol_ref, name="vol_table", title="Volatility")
+        report_grid.plot(vol_plot_ref, name="vol_plot", title="Volatility Plot")
+    return layout
