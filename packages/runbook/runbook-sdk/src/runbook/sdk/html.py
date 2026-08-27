@@ -57,7 +57,7 @@ def render_html(store: BlobStore, manifest: PDLManifest, prefix: str) -> str:
     for index, block in enumerate(page.blocks):
         title = f"<h2>{escape(block.title)}</h2>" if block.title else ""
         if block.type == "text":
-            body = f"<pre>{escape(block.text)}</pre>"
+            body = "" if block.text == "" and block.title else f"<pre>{escape(block.text)}</pre>"
         elif block.type == "table":
             if block.html_ref:
                 body = store.get(_key(prefix, block.html_ref)).decode("utf-8")

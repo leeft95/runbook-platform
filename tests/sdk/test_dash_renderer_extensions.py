@@ -35,6 +35,23 @@ def _manifest() -> PDLManifest:
     )
 
 
+def _heading_manifest(*, controls: bool = False) -> PDLManifest:
+    return PDLManifest(
+        title="Heading",
+        snapshot_id="s",
+        as_of="2024-01-01T00:00:00Z",
+        page=PDLPage(
+            page_type=PDLPageType.grid,
+            rows=1,
+            columns=1,
+            blocks=[PDLTextBlock(name="heading", title="Summary", text="", row=1, col=1)],
+        ),
+        extensions={"dash": dashboard(controls=[select("book", options=["A", "B"])]).model_dump(mode="json")}
+        if controls
+        else None,
+    )
+
+
 def _definition(manifest: PDLManifest, calls: list[dict[str, object]]) -> ReportDefinition:
     def handler(_ctx: object, state: dict[str, object]) -> dict[str, str]:
         calls.append(state)
@@ -82,6 +99,48 @@ class FakeRenderer:
         if self.fallback:
             return None
         return html.Div([title, body], className=f"custom-{namespace}-block")
+
+
+def test_heading_block_has_no_dash_body_and_extension_receives_none() -> None:
+    manifest = _heading_manifest()
+    definition = _definition(manifest, [])
+
+    page = render_dash_page(manifest, definition, SimpleNamespace(), namespace="heading")
+    report_block = page.layout().children[2].children[0]
+    assert report_block.id == page.ids.block("heading") + "-container"
+    assert report_block.style == {"gridRow": "1 / span 1", "gridColumn": "1 / span 1"}
+    assert len(report_block.children) == 1
+    assert report_block.children[0].__class__.__name__ == "H2"
+
+    renderer = FakeRenderer()
+    extended_page = render_dash_page(
+        manifest,
+        definition,
+        SimpleNamespace(),
+        namespace="heading-extension",
+        renderer_extension=renderer,
+    )
+    extended_root = extended_page.layout().children
+    extended_block = extended_root.children[2].children[0]
+    assert extended_block.id == extended_page.ids.block("heading") + "-container"
+    assert renderer.block_calls[0][0] is None
+
+    control_manifest = _heading_manifest(controls=True)
+    control_renderer = FakeRenderer()
+    control_page = render_dash_page(
+        control_manifest,
+        _definition(control_manifest, []),
+        SimpleNamespace(),
+        namespace="heading-controls",
+        renderer_extension=control_renderer,
+    )
+    control_root = control_page.layout().children
+    control_block = control_root.children[2].children[0]
+    control_body: Any = control_renderer.block_calls[0][0]
+    assert control_block.id == control_page.ids.block("heading") + "-container"
+    assert control_renderer.control_calls[0][1] == control_page.ids.control("book")
+    assert control_body.children[0].children[1].id == control_page.ids.control("book")
+    assert control_body.children[1] is None
 
 
 def test_renderer_extension_hooks_preserve_public_ids_and_body() -> None:

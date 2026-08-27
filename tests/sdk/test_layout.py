@@ -241,6 +241,16 @@ def test_direct_blocks_and_headings_are_full_width_and_ordered() -> None:
     assert all(block.col == 1 and block.col_span == 1 for block in blocks)
 
 
+def test_heading_compiles_as_title_only_text_block() -> None:
+    layout = Report("Heading")
+    layout.heading("Summary")
+
+    block = compile_layout(_ctx(), layout).page.blocks[0]
+    assert block.type == "text"
+    assert block.title == "Summary"
+    assert block.text == ""
+
+
 def test_static_html_accepts_compiled_layout() -> None:
     layout = Report("HTML")
     layout.add(text("hello", title="Greeting"))
@@ -248,6 +258,16 @@ def test_static_html_accepts_compiled_layout() -> None:
     html = render_html(SimpleNamespace(), manifest, "reports/layout")
     assert "Greeting" in html
     assert "hello" in html
+
+
+def test_static_html_omits_heading_body_but_preserves_empty_text_body() -> None:
+    layout = Report("HTML")
+    layout.heading("Summary")
+    layout.add(text(""))
+
+    html = render_html(SimpleNamespace(), compile_layout(_ctx(), layout), "reports/layout")
+    assert "<h2>Summary</h2>" in html
+    assert html.count("<pre></pre>") == 1
 
 
 def test_large_loop_composition_is_coordinates_free() -> None:

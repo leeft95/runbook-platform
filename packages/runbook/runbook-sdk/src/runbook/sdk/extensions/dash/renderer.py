@@ -117,11 +117,14 @@ def _build_components(
         title = html.H2(block.title) if block.title else None
         body: Any
         if isinstance(block, PDLTextBlock):
-            body = (
-                dcc.Markdown(block.text, id=ids.block(block.name))
-                if block.format == "markdown"
-                else html.Pre(block.text, id=ids.block(block.name))
-            )
+            if block.text == "" and block.title:
+                body = None
+            else:
+                body = (
+                    dcc.Markdown(block.text, id=ids.block(block.name))
+                    if block.format == "markdown"
+                    else html.Pre(block.text, id=ids.block(block.name))
+                )
         elif isinstance(block, PDLPlotRefBlock):
             body = dcc.Graph(id=ids.block(block.name), figure=_read_json(ctx, block.ref))
         elif isinstance(block, PDLTableBlock):
