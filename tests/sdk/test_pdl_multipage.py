@@ -28,6 +28,17 @@ def _manifest(title: str, *, handler: str = "filter") -> PDLManifest:
     )
 
 
+class _FakeRenderer:
+    def wrap_page(self, content, *, manifest, namespace):
+        return html.Div(content, id=f"custom-{namespace}-page")
+
+    def render_control(self, control, *, component_id, options):
+        return None
+
+    def wrap_block(self, body, *, block, title, namespace):
+        return None
+
+
 def test_dash_controls_render_inside_report_block_without_table() -> None:
     manifest = _manifest("Layout")
     page = render_dash_page(
@@ -58,8 +69,20 @@ def test_two_dash_pages_compose_with_host_owned_navigation() -> None:
         },
     )
     ctx = SimpleNamespace()
-    page_a = render_dash_page(_manifest("A", handler="filter_a"), definition, ctx, namespace="report-a")
-    page_b = render_dash_page(_manifest("B", handler="filter_b"), definition, ctx, namespace="report-b")
+    page_a = render_dash_page(
+        _manifest("A", handler="filter_a"),
+        definition,
+        ctx,
+        namespace="report-a",
+        renderer_extension=_FakeRenderer(),
+    )
+    page_b = render_dash_page(
+        _manifest("B", handler="filter_b"),
+        definition,
+        ctx,
+        namespace="report-b",
+        renderer_extension=_FakeRenderer(),
+    )
     app = Dash(__name__ + "_multipage", use_pages=False)
     app.layout = html.Div([dcc.Location(id="host-path"), html.Div(id="host-content")])
 
@@ -93,6 +116,7 @@ def test_two_dash_pages_compose_with_host_owned_navigation() -> None:
     assert route_response.status_code == 200
     assert page_b.ids.block("summary").encode() in route_response.data
     assert page_a.ids.block("summary").encode() not in route_response.data
+    assert b'"id":"custom-report-b-page"' in route_response.data
 
     for page, prefix in ((page_a, "A"), (page_b, "B")):
         callback_key = next(key for key in app.callback_map if page.ids.block("summary") in key)

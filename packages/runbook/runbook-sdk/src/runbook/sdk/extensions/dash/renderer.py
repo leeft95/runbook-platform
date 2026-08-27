@@ -21,6 +21,7 @@ from runbook.sdk.extensions.dash.models import (
     DatasetValues,
 )
 from runbook.sdk.extensions.dash.page import DashPage
+from runbook.sdk.extensions.dash.renderer_extensions import DashRendererExtension
 from runbook.sdk.extensions.dash.tables import ag_grid_default_col_def, build_ag_grid_column_defs
 from runbook.sdk.extensions.dash.validation import (
     parse_dash_extension,
@@ -36,19 +37,20 @@ def render_dash_page(
     ctx: Any,
     *,
     namespace: str,
+    renderer_extension: DashRendererExtension | None = None,
 ) -> DashPage:
     """Render a canonical PDL manifest into an embeddable, namespaced page."""
-    extension = parse_dash_extension(manifest)
-    validate_dash_manifest(manifest, extension, definition)
+    pdl_extension = parse_dash_extension(manifest)
+    validate_dash_manifest(manifest, pdl_extension, definition)
     ids = DashIds(namespace)
-    components = _build_components(manifest, extension, ctx, ids)
+    components = _build_components(manifest, pdl_extension, ctx, ids, renderer_extension)
 
     def layout_factory() -> Any:
         """Build the page layout without creating or owning a Dash app."""
         from dash import html
 
         columns = manifest.page.columns or 1
-        return html.Div(
+        content = html.Div(
             [
                 html.H1(manifest.title),
                 _warning_component(manifest),
@@ -62,10 +64,14 @@ def render_dash_page(
                 ),
             ]
         )
+        if renderer_extension is None:
+            return content
+        wrapped = renderer_extension.wrap_page(content, manifest=manifest, namespace=namespace)
+        return content if wrapped is None else wrapped
 
     def callback_registrar(app: Any) -> None:
         """Register this page's callbacks on the host-owned app."""
-        _register_callbacks(app, manifest, extension, definition, ctx, ids)
+        _register_callbacks(app, manifest, pdl_extension, definition, ctx, ids)
 
     return DashPage(layout_factory=layout_factory, callback_registrar=callback_registrar, namespace=namespace)
 
@@ -90,12 +96,18 @@ def _warning_component(manifest: PDLManifest) -> Any:
     )
 
 
-def _build_components(manifest: PDLManifest, extension: DashExtension | None, ctx: Any, ids: DashIds) -> list[Any]:
+def _build_components(
+    manifest: PDLManifest,
+    extension: DashExtension | None,
+    ctx: Any,
+    ids: DashIds,
+    renderer_extension: DashRendererExtension | None,
+) -> list[Any]:
     """Translate PDL blocks to Dash components and place them in the PDL grid."""
     import dash_ag_grid as dag
     from dash import dcc, html
 
-    controls = _build_controls(extension, ctx, ids) if extension else []
+    controls = _build_controls(extension, ctx, ids, renderer_extension) if extension else []
     control_block = next(
         (block for block in manifest.page.blocks if isinstance(block, PDLTableBlock)),
         next(iter(manifest.page.blocks), None),
@@ -138,52 +150,82 @@ def _build_components(manifest: PDLManifest, extension: DashExtension | None, ct
             "gridRow": f"{block.row} / span {block.row_span}",
             "gridColumn": f"{block.col} / span {block.col_span}",
         }
-        children = [item for item in (title, body) if item is not None]
-        components.append(html.Section(children, id=ids.block(block.name) + "-container", style=position))
+        wrapped = None
+        if renderer_extension is not None:
+            wrapped = renderer_extension.wrap_block(
+                body,
+                block=block,
+                title=title,
+                namespace=ids.namespace,
+            )
+        block_content = _wrap_default_block(title, body) if wrapped is None else wrapped
+        block_children: Any = block_content if wrapped is None else [block_content]
+        components.append(
+            html.Section(
+                block_children,
+                id=ids.block(block.name) + "-container",
+                style=position,
+            )
+        )
     return components
 
 
-def _build_controls(extension: DashExtension, ctx: Any, ids: DashIds) -> list[Any]:
+def _build_controls(
+    extension: DashExtension,
+    ctx: Any,
+    ids: DashIds,
+    renderer_extension: DashRendererExtension | None,
+) -> list[Any]:
     """Translate the small supported control set to Dash inputs."""
     from dash import dcc, html
 
     controls: list[Any] = []
     for control in extension.controls:
-        label = html.Label(control.label or control.name, htmlFor=ids.control(control.name))
-        widget: Any
-        if isinstance(control, DashSelect):
-            options = _options(control.options, ctx)
-            widget = dcc.Dropdown(
-                id=ids.control(control.name),
-                options=options,
-                value=control.value,
-                clearable=True,
-            )
-        elif isinstance(control, DashMultiSelect):
-            options = _options(control.options, ctx)
-            widget = dcc.Dropdown(
-                id=ids.control(control.name),
-                options=options,
-                value=control.value,
-                multi=True,
-                clearable=True,
-            )
-        elif isinstance(control, DashDateRange):
-            widget = dcc.DatePickerRange(
-                id=ids.control(control.name),
-                start_date=control.start_date,
-                end_date=control.end_date,
-            )
-        elif isinstance(control, DashToggle):
-            widget = dcc.Checklist(
-                id=ids.control(control.name),
-                options=[{"label": control.label or control.name, "value": True}],
-                value=[True] if control.value else [],
-            )
-        else:
-            raise ValueError(f"unsupported Dash control: {type(control)!r}")
+        component_id = ids.control(control.name)
+        options = _options(control.options, ctx) if isinstance(control, (DashSelect, DashMultiSelect)) else None
+        widget = (
+            renderer_extension.render_control(control, component_id=component_id, options=options)
+            if renderer_extension is not None
+            else None
+        )
+        if widget is None:
+            if isinstance(control, DashSelect):
+                widget = dcc.Dropdown(
+                    id=component_id,
+                    options=options,
+                    value=control.value,
+                    clearable=True,
+                )
+            elif isinstance(control, DashMultiSelect):
+                widget = dcc.Dropdown(
+                    id=component_id,
+                    options=options,
+                    value=control.value,
+                    multi=True,
+                    clearable=True,
+                )
+            elif isinstance(control, DashDateRange):
+                widget = dcc.DatePickerRange(
+                    id=component_id,
+                    start_date=control.start_date,
+                    end_date=control.end_date,
+                )
+            elif isinstance(control, DashToggle):
+                widget = dcc.Checklist(
+                    id=component_id,
+                    options=[{"label": control.label or control.name, "value": True}],
+                    value=[True] if control.value else [],
+                )
+            else:
+                raise ValueError(f"unsupported Dash control: {type(control)!r}")
+        label = html.Label(control.label or control.name, htmlFor=component_id)
         controls.append(html.Div([label, widget], className="runbook-control"))
     return controls
+
+
+def _wrap_default_block(title: Any | None, body: Any) -> list[Any]:
+    """Preserve the vanilla block's title/body structure."""
+    return [item for item in (title, body) if item is not None]
 
 
 def _options(options: list[Any] | DatasetValues | None, ctx: Any) -> list[Any] | None:

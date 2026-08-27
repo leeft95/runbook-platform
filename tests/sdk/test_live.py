@@ -3,17 +3,22 @@ from __future__ import annotations
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+import runbook.sdk.live_report_preview as preview_module
+from dash import html
 from runbook.core.data import Snapshot
+from runbook.core.pdl.models import PDLManifest, PDLPage, PDLPageType, PDLTextBlock
 from runbook.core.storage import BlobStore
 from runbook.sdk.context import Ctx
-from runbook.sdk.discovery import discover_report_definition
+from runbook.sdk.discovery import ReportDefinition, discover_report_definition
 from runbook.sdk.execution import load_report_module
 from runbook.sdk.live import LiveCapabilityUnavailableError
 from runbook.sdk.live_sqlite import SQLiteLiveDataResolver, build_demo_live_provider
 from runbook.sdk.preview_cli import _serve_interactive_app
+from runbook.sdk.profiles import ReportProfile
 
 
 def _ctx(tmp_path):
@@ -41,6 +46,51 @@ def test_reports_without_live_access_keep_existing_context_shape(tmp_path) -> No
     ctx = _ctx(tmp_path)
     assert ctx.report_id == "r"
     assert ctx.live is not None
+
+
+class _PreviewRenderer:
+    def wrap_page(self, content, *, manifest, namespace):
+        return html.Div(content, id=f"preview-{namespace}")
+
+    def render_control(self, control, *, component_id, options):
+        return None
+
+    def wrap_block(self, body, *, block, title, namespace):
+        return None
+
+
+def test_compose_report_page_applies_renderer_extension(tmp_path, monkeypatch) -> None:
+    source_ctx = _ctx(tmp_path)
+    manifest = PDLManifest(
+        title="Composed preview",
+        snapshot_id="s",
+        as_of="2024-01-01T00:00:00Z",
+        page=PDLPage(
+            page_type=PDLPageType.grid,
+            rows=1,
+            columns=1,
+            blocks=[PDLTextBlock(name="summary", text="body", row=1, col=1)],
+        ),
+    )
+    definition = ReportDefinition([], {}, lambda _ctx: manifest, {})
+    result = SimpleNamespace(prefix="reports/demo", stage3_ref="manifest.stage3.json")
+    store = SimpleNamespace(get_json=lambda _ref: manifest.model_dump(mode="json"))
+    monkeypatch.setattr(preview_module, "execute_report", lambda **_kwargs: result)
+    monkeypatch.setattr(preview_module, "load_report_module", lambda _path: SimpleNamespace())
+    monkeypatch.setattr(preview_module, "discover_report_definition", lambda _module: definition)
+    monkeypatch.setattr(preview_module, "resolve_report_path", lambda *_args: "reports/demo.py")
+
+    _, page = preview_module.compose_report_page(
+        store=store,
+        profile=ReportProfile(profile_id="preview", report_id="demo", datasets={"prices": "prices"}),
+        snapshot=source_ctx.snapshot,
+        code_version="test",
+        renderer_extension=_PreviewRenderer(),
+    )
+
+    layout = page.layout()
+    assert getattr(layout, "id", None) == "preview-preview"
+    assert layout.children.children[0].children == "Composed preview"
 
 
 def test_sqlite_provider_parameterizes_and_captures_safe_provenance() -> None:

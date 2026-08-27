@@ -15,6 +15,7 @@ getting-started
 concepts
 reports
 pdl-interactive
+dash-renderer-extensions
 data
 source-adapters-and-curation
 operations
