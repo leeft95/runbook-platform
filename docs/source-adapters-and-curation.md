@@ -28,6 +28,12 @@ class VendorAdapter:
     def acquire(self, *, source_config, readiness, fetched_at, previous_state=None): ...
 ```
 
+Historical source runs are an explicit adapter opt-in. To support them, both
+`check` and `acquire` must also accept the immutable
+`HistoricalExecutionContext` keyword. Its `start_date` and `end_date` are
+inclusive. Adapters that do not accept that keyword fail before acquisition
+with a source-specific unsupported-capability error.
+
 `PreviousAcquisitionState` contains a conceptual `watermark` and JSON-safe
 `metadata`. Runbook transports and serializes the state; the adapter owns the
 meaning of metadata keys. Prior partition values are materialized under the
@@ -91,6 +97,26 @@ class SourceAdapter(Protocol):
     ) -> AcquisitionResult: ...
 ```
 
+An adapter that opts into historical runs additionally implements the
+`HistoricalSourceAdapter` capability. It keeps the legacy methods and adds
+the required context keyword to both hooks:
+
+```python
+class HistoricalSourceAdapter(Protocol):
+    def check(
+        self, *, source_config, acquisition_run, observed_at,
+        previous_state=None, execution_context: HistoricalExecutionContext,
+    ) -> ReadinessResult: ...
+    def acquire(
+        self, *, source_config, readiness, fetched_at,
+        previous_watermarks=None, previous_state=None,
+        execution_context: HistoricalExecutionContext,
+    ) -> AcquisitionResult: ...
+```
+
+The legacy `SourceAdapter` contract remains unchanged, so existing adapters
+continue to work for ordinary runs without accepting this keyword.
+
 The methods have distinct jobs:
 
 - `validate` fails fast when required configuration is absent or malformed.
@@ -121,6 +147,7 @@ import requests
 from runbook.data.config import SourceConfig
 from runbook.data.ingest.models import (
     AcquisitionResult,
+    HistoricalExecutionContext,
     RawArtifactRecord,
     ReadinessResult,
     ReadinessStatus,
@@ -150,6 +177,7 @@ class AuthenticatedJsonAdapter:
         source_config: SourceConfig,
         acquisition_run: str,
         observed_at: datetime,
+        execution_context: HistoricalExecutionContext | None = None,
     ) -> ReadinessResult:
         self.validate(source_config)
         url = source_config.params["url"]
@@ -185,6 +213,7 @@ class AuthenticatedJsonAdapter:
         source_config: SourceConfig,
         readiness: ReadinessResult,
         fetched_at: datetime,
+        execution_context: HistoricalExecutionContext | None = None,
         previous_state=None,
     ) -> AcquisitionResult:
         del previous_state  # This source always returns a complete export.

@@ -102,6 +102,12 @@ baseline.
 authentication. Do not expose it directly to an untrusted network; place it
 behind an authenticated, appropriately secured boundary.
 
+Source detail pages can queue one-off historical runs with inclusive
+`start_date`/`end_date` values. These runs use the pinned persisted source
+revision through the normal queue and worker path, retain immutable output
+manifests and provenance, and do not create temporary revisions, update the
+current pointer, or release downstream scheduled reports.
+
 ## License
 
 Copyright 2026 redcombojnr and contributors.

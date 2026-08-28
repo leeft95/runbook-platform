@@ -80,6 +80,12 @@ Runs are durable PostgreSQL records. The API returns `worker_id` and
 `cancelled`; for running rows it only records cancellation intent. The API
 never reaches into the polling runner's local process registry.
 
+`POST /api/v1/sources/{source_id}/historical-runs` accepts required ISO
+`start_date` and `end_date` values (both inclusive) and returns the queued
+historical run. The run pins the latest persisted source revision; it does not
+create a temporary revision, update current pointers, or release downstream
+scheduled report dependencies.
+
 ```{eval-rst}
 .. automodule:: runbook.services.schedule
    :members: latest_due_slot

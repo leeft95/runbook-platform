@@ -29,6 +29,12 @@ diagnostics stored as small chunks in the configured blob store rather than
 PostgreSQL. Selecting a run ID opens the shared inspection drawer, which is the
 canonical inspection surface.
 
+Source detail pages also support one-off historical source runs. The required
+inclusive date range and latest persisted source revision are recorded on an
+ordinary queued source run; no temporary config revision is created. Historical
+outputs remain immutable and addressable by their run provenance, while current
+dataset pointers and downstream scheduled report dependencies are unchanged.
+
 The API/UI and polling runner are separate long-lived processes. After applying
 `runbook-services db upgrade`, start `runbook-services serve` and
 `runbook-services run --workers 2 --poll-interval 5`. The compatibility

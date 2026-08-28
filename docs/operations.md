@@ -125,6 +125,22 @@ The local process backend is the first `ExecutionBackend` implementation;
 Kubernetes is the next backend direction. No retries, priority queue,
 heartbeat, broker, or PID adoption is performed.
 
+### One-off historical source runs
+
+From a source detail page, choose **Run historical job**, enter the required
+inclusive start and end dates, review the pinned source revision, and submit.
+The request is persisted as an ordinary `source` run (`mode=historical`) in
+the normal durable queue, so existing serialization, worker ownership,
+cancellation, restart reconciliation, logs, and status lifecycle apply.
+
+Historical execution uses the existing source definition at its latest
+persisted revision when submitted. It records the base revision and immutable
+date range on the run; it never creates a temporary source configuration
+revision. Adapters must explicitly accept the historical execution context.
+Outputs and manifests are immutable and retained by run provenance, but the
+current dataset pointer is not updated and downstream scheduled report
+dependencies are not released.
+
 For deterministic local source checks, run `python scripts/demo_http_server.py`
 and enable one of the optional `demo_http_*` configurations. The server uses
 only checked-in CSV fixtures and exposes CSV, slow, 404, and 500 routes. The
