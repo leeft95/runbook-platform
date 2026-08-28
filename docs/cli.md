@@ -29,6 +29,9 @@ Options:
 Preview does not advance dataset pointers. Use the interactive development
 preview when a profile enables its Dash extension:
 
+For notebook exploration and an exact-pinned Python preview, see [Research with
+the SDK in Jupyter](sdk-and-notebooks.md).
+
 ```bash
 runbook-preview interactive pnl_explorer_demo --demo-live \
   --host 127.0.0.1 --port 8051

@@ -145,6 +145,9 @@ The repository's `reports/market_dashboard.py`, `reports/vol_report.py`, and
 `reports/pnl_explorer.py` are useful next examples. `snapshot_report.py` shows
 the lower-level PDL builder escape hatch.
 
+For exploratory pandas/Plotly work before committing a report module, see
+[Research with the SDK in Jupyter](sdk-and-notebooks.md).
+
 ## Environment
 
 The repository uses Python 3.11 and Pixi:

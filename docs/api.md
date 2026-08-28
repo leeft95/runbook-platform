@@ -77,6 +77,9 @@ clients should not infer object-store paths.
 The following autodoc sections expose supported modules. Private modules are
 intentionally omitted.
 
+For analyst-facing client, Snapshot, and workspace examples, see [Research
+with the SDK in Jupyter](sdk-and-notebooks.md).
+
 ```{eval-rst}
 .. automodule:: runbook.core.data
    :members:

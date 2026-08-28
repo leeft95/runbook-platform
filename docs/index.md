@@ -25,6 +25,7 @@ Read in this order if Runbook is new to you:
 :caption: Learn and build
 
 getting-started
+sdk-and-notebooks
 concepts
 reports
 composable-report-layouts

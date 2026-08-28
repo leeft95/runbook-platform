@@ -13,9 +13,10 @@ The shortest path is:
 choose a dataset -> write Python -> create artifacts -> compose a Report -> preview
 ```
 
-Start with the [analyst guide](docs/getting-started.md), then see
-[reports](docs/reports.md), [data and snapshots](docs/data.md), and the
-[Operations UI](docs/operations.md). Platform owners should use the
+Start with the [analyst guide](docs/getting-started.md), then see the
+[notebook research guide](docs/sdk-and-notebooks.md), [reports](docs/reports.md),
+[data and snapshots](docs/data.md), and the [Operations UI](docs/operations.md).
+Platform owners should use the
 [deployment guide](docs/deployment.md).
 
 Worked [report recipes](docs/reports.md#reports-cookbook) and [ingestion

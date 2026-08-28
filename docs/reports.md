@@ -12,6 +12,9 @@ A report module declares aliases, registers calculations, and exposes one
 `@report.page` function. The SDK runs the same module for preview and service
 execution.
 
+For exploratory client loads before authoring a report, see [Research with the
+SDK in Jupyter](sdk-and-notebooks.md).
+
 ## A complete report pattern
 
 ```python

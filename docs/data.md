@@ -149,6 +149,9 @@ Use `RUNBOOK_DATA_STORE_URI` or an explicit store URI; the local default is
 `us-east-1`) and needs the optional S3 dependency. See
 [Deployment](deployment.md) for durable/shared storage requirements.
 
+Analysts who need pandas exploration and saved Snapshot JSON can start with
+[Research with the SDK in Jupyter](sdk-and-notebooks.md).
+
 ## Append and full updates
 
 Each dataset binding chooses an update mode. `append` retains unchanged
