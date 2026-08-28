@@ -307,11 +307,7 @@ def register(dash_app: Any, sessions: Any) -> None:
                     interval=REFRESH_MS,
                     n_intervals=0,
                 ),
-                dcc.Loading(
-                    id=f"{prefix}-loading",
-                    type="default",
-                    children=html.Div(id=f"{prefix}-state"),
-                ),
+                html.Div(id=f"{prefix}-state"),
                 html.Div(
                     [
                         html.Div(

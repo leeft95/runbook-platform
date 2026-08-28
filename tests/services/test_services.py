@@ -9,6 +9,7 @@ import dash_ag_grid as dag
 import httpx
 import pytest
 import uvicorn
+from dash import dcc, html
 from runbook.data import (
     DatabasePointerRegistry,
     DatasetPointerUpdate,
@@ -153,8 +154,22 @@ def test_config_pages_use_grid_editors() -> None:
     create_app(database="postgresql+psycopg://postgres:postgres@localhost:5432/runbook")
 
     dashboard_page = dash.page_registry["runbook.services.dash.dashboard"]["layout"]
+    dashboard_children = dashboard_page.children
+    dashboard_state = next(
+        child for child in dashboard_children if getattr(child, "id", None) == "runbook-ui-dashboard-state"
+    )
+    assert isinstance(dashboard_state, html.Div)
+
+    def contains_loading(node: object) -> bool:
+        if isinstance(node, dcc.Loading):
+            return True
+        children = getattr(node, "children", None)
+        if isinstance(children, (list, tuple)):
+            return any(contains_loading(child) for child in children)
+        return children is not None and contains_loading(children)
+
+    assert not contains_loading(dashboard_page)
     dashboard_markup = str(dashboard_page)
-    # assert "runbook-ui-dashboard-loading" in dashboard_markup
     assert "runbook-ui-dashboard-active-empty" in dashboard_markup
     assert "runbook-ui-dashboard-attention-empty" in dashboard_markup
     assert "runbook-ui-dashboard-pointers-empty" in dashboard_markup
