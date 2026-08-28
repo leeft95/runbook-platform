@@ -77,10 +77,18 @@ def test_postgres_head_and_advisory_lock_without_dropping_database() -> None:
     identity = f"phaseb-{uuid4().hex}"
     with engine.begin() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0003_addressable_workers"
+            "0004_historical_source_runs"
         )
         columns = {column["name"] for column in inspect(connection).get_columns("runs")}
-        assert {"worker_id", "cancel_requested_at", "snapshot_payload", "dependencies_released_at"} <= columns
+        assert {
+            "worker_id",
+            "cancel_requested_at",
+            "snapshot_payload",
+            "dependencies_released_at",
+            "mode",
+            "start_date",
+            "end_date",
+        } <= columns
         connection.execute(
             text(
                 "INSERT INTO config_revisions "

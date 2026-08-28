@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
-from dash import Input, Output, dcc, html, register_page
+from dash import Input, Output, State, ctx, dcc, html, no_update, register_page
 
 from ..repository import AsyncRunRepository
 from .operations import (
@@ -60,6 +61,7 @@ def layout() -> Any:
                         dmc.Group(
                             [
                                 dmc.Anchor("Configuration", href="/ui/sources#runbook-ui-sources-config", size="sm"),
+                                dmc.Button("Run historical job", id=f"{PREFIX}-historical-open", size="sm"),
                                 dmc.Button("Refresh", id=f"{PREFIX}-manual-refresh", variant="light", size="sm"),
                             ],
                             gap="xs",
@@ -106,6 +108,10 @@ def layout() -> Any:
                             [
                                 {"field": "run_id", "headerName": "Run ID", "pinned": "left"},
                                 {"field": "status_text", "headerName": "Status"},
+                                {"field": "mode", "headerName": "Mode"},
+                                {"field": "start_date", "headerName": "Start date"},
+                                {"field": "end_date", "headerName": "End date"},
+                                {"field": "config_revision", "headerName": "Base revision"},
                                 {"field": "slot", "headerName": "Slot"},
                                 {"field": "duration", "headerName": "Duration"},
                                 {"field": "trigger", "headerName": "Trigger"},
@@ -117,6 +123,44 @@ def layout() -> Any:
                     ],
                     withBorder=True,
                     padding="md",
+                ),
+                dcc.Store(id=f"{PREFIX}-historical-request"),
+                dmc.Modal(
+                    id=f"{PREFIX}-historical-modal",
+                    title="Historical source run",
+                    opened=False,
+                    children=[
+                        html.Div(
+                            [
+                                dmc.Text(id=f"{PREFIX}-historical-source", size="sm"),
+                                dmc.Text("Start date (inclusive)", size="sm", fw=600),
+                                dcc.Input(
+                                    id=f"{PREFIX}-historical-start-date",
+                                    type="date",
+                                    required=True,
+                                    style={"width": "100%"},
+                                ),
+                                dmc.Text("End date (inclusive)", size="sm", fw=600),
+                                dcc.Input(
+                                    id=f"{PREFIX}-historical-end-date",
+                                    type="date",
+                                    required=True,
+                                    style={"width": "100%"},
+                                ),
+                                html.Div(id=f"{PREFIX}-historical-feedback"),
+                                dmc.Group(
+                                    [
+                                        dmc.Button("Cancel", id=f"{PREFIX}-historical-cancel", variant="subtle"),
+                                        dmc.Button("Review", id=f"{PREFIX}-historical-review"),
+                                    ],
+                                    justify="flex-end",
+                                    mt="sm",
+                                ),
+                            ],
+                            id=f"{PREFIX}-historical-form",
+                        ),
+                        html.Div(id=f"{PREFIX}-historical-review-panel", style={"display": "none"}),
+                    ],
                 ),
             ],
             className="runbook-detail-page",
@@ -287,6 +331,122 @@ def register(dash_app: Any, sessions: Any) -> None:
             )
         except Exception as exc:  # pragma: no cover - driver-specific failure rendering
             return source_id, "", source_id, [], "", "", [], "", error_state(f"Unable to load source: {exc}")
+
+    @dash_app.callback(
+        Output(f"{PREFIX}-historical-modal", "opened"),
+        Output(f"{PREFIX}-historical-form", "style"),
+        Output(f"{PREFIX}-historical-source", "children"),
+        Output(f"{PREFIX}-historical-review-panel", "children"),
+        Output(f"{PREFIX}-historical-review-panel", "style"),
+        Output(f"{PREFIX}-historical-feedback", "children"),
+        Output(f"{PREFIX}-historical-request", "data"),
+        Input(f"{PREFIX}-historical-open", "n_clicks"),
+        Input(f"{PREFIX}-historical-cancel", "n_clicks"),
+        Input(f"{PREFIX}-historical-review", "n_clicks"),
+        Input(f"{PREFIX}-historical-back", "n_clicks", allow_optional=True),
+        Input(f"{PREFIX}-historical-submit", "n_clicks", allow_optional=True),
+        State(f"{PREFIX}-location", "pathname"),
+        State(f"{PREFIX}-historical-start-date", "value"),
+        State(f"{PREFIX}-historical-end-date", "value"),
+        State(f"{PREFIX}-historical-request", "data"),
+        prevent_initial_call=True,
+    )
+    async def historical_request(
+        _open_clicks: int | None,
+        _cancel_clicks: int | None,
+        _review_clicks: int | None,
+        _back_clicks: int | None,
+        _submit_clicks: int | None,
+        pathname: str | None,
+        start_value: str | None,
+        end_value: str | None,
+        request: dict[str, Any] | None,
+    ):
+        """Review and submit one historical date-range request."""
+        source_id = _source_id(pathname)
+        triggered = ctx.triggered_id
+        hidden = {"display": "none"}
+        visible = {"display": "block"}
+        if triggered == f"{PREFIX}-historical-open":
+            return True, visible, f"Source: {source_id or '—'}", "", hidden, "", None
+        if triggered == f"{PREFIX}-historical-cancel":
+            return False, visible, "", "", hidden, "", None
+        if triggered == f"{PREFIX}-historical-back":
+            return True, visible, f"Source: {source_id or '—'}", "", hidden, "", request
+        if not source_id:
+            return True, visible, "", "", hidden, "Select a source first.", request
+        try:
+            start = date.fromisoformat(str(start_value))
+            end = date.fromisoformat(str(end_value))
+            if end < start:
+                raise ValueError("end date must be on or after start date")
+        except (TypeError, ValueError) as exc:
+            return True, visible, f"Source: {source_id}", "", hidden, str(exc), request
+
+        if triggered == f"{PREFIX}-historical-review":
+            async with sessions() as session:
+                source = await AsyncRunRepository(session).latest_config("source", source_id)
+            if source is None:
+                return True, visible, f"Source: {source_id}", "", hidden, f"Unknown source: {source_id}", request
+            payload = {
+                "source_id": source_id,
+                "revision": source.revision,
+                "start_date": start.isoformat(),
+                "end_date": end.isoformat(),
+            }
+            review = dmc.Stack(
+                [
+                    dmc.Text(f"Source: {source_id}"),
+                    dmc.Text("Mode: Historical"),
+                    dmc.Text(f"Base revision: {source.revision}"),
+                    dmc.Text(f"Date range: {start.isoformat()} → {end.isoformat()} (inclusive)"),
+                    dmc.Text("Pointer update: No"),
+                    dmc.Text("Overrides: None"),
+                    dmc.Group(
+                        [
+                            dmc.Button("Back", id=f"{PREFIX}-historical-back", variant="subtle"),
+                            dmc.Button("Submit historical run", id=f"{PREFIX}-historical-submit"),
+                        ],
+                        justify="flex-end",
+                        mt="sm",
+                    ),
+                ],
+                gap="xs",
+            )
+            return True, hidden, f"Source: {source_id}", review, visible, "", payload
+
+        if triggered == f"{PREFIX}-historical-submit":
+            if not isinstance(request, dict):
+                return (
+                    True,
+                    visible,
+                    f"Source: {source_id}",
+                    "",
+                    hidden,
+                    "Review the request before submitting.",
+                    request,
+                )
+            try:
+                async with sessions() as session:
+                    async with session.begin():
+                        row = await AsyncRunRepository(session).queue_historical_run(
+                            source_id,
+                            start_date=date.fromisoformat(str(request["start_date"])),
+                            end_date=date.fromisoformat(str(request["end_date"])),
+                            expected_revision=int(request["revision"]),
+                        )
+                return False, visible, f"Source: {source_id}", "", hidden, f"Queued historical run {row.run_id}.", None
+            except Exception as exc:  # pragma: no cover - driver-specific failure rendering
+                return (
+                    True,
+                    visible,
+                    f"Source: {source_id}",
+                    no_update,
+                    visible,
+                    f"Unable to queue historical run: {exc}",
+                    request,
+                )
+        return True, visible, f"Source: {source_id or '—'}", "", hidden, "", request
 
 
 __all__ = ["register"]

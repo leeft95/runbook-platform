@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,6 +29,9 @@ class Run(Base):
     run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     kind: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     target_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False, default="normal", index=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     slot: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     trigger: Mapped[str] = mapped_column(String(32), nullable=False)
     force: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

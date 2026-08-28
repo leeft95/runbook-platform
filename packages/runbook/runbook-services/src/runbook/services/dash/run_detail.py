@@ -61,6 +61,11 @@ def register(dash_app: Any, sessions: Any) -> None:
         return (
             [
                 html.Div(["Status: ", html.Span(display_status, className="runbook-status")]),
+                html.Div(f"Mode: {str(getattr(row, 'mode', None) or 'normal').title()}"),
+                html.Div(
+                    f"Date range: {getattr(row, 'start_date', None) or '—'} → {getattr(row, 'end_date', None) or '—'}"
+                ),
+                html.Div(f"Base source revision: {row.config_revision}"),
                 html.Div(f"Worker: {row.worker_id or '—'}"),
                 html.Div(f"Cancellation requested: {row.cancel_requested_at or '—'}"),
                 html.Div(f"Requested: {row.requested_at}"),

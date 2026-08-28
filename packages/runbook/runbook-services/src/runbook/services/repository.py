@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -224,13 +224,35 @@ class RunRepository:
         snapshot_payload: dict[str, Any] | None = None,
         context_hash: str | None = None,
         code_version: str | None = None,
+        mode: str = "normal",
+        start_date: date | None = None,
+        end_date: date | None = None,
     ) -> Run:
         """Queue a manual or scheduled run, reusing an active duplicate."""
+        if mode not in {"normal", "historical"}:
+            raise ValueError("mode must be 'normal' or 'historical'")
+        if mode == "historical":
+            if kind != "source":
+                raise ValueError("historical mode is only supported for source runs")
+            if start_date is None or end_date is None:
+                raise ValueError("historical runs require start_date and end_date")
+            if end_date < start_date:
+                raise ValueError("end_date must be on or after start_date")
+            assert start_date is not None and end_date is not None
+        elif start_date is not None or end_date is not None:
+            raise ValueError("normal runs cannot include historical dates")
         if slot.tzinfo is None:
             raise ValueError("slot must include a timezone")
-        identity_key = (
-            identity_key or f"{kind}:{target_id}:{slot.astimezone(timezone.utc).isoformat()}:{config.config_hash}"
-        )
+        stamp = now_utc()
+        if mode == "historical":
+            assert start_date is not None and end_date is not None
+            default_identity = (
+                f"historical:{target_id}:start={start_date.isoformat()}:end={end_date.isoformat()}:"
+                f"requested={stamp.isoformat()}"
+            )
+        else:
+            default_identity = f"{kind}:{target_id}:{slot.astimezone(timezone.utc).isoformat()}:{config.config_hash}"
+        identity_key = identity_key or default_identity
         if not force and trigger == "schedule":
             existing = self.session.scalar(select(Run).where(Run.identity_key == identity_key).limit(1))
             if existing is not None:
@@ -250,11 +272,13 @@ class RunRepository:
             )
             if existing is not None:
                 return existing
-        stamp = now_utc()
         row = Run(
             run_id=uuid4().hex,
             kind=kind,
             target_id=target_id,
+            mode=mode,
+            start_date=start_date,
+            end_date=end_date,
             slot=slot.astimezone(timezone.utc),
             trigger=trigger,
             force=force,
@@ -272,6 +296,32 @@ class RunRepository:
         self.session.add(row)
         self.session.flush()
         return row
+
+    def queue_historical_run(
+        self,
+        source_id: str,
+        *,
+        start_date: date,
+        end_date: date,
+        expected_revision: int | None = None,
+    ) -> Run:
+        """Pin the latest source revision and queue one inclusive date-range run."""
+        config = self.latest_config("source", source_id)
+        if config is None:
+            raise ConfigNotFound(f"unknown source: {source_id}")
+        if expected_revision is not None and config.revision != expected_revision:
+            raise ConflictError("source configuration revision changed after review")
+        return self.queue_run(
+            kind="source",
+            target_id=source_id,
+            slot=now_utc().replace(second=0, microsecond=0),
+            trigger="manual",
+            force=True,
+            config=config,
+            mode="historical",
+            start_date=start_date,
+            end_date=end_date,
+        )
 
     def queued_runs(self, limit: int = 100) -> list[Run]:
         """Return queued runs in FIFO order."""
@@ -351,6 +401,7 @@ class RunRepository:
                 .where(
                     Run.kind == "source",
                     Run.status == "success",
+                    Run.mode == "normal",
                     Run.dependencies_released_at.is_(None),
                 )
                 .order_by(Run.finished_at, Run.run_id)
@@ -647,6 +698,32 @@ class AsyncRunRepository:
         await self.session.flush()
         return await self.session.get(Run, run_id, populate_existing=True)
 
+    async def queue_historical_run(
+        self,
+        source_id: str,
+        *,
+        start_date: date,
+        end_date: date,
+        expected_revision: int | None = None,
+    ) -> Run:
+        """Pin the latest source revision and queue one inclusive date-range run."""
+        config = await self.latest_config("source", source_id)
+        if config is None:
+            raise ConfigNotFound(f"unknown source: {source_id}")
+        if expected_revision is not None and config.revision != expected_revision:
+            raise ConflictError("source configuration revision changed after review")
+        return await self.queue_run(
+            kind="source",
+            target_id=source_id,
+            slot=now_utc().replace(second=0, microsecond=0),
+            trigger="manual",
+            force=True,
+            config=config,
+            mode="historical",
+            start_date=start_date,
+            end_date=end_date,
+        )
+
     async def cancel_owned(self, run_id: str, worker_id: str, *, reason: str = "cancel requested") -> bool:
         """Terminalize only an owned running row with durable cancellation intent."""
         stamp = now_utc()
@@ -742,6 +819,21 @@ class AsyncRunRepository:
         kind = kwargs["kind"]
         target_id = kwargs["target_id"]
         force = kwargs["force"]
+        mode = kwargs.get("mode", "normal")
+        start_date = kwargs.get("start_date")
+        end_date = kwargs.get("end_date")
+        if mode not in {"normal", "historical"}:
+            raise ValueError("mode must be 'normal' or 'historical'")
+        if mode == "historical":
+            if kind != "source":
+                raise ValueError("historical mode is only supported for source runs")
+            if start_date is None or end_date is None:
+                raise ValueError("historical runs require start_date and end_date")
+            if end_date < start_date:
+                raise ValueError("end_date must be on or after start_date")
+            assert start_date is not None and end_date is not None
+        elif start_date is not None or end_date is not None:
+            raise ValueError("normal runs cannot include historical dates")
         if not force:
             existing = (
                 await self.session.scalars(
@@ -760,17 +852,28 @@ class AsyncRunRepository:
             if existing is not None:
                 return existing
         stamp = now_utc()
+        if mode == "historical":
+            assert start_date is not None and end_date is not None
+            default_identity = (
+                f"historical:{target_id}:start={start_date.isoformat()}:end={end_date.isoformat()}:"
+                f"requested={stamp.isoformat()}"
+            )
+        else:
+            default_identity = f"{kind}:{target_id}:{slot.astimezone(timezone.utc).isoformat()}:{config.config_hash}"
         row = Run(
             run_id=uuid4().hex,
             kind=kind,
             target_id=target_id,
+            mode=mode,
+            start_date=start_date,
+            end_date=end_date,
             slot=slot.astimezone(timezone.utc),
             trigger=kwargs["trigger"],
             force=force,
             config_revision=config.revision,
             config_hash=config.config_hash,
             status="queued",
-            identity_key=f"{kind}:{target_id}:{slot.astimezone(timezone.utc).isoformat()}:{config.config_hash}",
+            identity_key=default_identity,
             requested_at=stamp,
             updated_at=stamp,
         )

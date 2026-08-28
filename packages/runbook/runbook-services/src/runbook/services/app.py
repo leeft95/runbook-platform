@@ -15,7 +15,7 @@ from .config import database_url, reports_root, store_uri, validate_config
 from .db import async_engine
 from .repository import AsyncRunRepository, ConflictError
 from .routers.ui import mount_ui
-from .schemas import ConfigView, ConfigWrite, RunRequest, RunView, VersionView
+from .schemas import ConfigView, ConfigWrite, HistoricalRunRequest, RunRequest, RunView, VersionView
 
 
 def _version(distribution_name: str) -> str:
@@ -46,7 +46,9 @@ def _config_view(row: Any) -> ConfigView:
 
 def _run_view(row: Any) -> RunView:
     """Convert a run row to its API representation."""
-    return RunView.model_validate({name: getattr(row, name) for name in row.__table__.columns.keys()})
+    payload = {name: getattr(row, name) for name in row.__table__.columns.keys()}
+    payload["mode"] = payload.get("mode") or "normal"
+    return RunView.model_validate(payload)
 
 
 def create_app(
@@ -190,6 +192,31 @@ def create_app(
         source_id: str, body: RunRequest | None = None, session: AsyncSession = Depends(get_session)
     ) -> RunView:
         return await queue("source", source_id, body, session)
+
+    @api.post(
+        "/sources/{source_id}/historical-runs",
+        response_model=RunView,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def trigger_historical_source(
+        source_id: str,
+        body: HistoricalRunRequest,
+        session: AsyncSession = Depends(get_session),
+    ) -> RunView:
+        """Queue one immutable inclusive date-range source request."""
+        repository = AsyncRunRepository(session)
+        try:
+            async with session.begin():
+                row = await repository.queue_historical_run(
+                    source_id,
+                    start_date=body.start_date,
+                    end_date=body.end_date,
+                )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=f"unknown source: {source_id}") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _run_view(row)
 
     @api.post(
         "/profiles/{profile_id}/runs",

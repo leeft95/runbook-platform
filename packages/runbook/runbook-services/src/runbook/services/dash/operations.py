@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Iterable
 
 import dash_mantine_components as dmc
@@ -193,7 +193,7 @@ def row_value(row: Any, name: str, default: Any = None) -> Any:
 
 def as_iso(value: Any) -> Any:
     """Serialize datetimes while leaving JSON-safe scalar values unchanged."""
-    return value.isoformat() if isinstance(value, datetime) else value
+    return value.isoformat() if isinstance(value, (date, datetime)) else value
 
 
 def detail_row(row: Any) -> dict[str, Any]:
@@ -202,6 +202,9 @@ def detail_row(row: Any) -> dict[str, Any]:
         "run_id",
         "kind",
         "target_id",
+        "mode",
+        "start_date",
+        "end_date",
         "status",
         "worker_id",
         "cancel_requested_at",
@@ -222,6 +225,7 @@ def detail_row(row: Any) -> dict[str, Any]:
         "snapshot_payload",
     )
     result = {name: as_iso(row_value(row, name)) for name in names}
+    result["mode"] = result["mode"] or "normal"
     result["status"] = run_status(row)
     result["duration"] = format_duration(row_value(row, "started_at"), row_value(row, "finished_at"))
     return result

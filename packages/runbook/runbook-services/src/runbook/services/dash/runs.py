@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import dash_ag_grid as dag
@@ -17,6 +17,9 @@ def _run_row(row: Any) -> dict[str, Any]:
         "run_id",
         "kind",
         "target_id",
+        "mode",
+        "start_date",
+        "end_date",
         "status",
         "worker_id",
         "cancel_requested_at",
@@ -27,9 +30,12 @@ def _run_row(row: Any) -> dict[str, Any]:
         "context_hash",
         "code_version",
         "artifact_id",
+        "config_revision",
     ):
         value = getattr(row, name, None)
-        result[name] = value.isoformat() if isinstance(value, datetime) else value
+        if name == "mode":
+            value = value or "normal"
+        result[name] = value.isoformat() if isinstance(value, (date, datetime)) else value
     result["cancelling"] = result["status"] == "running" and result["cancel_requested_at"] is not None
     return result
 
@@ -126,6 +132,10 @@ def register(dash_app: Any, sessions: Any) -> None:
                             for field in (
                                 "kind",
                                 "target_id",
+                                "mode",
+                                "start_date",
+                                "end_date",
+                                "config_revision",
                                 "status",
                                 "worker_id",
                                 "cancelling",

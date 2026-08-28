@@ -91,6 +91,14 @@ def _details(row: Any, config: Any | None) -> Any:
                     ("Status", status_badge(status)),
                     ("Target", dmc.Text(f"{row.kind}: {row.target_id}", size="sm")),
                     ("Run kind", dmc.Text(row.kind, size="sm")),
+                    ("Mode", dmc.Text(str(getattr(row, "mode", None) or "normal").title(), size="sm")),
+                    (
+                        "Date range",
+                        dmc.Text(
+                            f"{getattr(row, 'start_date', None) or '—'} → {getattr(row, 'end_date', None) or '—'}",
+                            size="sm",
+                        ),
+                    ),
                     ("Trigger", dmc.Text(row.trigger, size="sm")),
                     ("Slot", dmc.Text(str(row.slot), size="sm")),
                     ("Requested", dmc.Text(str(row.requested_at), size="sm")),

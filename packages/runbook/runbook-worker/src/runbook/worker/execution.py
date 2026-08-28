@@ -10,6 +10,7 @@ from typing import Any
 from loguru import logger
 from runbook.core import ReportProfile, Snapshot, SourceConfig, open_blob_store
 from runbook.data.ingest import run_stage1_acquire
+from runbook.data.ingest.models import HistoricalExecutionContext
 from runbook.data.ingest.runner import load_previous_acquisition_state
 from runbook.data.ingest.runners import run_stage2_curate
 from runbook.sdk import execute_report, resolve_code_version
@@ -67,15 +68,39 @@ def _source(row, config: SourceConfig, identity: RunLogIdentity) -> dict[str, An
             with sync_sessions(os.environ.get("RUNBOOK_DATABASE_URL"))() as session:
                 repository = RunRepository(session)
                 pointers = repository.pointer_registry.get(binding.dataset_id for binding in config.datasets.values())
+            mode = getattr(row, "mode", None) or "normal"
+            historical = mode == "historical"
+            start_date = getattr(row, "start_date", None)
+            end_date = getattr(row, "end_date", None)
+            context = (
+                HistoricalExecutionContext(start_date=start_date, end_date=end_date)
+                if historical and start_date is not None and end_date is not None
+                else None
+            )
+            if historical and context is None:
+                raise ValueError("historical source run is missing its date range")
+            if historical:
+                # Historical output must be self-contained and must not merge
+                # prior production state into the requested range.
+                pointers = {}
             # Previous acquisition state is execution state.  Keep its validation
             # inside the worker log boundary so stale pointers produce a
             # useful failed run instead of an unexplained process exit.
-            previous_state = load_previous_acquisition_state(store, config, pointers)
+            previous_state = load_previous_acquisition_state(store, config, pointers) if not historical else None
             slot = _utc(row.slot)
-            acquired = run_stage1_acquire(source_config=config, slot=slot, store=store, previous_state=previous_state)
+            acquired = run_stage1_acquire(
+                source_config=config,
+                slot=slot,
+                store=store,
+                previous_state=previous_state,
+                execution_context=context,
+            )
             if acquired.status.value != "ready" or acquired.acquired is None:
                 return {
                     "source_id": config.source_id,
+                    "mode": mode,
+                    "start_date": start_date.isoformat() if start_date else None,
+                    "end_date": end_date.isoformat() if end_date else None,
                     "status": acquired.status.value,
                     "reason": acquired.message,
                     "log_ref": log.log_ref,
@@ -89,6 +114,9 @@ def _source(row, config: SourceConfig, identity: RunLogIdentity) -> dict[str, An
             )
             return {
                 "source_id": config.source_id,
+                "mode": mode,
+                "start_date": start_date.isoformat() if start_date else None,
+                "end_date": end_date.isoformat() if end_date else None,
                 "status": "success",
                 "datasets": dict(curated.datasets),
                 "pointer_updates": [
@@ -209,11 +237,12 @@ def execute_run(run_id: str) -> int:
                         )
                     )
             expected = outcome.get("expected_pointer_source_runs")
-            repository.pointer_registry.publish(
-                source_id=model.source_id,
-                source_run_id=run_id,
-                updates=updates,
-                expected_source_run_ids=expected if isinstance(expected, dict) else None,
-            )
+            if (row.mode or "normal") != "historical":
+                repository.pointer_registry.publish(
+                    source_id=model.source_id,
+                    source_run_id=run_id,
+                    updates=updates,
+                    expected_source_run_ids=expected if isinstance(expected, dict) else None,
+                )
         session.commit()
     return 0
