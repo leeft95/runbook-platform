@@ -28,7 +28,9 @@ An extension implements all three protocol methods below. Each method may
 return `None`, which selects the vanilla public renderer for that part.
 
 ```python
-from runbook.sdk.extensions.dash import DashRendererExtension
+import json
+
+from runbook.sdk.extensions.dash import DashRenderedControl, DashRendererExtension
 
 
 class MyRenderer:
@@ -43,8 +45,9 @@ class MyRenderer:
 ```
 
 For example, a host can add a provider or other theme around the complete
-page, and can replace the visual component for a select while keeping its
-public ID and `value` property:
+page, and can replace a select with a component whose native value is an
+encoded token. `DashRenderedControl` keeps the public interaction state
+unchanged by declaring the property to read and its decoder:
 
 ```python
 class ThemeRenderer:
@@ -53,7 +56,21 @@ class ThemeRenderer:
 
     def render_control(self, control, *, component_id, options):
         if control.type == "select":
-            return ThemeSelect(id=component_id, data=options or [], value=control.value)
+
+            def token(value):
+                return "runbook-value:" + json.dumps(value, separators=(",", ":"))
+
+            return DashRenderedControl(
+                component=ThemeSelect(
+                    id=component_id,
+                    data=[{"label": str(value), "value": token(value)} for value in options or []],
+                    value=None if control.value is None else token(control.value),
+                ),
+                input_properties=("value",),
+                decode=lambda values: (
+                    None if values[0] is None else json.loads(values[0].removeprefix("runbook-value:"))
+                ),
+            )
         return None
 
     def wrap_block(self, body, *, block, title, namespace):
@@ -68,11 +85,12 @@ container ID and grid positioning are retained, and the title node is passed
 to `wrap_block` so a custom wrapper can place it exactly once. The body is
 rendered by public code before the wrapper is called.
 
-Extensions must expose the semantic Dash properties expected by public
-callbacks (`value`, `start_date`, `end_date`, `children`, `figure`, or
-`rowData`). They must not register report callbacks, invoke handlers, mutate
-the manifest, or add new PDL meaning. Report callbacks remain host-owned and
-are registered by `DashPage.register_callbacks`.
+Custom controls may declare different native input properties and decode them
+back to the normal logical control value with `DashRenderedControl`. Plain
+component returns continue to use the vanilla public control binding. They
+must not register report callbacks, invoke handlers, mutate the manifest, or
+add new PDL meaning. Report callbacks remain host-owned and are registered by
+`DashPage.register_callbacks`.
 
 Renderer extensions are trusted Python presentation code installed by the
 host. They are not a sandbox or user-authored PDL feature.

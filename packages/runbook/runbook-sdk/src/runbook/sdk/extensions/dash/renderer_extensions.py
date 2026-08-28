@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from runbook.core.pdl.models import PDLManifest
 from runbook.sdk.extensions.dash.models import DashControl
+
+
+@dataclass(frozen=True)
+class DashRenderedControl:
+    """A custom Dash control and its native-to-logical input binding."""
+
+    component: Any
+    input_properties: tuple[str, ...]
+    decode: Callable[[tuple[Any, ...]], Any] | None = None
 
 
 class DashRendererExtension(Protocol):
@@ -21,7 +32,7 @@ class DashRendererExtension(Protocol):
         *,
         component_id: str,
         options: list[Any] | None,
-    ) -> Any | None:
+    ) -> DashRenderedControl | Any | None:
         """Render one control, or return ``None`` for its vanilla component."""
         ...
 
@@ -37,4 +48,4 @@ class DashRendererExtension(Protocol):
         ...
 
 
-__all__ = ["DashRendererExtension"]
+__all__ = ["DashRenderedControl", "DashRendererExtension"]

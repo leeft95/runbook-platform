@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import io
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
@@ -13,6 +14,7 @@ from runbook.core.pdl.models import PDLColumn, PDLColumnRole, PDLManifest, PDLPl
 from runbook.sdk.discovery import ReportDefinition
 from runbook.sdk.extensions.dash.ids import DashIds
 from runbook.sdk.extensions.dash.models import (
+    DashControl,
     DashDateRange,
     DashExtension,
     DashMultiSelect,
@@ -21,7 +23,7 @@ from runbook.sdk.extensions.dash.models import (
     DatasetValues,
 )
 from runbook.sdk.extensions.dash.page import DashPage
-from runbook.sdk.extensions.dash.renderer_extensions import DashRendererExtension
+from runbook.sdk.extensions.dash.renderer_extensions import DashRenderedControl, DashRendererExtension
 from runbook.sdk.extensions.dash.tables import ag_grid_default_col_def, build_ag_grid_column_defs
 from runbook.sdk.extensions.dash.validation import (
     parse_dash_extension,
@@ -43,7 +45,7 @@ def render_dash_page(
     pdl_extension = parse_dash_extension(manifest)
     validate_dash_manifest(manifest, pdl_extension, definition)
     ids = DashIds(namespace)
-    components = _build_components(manifest, pdl_extension, ctx, ids, renderer_extension)
+    components, bindings = _build_components(manifest, pdl_extension, ctx, ids, renderer_extension)
 
     def layout_factory() -> Any:
         """Build the page layout without creating or owning a Dash app."""
@@ -71,7 +73,7 @@ def render_dash_page(
 
     def callback_registrar(app: Any) -> None:
         """Register this page's callbacks on the host-owned app."""
-        _register_callbacks(app, manifest, pdl_extension, definition, ctx, ids)
+        _register_callbacks(app, manifest, pdl_extension, definition, ctx, ids, bindings)
 
     return DashPage(layout_factory=layout_factory, callback_registrar=callback_registrar, namespace=namespace)
 
@@ -102,12 +104,12 @@ def _build_components(
     ctx: Any,
     ids: DashIds,
     renderer_extension: DashRendererExtension | None,
-) -> list[Any]:
+) -> tuple[list[Any], dict[str, _ControlBinding]]:
     """Translate PDL blocks to Dash components and place them in the PDL grid."""
     import dash_ag_grid as dag
     from dash import dcc, html
 
-    controls = _build_controls(extension, ctx, ids, renderer_extension) if extension else []
+    controls, bindings = _build_controls(extension, ctx, ids, renderer_extension) if extension else ([], {})
     control_block = next(
         (block for block in manifest.page.blocks if isinstance(block, PDLTableBlock)),
         next(iter(manifest.page.blocks), None),
@@ -170,7 +172,78 @@ def _build_components(
                 style=position,
             )
         )
-    return components
+    return components, bindings
+
+
+@dataclass(frozen=True)
+class _ControlBinding:
+    """Capture a control's callback properties and native value decoder."""
+
+    component_id: str
+    input_properties: tuple[str, ...]
+    decode: Callable[[tuple[Any, ...]], Any]
+
+
+def _vanilla_binding(control: Any, component_id: str) -> _ControlBinding:
+    """Capture the public component's native callback contract."""
+    properties: tuple[str, ...]
+    if isinstance(control, DashDateRange):
+        properties = ("start_date", "end_date")
+        decode = _date_range_state
+    else:
+        properties = ("value",)
+        decode = _identity
+    return _ControlBinding(component_id, properties, decode)
+
+
+def _custom_binding(control: DashControl, component_id: str, rendered: DashRenderedControl) -> _ControlBinding:
+    """Validate and normalize an explicit custom component binding."""
+    control_name = control.name
+    properties = tuple(rendered.input_properties)
+    if not properties:
+        raise ValueError(f"Custom Dash control {control_name!r} has no input properties.")
+    if len(set(properties)) != len(properties):
+        raise ValueError(f"Custom Dash control {control_name!r} defines duplicate input properties.")
+    base_decoder = rendered.decode
+    if base_decoder is None:
+        if len(properties) != 1:
+            raise ValueError(f"Custom Dash control {control_name!r} defines multiple input properties but no decoder.")
+        base_decoder = _identity
+    decode: Callable[[tuple[Any, ...]], Any] = base_decoder
+    if isinstance(control, DashDateRange):
+
+        def decode_date_range(values: tuple[Any, ...]) -> Any:
+            """Validate and normalize a custom date-range logical value."""
+            result = base_decoder(values)
+            if not isinstance(result, Mapping) or set(result) != {"start_date", "end_date"}:
+                raise ValueError(
+                    f"Custom Dash control {control_name!r} decoder must return a mapping with exactly "
+                    "'start_date' and 'end_date'."
+                )
+            return dict(result)
+
+        decode = decode_date_range
+    elif isinstance(control, DashToggle):
+
+        def decode_toggle(values: tuple[Any, ...]) -> Any:
+            """Validate a custom toggle logical value."""
+            result = base_decoder(values)
+            if not isinstance(result, list) or (result != [] and not (len(result) == 1 and result[0] is True)):
+                raise ValueError(f"Custom Dash control {control_name!r} decoder must return [] or [True].")
+            return result
+
+        decode = decode_toggle
+    return _ControlBinding(component_id, properties, decode)
+
+
+def _identity(values: tuple[Any, ...]) -> Any:
+    """Decode a single native property without changing its value."""
+    return values[0]
+
+
+def _date_range_state(values: tuple[Any, ...]) -> dict[str, Any]:
+    """Decode the vanilla date-range properties into logical control state."""
+    return {"start_date": values[0], "end_date": values[1]}
 
 
 def _build_controls(
@@ -178,19 +251,29 @@ def _build_controls(
     ctx: Any,
     ids: DashIds,
     renderer_extension: DashRendererExtension | None,
-) -> list[Any]:
+) -> tuple[list[Any], dict[str, _ControlBinding]]:
     """Translate the small supported control set to Dash inputs."""
     from dash import dcc, html
 
     controls: list[Any] = []
+    bindings: dict[str, _ControlBinding] = {}
     for control in extension.controls:
         component_id = ids.control(control.name)
         options = _options(control.options, ctx) if isinstance(control, (DashSelect, DashMultiSelect)) else None
-        widget = (
+        rendered = (
             renderer_extension.render_control(control, component_id=component_id, options=options)
             if renderer_extension is not None
             else None
         )
+        if isinstance(rendered, DashRenderedControl):
+            widget = rendered.component
+            bindings[control.name] = _custom_binding(control, component_id, rendered)
+        elif rendered is None:
+            widget = None
+            bindings[control.name] = _vanilla_binding(control, component_id)
+        else:
+            widget = rendered
+            bindings[control.name] = _vanilla_binding(control, component_id)
         if widget is None:
             if isinstance(control, DashSelect):
                 widget = dcc.Dropdown(
@@ -223,7 +306,7 @@ def _build_controls(
                 raise ValueError(f"unsupported Dash control: {type(control)!r}")
         label = html.Label(control.label or control.name, htmlFor=component_id)
         controls.append(html.Div([label, widget], className="runbook-control"))
-    return controls
+    return controls, bindings
 
 
 def _wrap_default_block(title: Any | None, body: Any) -> list[Any]:
@@ -245,6 +328,7 @@ def _register_callbacks(
     definition: ReportDefinition,
     ctx: Any,
     ids: DashIds,
+    bindings: Mapping[str, _ControlBinding],
 ) -> None:
     """Bind declared plain-Python interactions to host Dash callbacks."""
     if extension is None:
@@ -254,16 +338,16 @@ def _register_callbacks(
     blocks = {block.name: block for block in manifest.page.blocks}
     for declaration in extension.interactions:
         outputs = [Output(ids.block(name), _output_property(blocks[name])) for name in declaration.outputs]
-        inputs = _input_specs(extension, ids, declaration.inputs, Input)
+        inputs = _input_specs(bindings, declaration.inputs, Input)
         handler = (definition.interaction_fns or {})[declaration.handler]
 
         callback = _make_callback(
             ctx=ctx,
-            extension=extension,
             handler=handler,
             input_names=tuple(declaration.inputs),
             output_names=tuple(declaration.outputs),
             output_blocks={name: blocks[name] for name in declaration.outputs},
+            bindings=bindings,
         )
 
         if outputs:
@@ -273,17 +357,17 @@ def _register_callbacks(
 def _make_callback(
     *,
     ctx: Any,
-    extension: DashExtension,
     handler: Any,
     input_names: tuple[str, ...],
     output_names: tuple[str, ...],
     output_blocks: Mapping[str, Any],
+    bindings: Mapping[str, _ControlBinding],
 ) -> Any:
     """Create one isolated callback closure for one declared interaction."""
 
     def callback(*values: Any) -> list[Any]:
         """Convert ordinary Dash input values to JSON-like report state."""
-        state = _state_from_values(extension, list(input_names), values)
+        state = _state_from_values(bindings, list(input_names), values)
         result = handler(ctx, state)
         if not isinstance(result, Mapping):
             raise TypeError(f"interaction {handler.__name__!r} must return a mapping")
@@ -303,36 +387,30 @@ def _output_property(block: Any) -> str:
     raise TypeError(f"unsupported interaction output block: {type(block)!r}")
 
 
-def _input_specs(extension: DashExtension, ids: DashIds, names: list[str], input_type: Any) -> list[Any]:
+def _input_specs(bindings: Mapping[str, _ControlBinding], names: list[str], input_type: Any) -> list[Any]:
     """Expand logical controls into native Dash input properties."""
-    return [
-        input_type(ids.control(name), property_name)
-        for name in names
-        for property_name in _properties_for_input(extension, name)
-    ]
+    inputs: list[Any] = []
+    for name in names:
+        binding = bindings.get(name)
+        if binding is None:
+            raise ValueError(f"unknown Dash input control: {name!r}")
+        inputs.extend(input_type(binding.component_id, property_name) for property_name in binding.input_properties)
+    return inputs
 
 
-def _properties_for_input(extension: DashExtension, name: str) -> tuple[str, ...]:
-    """Return native input properties for one logical control."""
-    for control in extension.controls:
-        if control.name == name:
-            if isinstance(control, DashDateRange):
-                return ("start_date", "end_date")
-            return ("value",)
-    raise ValueError(f"unknown Dash input control: {name!r}")
-
-
-def _state_from_values(extension: DashExtension, names: list[str], values: tuple[Any, ...]) -> dict[str, Any]:
+def _state_from_values(
+    bindings: Mapping[str, _ControlBinding], names: list[str], values: tuple[Any, ...]
+) -> dict[str, Any]:
     """Reassemble expanded native inputs into logical interaction state."""
     state: dict[str, Any] = {}
     cursor = 0
     for name in names:
-        properties = _properties_for_input(extension, name)
-        if len(properties) == 1:
-            state[name] = values[cursor]
-        else:
-            state[name] = {properties[0]: values[cursor], properties[1]: values[cursor + 1]}
-        cursor += len(properties)
+        binding = bindings.get(name)
+        if binding is None:
+            raise ValueError(f"unknown Dash input control: {name!r}")
+        count = len(binding.input_properties)
+        state[name] = binding.decode(tuple(values[cursor : cursor + count]))
+        cursor += count
     if cursor != len(values):
         raise ValueError("Dash callback input state does not match declared controls")
     return state
