@@ -7,6 +7,7 @@ from typing import Any, TypeAlias
 
 from runbook.data.config import SourceConfig
 from runbook.data.ingest.adapters.base import (
+    HistoricalSourceAdapter,
     HttpAdapter,
     LocalFileAdapter,
     SourceAdapter,
@@ -115,6 +116,7 @@ def get_adapter(source_config: SourceConfig) -> SourceAdapter:
 
 
 __all__ = [
+    "HistoricalSourceAdapter",
     "HttpAdapter",
     "LocalFileAdapter",
     "SourceAdapter",

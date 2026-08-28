@@ -6,14 +6,15 @@ import inspect
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 from loguru import logger
 from runbook.core.utils.hashing import sha256_bytes
 from runbook.data.config import SourceConfig, load_source_configs
-from runbook.data.ingest.adapters import get_adapter
+from runbook.data.ingest.adapters import HistoricalSourceAdapter, get_adapter
 from runbook.data.ingest.models import (
     AcquisitionStageResult,
+    HistoricalExecutionContext,
     IngestRequest,
     IngestResult,
     PreviousAcquisitionState,
@@ -96,6 +97,7 @@ def run_stage1_acquire(
     store: BlobStore,
     previous_watermarks: dict[str, datetime] | None = None,
     previous_state: PreviousAcquisitionState | None = None,
+    execution_context: HistoricalExecutionContext | None = None,
 ) -> AcquisitionStageResult:
     """Check readiness, acquire bytes, and persist one immutable raw artifact."""
     config = source_config
@@ -104,17 +106,47 @@ def run_stage1_acquire(
     slot = slot.astimezone(timezone.utc)
     run = slot_key(slot)
     adapter = get_adapter(config)
+    historical_adapter: HistoricalSourceAdapter | None = None
+    if execution_context is not None:
+        # A historical request is an explicit adapter opt-in.  Requiring both
+        # stage-1 hooks to accept the immutable context keeps unsupported
+        # adapters from making a normal acquisition before failing.
+        historical_adapter = cast(HistoricalSourceAdapter, adapter)
+        try:
+            check_signature = inspect.signature(historical_adapter.check)
+            historical_acquire_signature = inspect.signature(historical_adapter.acquire)
+            check_context = check_signature.parameters.get("execution_context")
+            acquire_context = historical_acquire_signature.parameters.get("execution_context")
+            if check_context is None or acquire_context is None:
+                raise TypeError("historical execution context is not explicitly supported")
+            check_signature.bind(
+                source_config=config,
+                acquisition_run=run,
+                observed_at=slot,
+                execution_context=execution_context,
+            )
+            historical_acquire_signature.bind(
+                source_config=config,
+                readiness=object(),
+                fetched_at=slot,
+                execution_context=execution_context,
+            )
+        except (TypeError, ValueError):
+            raise ValueError(f"Source '{config.source_id}' does not support historical date-range execution.") from None
     state = previous_state
     if state is None and previous_watermarks:
         state = PreviousAcquisitionState(watermark=previous_watermarks)
     logger.info("stage=1A readiness source={} slot={}", config.source_id, run)
+    check_method = historical_adapter.check if historical_adapter is not None else adapter.check
     check_kwargs: dict[str, Any] = {
         "source_config": config,
         "acquisition_run": run,
         "observed_at": slot,
     }
+    if execution_context is not None:
+        check_kwargs["execution_context"] = execution_context
     try:
-        check_signature = inspect.signature(adapter.check)
+        check_signature = inspect.signature(check_method)
     except (TypeError, ValueError):
         pass
     else:
@@ -124,7 +156,7 @@ def run_stage1_acquire(
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
         }:
             check_kwargs["previous_state"] = state
-    readiness = adapter.check(**check_kwargs)
+    readiness = check_method(**check_kwargs)
     logger.info(
         "stage=1A readiness source={} slot={} status={}",
         config.source_id,
@@ -147,7 +179,8 @@ def run_stage1_acquire(
     )
     acquire_signature: inspect.Signature
     try:
-        acquire_signature = inspect.signature(adapter.acquire)
+        acquire_method = historical_adapter.acquire if historical_adapter is not None else adapter.acquire
+        acquire_signature = inspect.signature(acquire_method)
     except (TypeError, ValueError) as exc:  # pragma: no cover - registry rejects these adapters
         raise ValueError(f"adapter acquire signature is not inspectable: {exc}") from None
     acquire_kwargs: dict[str, Any] = {
@@ -155,6 +188,8 @@ def run_stage1_acquire(
         "readiness": readiness,
         "fetched_at": slot,
     }
+    if execution_context is not None:
+        acquire_kwargs["execution_context"] = execution_context
     accepts_previous_state = True
     try:
         acquire_signature.bind(**acquire_kwargs, previous_state=state)
@@ -181,7 +216,7 @@ def run_stage1_acquire(
         acquire_kwargs["previous_watermarks"] = (
             state.watermark if state is not None and isinstance(state.watermark, dict) else previous_watermarks or {}
         )
-    acquired = adapter.acquire(**acquire_kwargs)
+    acquired = acquire_method(**acquire_kwargs)
     raw_sha = sha256_bytes(acquired.payload)
     raw_ref = f"raw/{config.source_id}/{run}/sha256={raw_sha}/source{PurePosixPath(acquired.record.source_filename).suffix or '.bin'}"
     store.put_immutable(raw_ref, acquired.payload)
@@ -230,6 +265,8 @@ def run_ingest(
     blob_store = store or open_blob_store(resolved.store_uri)
     pointers = pointer_registry or open_pointer_registry()
     current = pointers.get(binding.dataset_id for binding in config.datasets.values())
+    if resolved.execution_context is not None:
+        current = {}
     previous_state = load_previous_acquisition_state(
         blob_store,
         config,
@@ -240,6 +277,7 @@ def run_ingest(
         slot=slot,
         store=blob_store,
         previous_state=previous_state,
+        execution_context=resolved.execution_context,
     )
     if acquisition.status is not ReadinessStatus.ready:
         return IngestResult(
@@ -264,12 +302,13 @@ def run_ingest(
         published_at=slot,
         previous_pointers=current,
     )
-    pointers.publish(
-        source_id=config.source_id,
-        source_run_id=acquisition.acquisition_run,
-        updates=curated.pointer_updates,
-        updated_at=slot,
-    )
+    if resolved.execution_context is None:
+        pointers.publish(
+            source_id=config.source_id,
+            source_run_id=acquisition.acquisition_run,
+            updates=curated.pointer_updates,
+            updated_at=slot,
+        )
     logger.info(
         "stage=2 complete source={} slot={} datasets={}",
         config.source_id,

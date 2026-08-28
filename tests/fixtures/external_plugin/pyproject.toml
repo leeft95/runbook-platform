@@ -7,6 +7,7 @@ dependencies = ["runbook-data"]
 
 [project.entry-points."runbook.adapters"]
 test_external = "runbook_test_plugin.adapters:ExternalTestAdapter"
+test_external_legacy = "runbook_test_plugin.adapters:LegacyExternalTestAdapter"
 
 [project.entry-points."runbook.parsers"]
 test_external_v1 = "runbook_test_plugin.parsers:parse_external"

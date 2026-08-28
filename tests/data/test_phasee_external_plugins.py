@@ -426,6 +426,7 @@ from runbook.data.config import ScheduleSpec, SourceConfig
 from runbook.data.ingest.runner import run_ingest
 from runbook.data import open_blob_store
 from runbook.data.ingest import IngestRequest
+from runbook.data.ingest import HistoricalExecutionContext
 from runbook.data.pointers import DatabasePointerRegistry, create_pointer_schema
 
 database = r"sqlite:///STATE_DB"
@@ -442,8 +443,17 @@ config = SourceConfig(
 )
 first = run_ingest(IngestRequest(source_config=config, run_time=datetime(2026, 1, 1, tzinfo=timezone.utc)), store=store, pointer_registry=pointers)
 second = run_ingest(IngestRequest(source_config=config, run_time=datetime(2026, 1, 2, tzinfo=timezone.utc)), store=store, pointer_registry=pointers)
+historical = run_ingest(
+    IngestRequest(
+        source_config=config,
+        run_time=datetime(2026, 1, 3, tzinfo=timezone.utc),
+        execution_context=HistoricalExecutionContext(start_date="2026-01-01", end_date="2026-01-02"),
+    ),
+    store=store,
+    pointer_registry=pointers,
+)
 pointer = pointers.get(["external_prices"])["external_prices"]
-print(json.dumps({"first": first.status.value, "second": second.status.value, "pointer": pointer.manifest_ref, "state": open(r"STATE_PATH", encoding="utf-8").read(), "proof": runtime_proof()}))
+print(json.dumps({"first": first.status.value, "second": second.status.value, "historical": historical.status.value, "pointer": pointer.manifest_ref, "state": open(r"STATE_PATH", encoding="utf-8").read(), "proof": runtime_proof()}))
 """.replace("STATE_DB", str(tmp_path / "runs.db"))
         .replace("STORE", str(tmp_path / "store"))
         .replace("STATE_PATH", str(tmp_path / "state.json"))
@@ -457,11 +467,13 @@ print(json.dumps({"first": first.status.value, "second": second.status.value, "p
         env={},
     )
     output = json.loads(result.stdout.strip().splitlines()[-1])
-    assert output["first"] == output["second"] == "ready"
+    assert output["first"] == output["second"] == output["historical"] == "ready"
     assert output["pointer"].startswith("curated/external_prices/manifests/")
     state = json.loads(output["state"])
-    assert state["watermark"] == {"prices": "2026-01-01T00:00:00Z"}
-    assert state["metadata"] == {"partition_values": {"prices": {"bucket": ["all"]}}}
+    assert state == {
+        "historical_start_date": "2026-01-01",
+        "historical_end_date": "2026-01-02",
+    }
     assert set(output["proof"]["distributions"]) == {
         "runbook-core",
         "runbook-data",
@@ -470,3 +482,56 @@ print(json.dumps({"first": first.status.value, "second": second.status.value, "p
         "runbook-worker",
         "runbook-test-external-plugin",
     }
+
+
+def test_legacy_external_fixture_runs_ordinary_ingest_in_fresh_process(tmp_path: Path) -> None:
+    """A pre-historical adapter remains usable through an isolated install."""
+    isolated_site = _build_isolated_site(tmp_path)
+    script = (
+        _runtime_proof_prefix(isolated_site)
+        + """
+import json
+from datetime import datetime, timezone
+from sqlalchemy import create_engine
+from runbook.data import open_blob_store
+from runbook.data.config import ScheduleSpec, SourceConfig
+from runbook.data.ingest import IngestRequest
+from runbook.data.ingest.runner import run_ingest
+from runbook.data.pointers import DatabasePointerRegistry, create_pointer_schema
+
+database = r"sqlite:///STATE_DB"
+engine = create_engine(database)
+create_pointer_schema(engine)
+pointers = DatabasePointerRegistry(engine)
+store = open_blob_store(r"file:STORE")
+config = SourceConfig(
+    source_id="legacy_external_source",
+    adapter="test_external_legacy",
+    schedule=ScheduleSpec(cron="0 * * * *"),
+    datasets={"prices": {"dataset_id": "legacy_external_prices", "parser_id": "test_external_v1"}},
+    params={"external_state_path": r"STATE_PATH"},
+)
+result = run_ingest(
+    IngestRequest(source_config=config, run_time=datetime(2026, 1, 1, tzinfo=timezone.utc)),
+    store=store,
+    pointer_registry=pointers,
+)
+pointer = pointers.get(["legacy_external_prices"])["legacy_external_prices"]
+print(json.dumps({"status": result.status.value, "pointer": pointer.manifest_ref, "state": open(r"STATE_PATH", encoding="utf-8").read(), "proof": runtime_proof()}))
+""".replace("STATE_DB", str(tmp_path / "runs.db"))
+        .replace("STORE", str(tmp_path / "store"))
+        .replace("STATE_PATH", str(tmp_path / "legacy-state.json"))
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={},
+    )
+    output = json.loads(result.stdout.strip().splitlines()[-1])
+    assert output["status"] == "ready"
+    assert output["pointer"].startswith("curated/legacy_external_prices/manifests/")
+    assert json.loads(output["state"]) is None
+    assert Path(output["proof"]["origins"]["runbook_test_plugin"]).is_relative_to(isolated_site)

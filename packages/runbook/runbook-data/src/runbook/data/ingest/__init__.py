@@ -1,11 +1,12 @@
 """Source acquisition, adapters, parsers, and curation entry points."""
 
-from runbook.data.ingest.adapters import SourceAdapter
+from runbook.data.ingest.adapters import HistoricalSourceAdapter, SourceAdapter
 from runbook.data.ingest.models import (
     AcquisitionResult,
     AcquisitionStageResult,
     CuratedFrame,
     CurationResult,
+    HistoricalExecutionContext,
     IngestRequest,
     IngestResult,
     PreviousAcquisitionState,
@@ -28,6 +29,8 @@ __all__ = [
     "CuratedFrame",
     "IngestRequest",
     "IngestResult",
+    "HistoricalExecutionContext",
+    "HistoricalSourceAdapter",
     "PreviousAcquisitionState",
     "RawArtifactRecord",
     "ReadinessResult",

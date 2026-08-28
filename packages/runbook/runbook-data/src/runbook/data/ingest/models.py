@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any, Iterable, SupportsIndex
 
@@ -76,6 +76,26 @@ class ReadinessStatus(StrEnum):
     ready = "ready"
     not_ready = "not_ready"
     failed = "failed"
+
+
+class HistoricalExecutionContext(BaseModel):
+    """Immutable inclusive date range for an explicitly historical run."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    start_date: date
+    end_date: date
+
+    @staticmethod
+    def _validate_range(start_date: date, end_date: date) -> None:
+        """Reject an end date before the inclusive start date."""
+        if end_date < start_date:
+            raise ValueError("historical end_date must be on or after start_date")
+
+    def model_post_init(self, __context: Any) -> None:
+        """Validate the immutable date range after Pydantic coercion."""
+        del __context
+        self._validate_range(self.start_date, self.end_date)
 
 
 class ReadinessResult(BaseModel):
@@ -169,6 +189,7 @@ class IngestRequest(BaseModel):
     run_time: datetime | None = None
     store_uri: str | None = None
     source_config_file: str = "data/contract/source_configs.json"
+    execution_context: HistoricalExecutionContext | None = None
 
 
 class IngestResult(BaseModel):
@@ -190,6 +211,7 @@ __all__ = [
     "CuratedFrame",
     "IngestRequest",
     "IngestResult",
+    "HistoricalExecutionContext",
     "PreviousAcquisitionState",
     "RawArtifactRecord",
     "ReadinessResult",

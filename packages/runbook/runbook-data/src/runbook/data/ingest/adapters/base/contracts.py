@@ -7,7 +7,12 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from runbook.data.config import SourceConfig
-from runbook.data.ingest.models import AcquisitionResult, PreviousAcquisitionState, ReadinessResult
+from runbook.data.ingest.models import (
+    AcquisitionResult,
+    HistoricalExecutionContext,
+    PreviousAcquisitionState,
+    ReadinessResult,
+)
 
 
 @runtime_checkable
@@ -34,4 +39,31 @@ class SourceAdapter(Protocol):
     ) -> AcquisitionResult: ...
 
 
-__all__ = ["SourceAdapter"]
+class HistoricalSourceAdapter(Protocol):
+    """Optional source capability for inclusive date-range acquisitions."""
+
+    def validate(self, source_config: SourceConfig) -> None: ...
+
+    def check(
+        self,
+        *,
+        source_config: SourceConfig,
+        acquisition_run: str,
+        observed_at: datetime,
+        previous_state: PreviousAcquisitionState | None = None,
+        execution_context: HistoricalExecutionContext,
+    ) -> ReadinessResult: ...
+
+    def acquire(
+        self,
+        *,
+        source_config: SourceConfig,
+        readiness: ReadinessResult,
+        fetched_at: datetime,
+        previous_watermarks: Mapping[str, datetime] | None = None,
+        previous_state: PreviousAcquisitionState | None = None,
+        execution_context: HistoricalExecutionContext,
+    ) -> AcquisitionResult: ...
+
+
+__all__ = ["HistoricalSourceAdapter", "SourceAdapter"]
