@@ -8,7 +8,7 @@ import dash_mantine_components as dmc
 from dash import Input, Output, dcc, html, register_page
 
 from ..repository import AsyncRunRepository
-from .operations import error_state, metric_card
+from .operations import error_state, metric_card, status_label
 
 PREFIX = "runbook-ui-system"
 
@@ -32,6 +32,7 @@ def layout() -> html.Div:
                 justify="space-between",
                 align="flex-end",
                 mb="md",
+                className="runbook-page-heading",
             ),
             dcc.Loading(
                 id=f"{PREFIX}-loading",
@@ -40,14 +41,23 @@ def layout() -> html.Div:
                     [
                         html.Div(id=f"{PREFIX}-error"),
                         dmc.SimpleGrid(
-                            id=f"{PREFIX}-metrics", cols={"base": 1, "sm": 2, "lg": 4}, spacing="sm", mb="md"
+                            id=f"{PREFIX}-metrics",
+                            cols={"base": 1, "sm": 2, "lg": 4},
+                            spacing="sm",
+                            mb="md",
+                            className="runbook-metrics",
                         ),
-                        dmc.Card(id=f"{PREFIX}-details", withBorder=True, padding="md"),
+                        dmc.Card(
+                            id=f"{PREFIX}-details",
+                            withBorder=True,
+                            padding="md",
+                            className="runbook-panel",
+                        ),
                     ]
                 ),
             ),
         ],
-        className="runbook-detail-page",
+        className="runbook-page runbook-detail-page",
     )
 
 
@@ -83,9 +93,12 @@ def register(dash_app: Any, sessions: Any) -> None:
             ]
             details = dmc.Stack(
                 [
-                    dmc.Title("Service data", order=4),
+                    dmc.Title("Service data", order=4, className="runbook-panel-title"),
                     dmc.Text("Run status counts from the durable repository.", c="dimmed", size="sm"),
-                    dmc.Group([dmc.Text(f"{status}: {count}") for status, count in sorted(counts.items())], gap="lg"),
+                    dmc.Group(
+                        [dmc.Text(f"{status_label(status)}: {count}") for status, count in sorted(counts.items())],
+                        gap="lg",
+                    ),
                 ],
                 gap="xs",
             )

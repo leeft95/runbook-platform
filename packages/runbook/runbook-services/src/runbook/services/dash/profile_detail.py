@@ -11,6 +11,7 @@ from dash import Input, Output, dcc, html, register_page
 
 from ..repository import AsyncRunRepository
 from .operations import (
+    STATUS_CELL_CLASS_RULES,
     copy_value,
     detail_row,
     empty_state,
@@ -34,6 +35,7 @@ def _grid(component_id: str, columns: list[dict[str, Any]], height: str = "300px
         grid_options["getRowId"] = {"function": "params.data.run_id"}
     return dag.AgGrid(
         id=component_id,
+        className="runbook-grid runbook-grid--clickable" if component_id == f"{PREFIX}-runs-grid" else "runbook-grid",
         rowData=[],
         columnDefs=columns,
         defaultColDef={"resizable": True, "sortable": True, "filter": True},
@@ -65,7 +67,13 @@ def layout() -> Any:
                         dmc.Group(
                             [
                                 dmc.Anchor("Configuration", href="/ui/profiles#runbook-ui-profiles-config", size="sm"),
-                                dmc.Button("Refresh", id=f"{PREFIX}-manual-refresh", variant="light", size="sm"),
+                                dmc.Button(
+                                    "Refresh",
+                                    id=f"{PREFIX}-manual-refresh",
+                                    variant="light",
+                                    size="sm",
+                                    className="runbook-button",
+                                ),
                             ],
                             gap="xs",
                         ),
@@ -73,11 +81,18 @@ def layout() -> Any:
                     justify="space-between",
                     align="flex-end",
                     mb="md",
+                    className="runbook-page-heading",
                 ),
-                dmc.SimpleGrid(id=f"{PREFIX}-metrics", cols={"base": 1, "sm": 2, "lg": 4}, spacing="sm", mb="md"),
+                dmc.SimpleGrid(
+                    id=f"{PREFIX}-metrics",
+                    cols={"base": 1, "sm": 2, "lg": 4},
+                    spacing="sm",
+                    mb="md",
+                    className="runbook-metrics",
+                ),
                 dmc.Card(
                     [
-                        dmc.Title("Dependent sources", order=4),
+                        dmc.Title("Dependent sources", order=4, className="runbook-panel-title"),
                         dmc.Text(
                             "Derived from this profile's current dataset bindings.", size="sm", c="dimmed", mb="xs"
                         ),
@@ -90,7 +105,12 @@ def layout() -> Any:
                                     "cellRenderer": "markdown",
                                     "pinned": "left",
                                 },
-                                {"field": "status_text", "headerName": "Status"},
+                                {
+                                    "field": "status_text",
+                                    "headerName": "Status",
+                                    "cellClass": "runbook-grid-status",
+                                    "cellClassRules": STATUS_CELL_CLASS_RULES,
+                                },
                                 {"field": "watermark", "headerName": "Latest watermark"},
                                 {"field": "last_success", "headerName": "Last success"},
                                 {"field": "age", "headerName": "Age"},
@@ -101,16 +121,22 @@ def layout() -> Any:
                     withBorder=True,
                     padding="md",
                     mb="md",
+                    className="runbook-panel",
                 ),
                 dmc.Card(
                     [
-                        dmc.Title("Run history", order=4),
+                        dmc.Title("Run history", order=4, className="runbook-panel-title"),
                         dmc.Text("Select a run to inspect details and immutable logs.", size="sm", c="dimmed", mb="xs"),
                         _grid(
                             f"{PREFIX}-runs-grid",
                             [
                                 {"field": "run_id", "headerName": "Run ID", "pinned": "left"},
-                                {"field": "status_text", "headerName": "Status"},
+                                {
+                                    "field": "status_text",
+                                    "headerName": "Status",
+                                    "cellClass": "runbook-grid-status",
+                                    "cellClassRules": STATUS_CELL_CLASS_RULES,
+                                },
                                 {"field": "slot", "headerName": "Slot"},
                                 {"field": "duration", "headerName": "Duration"},
                                 {"field": "trigger", "headerName": "Trigger"},
@@ -122,9 +148,10 @@ def layout() -> Any:
                     ],
                     withBorder=True,
                     padding="md",
+                    className="runbook-panel",
                 ),
             ],
-            className="runbook-detail-page",
+            className="runbook-page runbook-detail-page",
         ),
     )
 
@@ -247,35 +274,39 @@ def register(dash_app: Any, sessions: Any) -> None:
             metrics = [
                 dmc.Card(
                     [
-                        dmc.Text("Current status", size="sm", c="dimmed"),
+                        dmc.Text("Current status", size="sm", c="dimmed", className="runbook-metric-label"),
                         status_badge(run_status(latest) if latest else "not_ready"),
                     ],
                     withBorder=True,
                     padding="sm",
+                    className="runbook-metric",
                 ),
                 dmc.Card(
                     [
-                        dmc.Text("Latest snapshot", size="sm", c="dimmed"),
+                        dmc.Text("Latest snapshot", size="sm", c="dimmed", className="runbook-metric-label"),
                         copy_value(getattr(success or latest, "snapshot_id", None), label="snapshot"),
                     ],
                     withBorder=True,
                     padding="sm",
+                    className="runbook-metric",
                 ),
                 dmc.Card(
                     [
-                        dmc.Text("Last successful run", size="sm", c="dimmed"),
+                        dmc.Text("Last successful run", size="sm", c="dimmed", className="runbook-metric-label"),
                         timestamp(getattr(success, "finished_at", None)),
                     ],
                     withBorder=True,
                     padding="sm",
+                    className="runbook-metric",
                 ),
                 dmc.Card(
                     [
-                        dmc.Text("Snapshot as of", size="sm", c="dimmed"),
+                        dmc.Text("Snapshot as of", size="sm", c="dimmed", className="runbook-metric-label"),
                         dmc.Text(str(snapshot.get("watermark") or "—"), size="sm"),
                     ],
                     withBorder=True,
                     padding="sm",
+                    className="runbook-metric",
                 ),
             ]
             source_data = _source_rows(

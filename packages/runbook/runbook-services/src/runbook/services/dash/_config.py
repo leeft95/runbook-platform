@@ -8,6 +8,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 import dash_ag_grid as dag
+import dash_mantine_components as dmc
 from dash import ClientsideFunction, Input, Output, State, ctx, dcc, html, no_update, register_page
 
 from ..config import validate_config
@@ -394,6 +395,7 @@ def _main_grid(prefix: str, spec: ConfigGridSpec) -> dag.AgGrid:
     """Main definition for the AG-Grid"""
     return dag.AgGrid(
         id=f"{prefix}-grid",
+        className="runbook-grid",
         rowData=[],
         columnDefs=spec.columns,
         defaultColDef={"resizable": True, "sortable": True, "filter": True},
@@ -418,18 +420,27 @@ def _editor_modal(prefix: str) -> html.Div:
                     html.Div(
                         [
                             html.H3(id=f"{prefix}-editor-title", style={"margin": 0}),
-                            html.Button("×", id=f"{prefix}-editor-close", n_clicks=0),
+                            html.Button(
+                                "×",
+                                id=f"{prefix}-editor-close",
+                                n_clicks=0,
+                                title="Close editor",
+                                **{"aria-label": "Close editor"},
+                                className="runbook-config-editor-close",
+                            ),
                         ],
                         style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"},
+                        className="runbook-config-editor-header",
                     ),
                     html.Hr(),
                     html.Div(
                         id=f"{prefix}-schedule-section",
                         style={"display": "none"},
                         children=[
-                            dcc.Dropdown(
+                            dmc.Select(
                                 id=f"{prefix}-schedule-mode",
-                                options=[
+                                label="Schedule mode",
+                                data=[
                                     {"label": x.replace("_", " ").title(), "value": x}
                                     for x in [
                                         "hourly",
@@ -447,7 +458,11 @@ def _editor_modal(prefix: str) -> html.Div:
                                 [
                                     html.Div(
                                         [
-                                            html.Label("Minute"),
+                                            html.Label(
+                                                "Minute",
+                                                htmlFor=f"{prefix}-schedule-minute",
+                                                className="runbook-form-label",
+                                            ),
                                             dcc.Input(
                                                 id=f"{prefix}-schedule-minute",
                                                 type="number",
@@ -459,7 +474,11 @@ def _editor_modal(prefix: str) -> html.Div:
                                     ),
                                     html.Div(
                                         [
-                                            html.Label("Hour"),
+                                            html.Label(
+                                                "Hour",
+                                                htmlFor=f"{prefix}-schedule-hour",
+                                                className="runbook-form-label",
+                                            ),
                                             dcc.Input(
                                                 id=f"{prefix}-schedule-hour",
                                                 type="number",
@@ -471,7 +490,11 @@ def _editor_modal(prefix: str) -> html.Div:
                                     ),
                                     html.Div(
                                         [
-                                            html.Label("Every N hours"),
+                                            html.Label(
+                                                "Every N hours",
+                                                htmlFor=f"{prefix}-schedule-interval",
+                                                className="runbook-form-label",
+                                            ),
                                             dcc.Input(
                                                 id=f"{prefix}-schedule-interval",
                                                 type="number",
@@ -483,10 +506,10 @@ def _editor_modal(prefix: str) -> html.Div:
                                     ),
                                     html.Div(
                                         [
-                                            html.Label("Day of week"),
-                                            dcc.Dropdown(
+                                            dmc.Select(
                                                 id=f"{prefix}-schedule-dow",
-                                                options=[
+                                                label="Day of week",
+                                                data=[
                                                     {"label": n, "value": str(i)}
                                                     for i, n in enumerate(
                                                         [
@@ -506,7 +529,11 @@ def _editor_modal(prefix: str) -> html.Div:
                                     ),
                                     html.Div(
                                         [
-                                            html.Label("Day of month"),
+                                            html.Label(
+                                                "Day of month",
+                                                htmlFor=f"{prefix}-schedule-dom",
+                                                className="runbook-form-label",
+                                            ),
                                             dcc.Input(
                                                 id=f"{prefix}-schedule-dom",
                                                 type="number",
@@ -518,10 +545,10 @@ def _editor_modal(prefix: str) -> html.Div:
                                     ),
                                     html.Div(
                                         [
-                                            html.Label("Timezone"),
-                                            dcc.Dropdown(
+                                            dmc.Select(
                                                 id=f"{prefix}-schedule-timezone",
-                                                options=[
+                                                label="Timezone",
+                                                data=[
                                                     {"label": x, "value": x}
                                                     for x in ["UTC", "Europe/London", "America/New_York", "Asia/Dubai"]
                                                 ],
@@ -539,7 +566,11 @@ def _editor_modal(prefix: str) -> html.Div:
                             ),
                             html.Div(
                                 [
-                                    html.Label("Custom cron"),
+                                    html.Label(
+                                        "Custom cron",
+                                        htmlFor=f"{prefix}-schedule-custom",
+                                        className="runbook-form-label",
+                                    ),
                                     dcc.Input(id=f"{prefix}-schedule-custom", style={"width": "100%"}),
                                 ],
                                 style={"marginTop": "12px"},
@@ -552,6 +583,7 @@ def _editor_modal(prefix: str) -> html.Div:
                                     "border": "1px solid #ddd",
                                     "borderRadius": "6px",
                                 },
+                                className="runbook-config-preview",
                             ),
                         ],
                     ),
@@ -561,6 +593,7 @@ def _editor_modal(prefix: str) -> html.Div:
                         children=[
                             dag.AgGrid(
                                 id=f"{prefix}-datasets-grid",
+                                className="runbook-grid",
                                 rowData=[],
                                 columnDefs=[],
                                 defaultColDef={"resizable": True},
@@ -584,19 +617,30 @@ def _editor_modal(prefix: str) -> html.Div:
                         id=f"{prefix}-json-section",
                         style={"display": "none"},
                         children=[
+                            html.Label("JSON value", htmlFor=f"{prefix}-json-editor", className="runbook-form-label"),
                             dcc.Textarea(
                                 id=f"{prefix}-json-editor",
                                 style={"width": "100%", "height": "320px", "fontFamily": "monospace"},
-                            )
+                            ),
                         ],
                     ),
-                    html.Div(id=f"{prefix}-editor-error", style={"marginTop": "10px", "minHeight": "24px"}),
+                    html.Div(
+                        id=f"{prefix}-editor-error",
+                        style={"marginTop": "10px", "minHeight": "24px"},
+                        className="runbook-config-editor-error",
+                    ),
                     html.Div(
                         [
-                            html.Button("Cancel", id=f"{prefix}-editor-cancel", n_clicks=0),
-                            html.Button("Apply", id=f"{prefix}-editor-apply", n_clicks=0),
+                            html.Button("Cancel", id=f"{prefix}-editor-cancel", n_clicks=0, className="runbook-button"),
+                            html.Button(
+                                "Apply",
+                                id=f"{prefix}-editor-apply",
+                                n_clicks=0,
+                                className="runbook-button runbook-button--primary",
+                            ),
                         ],
                         style={"display": "flex", "justifyContent": "flex-end", "gap": "8px", "marginTop": "16px"},
+                        className="runbook-form-actions",
                     ),
                 ],
                 style={
@@ -608,6 +652,7 @@ def _editor_modal(prefix: str) -> html.Div:
                     "padding": "18px",
                     "boxShadow": "0 14px 40px rgba(0,0,0,.22)",
                 },
+                className="runbook-panel runbook-config-editor",
             )
         ],
     )
@@ -625,24 +670,40 @@ def _page_layout(prefix: str, spec: ConfigGridSpec) -> html.Div:
             )
             if profile_run
             else None,
-            html.H2(spec.title),
+            html.H2(spec.title, className="runbook-panel-title"),
             html.Div(
                 [
-                    html.Button(f"+ New {spec.kind}", id=f"{prefix}-new", n_clicks=0),
-                    html.Button("Validate", id=f"{prefix}-validate", n_clicks=0),
-                    html.Button("Save", id=f"{prefix}-save", n_clicks=0),
+                    html.Button(f"+ New {spec.kind}", id=f"{prefix}-new", n_clicks=0, className="runbook-button"),
+                    html.Button(
+                        "Validate",
+                        id=f"{prefix}-validate",
+                        n_clicks=0,
+                        className="runbook-button runbook-button--secondary",
+                    ),
+                    html.Button(
+                        "Save", id=f"{prefix}-save", n_clicks=0, className="runbook-button runbook-button--primary"
+                    ),
                     html.Button(
                         "Run latest snapshot (manual)",
                         id=f"{prefix}-run",
                         n_clicks=0,
                         title="Requires confirmation and bypasses the automatic dependency barrier.",
+                        className="runbook-button runbook-button--primary",
                     )
                     if profile_run
-                    else html.Button("Run selected", id=f"{prefix}-run", n_clicks=0),
-                    html.Button("Disable", id=f"{prefix}-disable", n_clicks=0),
-                    html.Button("Refresh", id=f"{prefix}-refresh", n_clicks=0),
+                    else html.Button(
+                        "Run selected",
+                        id=f"{prefix}-run",
+                        n_clicks=0,
+                        className="runbook-button runbook-button--primary",
+                    ),
+                    html.Button(
+                        "Disable", id=f"{prefix}-disable", n_clicks=0, className="runbook-button runbook-button--danger"
+                    ),
+                    html.Button("Refresh", id=f"{prefix}-refresh", n_clicks=0, className="runbook-button"),
                 ],
                 style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "12px"},
+                className="runbook-form-actions",
             ),
             html.Div(
                 "Edit scalar cells directly. Click Schedule, Datasets, Params, Layout or Extensions to open an editor.",
@@ -651,7 +712,8 @@ def _page_layout(prefix: str, spec: ConfigGridSpec) -> html.Div:
             _main_grid(prefix, spec),
             html.Div(id=f"{prefix}-result", style={"marginTop": "12px", "minHeight": "28px"}),
             _editor_modal(prefix),
-        ]
+        ],
+        className="runbook-panel runbook-config-section",
     )
 
 

@@ -11,6 +11,7 @@ from dash import Input, Output, dcc, html
 
 from ..repository import AsyncRunRepository
 from .operations import (
+    STATUS_CELL_CLASS_RULES,
     as_iso,
     dataset_ids,
     empty_state,
@@ -129,7 +130,12 @@ def catalogue_layout(kind: str) -> html.Div:
     columns = (
         [
             {"field": "profile_link", "headerName": "Profile", "cellRenderer": "markdown", "pinned": "left"},
-            {"field": "status_text", "headerName": "Latest status"},
+            {
+                "field": "status_text",
+                "headerName": "Latest status",
+                "cellClass": "runbook-grid-status",
+                "cellClassRules": STATUS_CELL_CLASS_RULES,
+            },
             {"field": "last_success_age", "headerName": "Last success"},
             {"field": "snapshot_id", "headerName": "Latest snapshot"},
             {"field": "as_of", "headerName": "As of"},
@@ -139,7 +145,12 @@ def catalogue_layout(kind: str) -> html.Div:
         if kind == "profile"
         else [
             {"field": "source_link", "headerName": "Source", "cellRenderer": "markdown", "pinned": "left"},
-            {"field": "status_text", "headerName": "Status"},
+            {
+                "field": "status_text",
+                "headerName": "Status",
+                "cellClass": "runbook-grid-status",
+                "cellClassRules": STATUS_CELL_CLASS_RULES,
+            },
             {"field": "adapter", "headerName": "Adapter"},
             {"field": "watermark", "headerName": "Latest watermark"},
             {"field": "watermark_age", "headerName": "Age"},
@@ -151,9 +162,15 @@ def catalogue_layout(kind: str) -> html.Div:
         [
             dmc.Group(
                 [
-                    dmc.TextInput(id=f"{prefix}-search", placeholder=f"Search {title.lower()}…", size="sm"),
+                    dmc.TextInput(
+                        id=f"{prefix}-search",
+                        label="Search",
+                        placeholder=f"Search {title.lower()}…",
+                        size="sm",
+                    ),
                     dmc.Select(
                         id=f"{prefix}-status",
+                        label="Status",
                         data=[
                             {"label": label, "value": value}
                             for value, label in ([("all", "All")] + list(_STATUS_OPTIONS))
@@ -165,6 +182,7 @@ def catalogue_layout(kind: str) -> html.Div:
                     ),
                     dmc.Select(
                         id=f"{prefix}-enabled",
+                        label="Availability",
                         data=[
                             {"label": label, "value": value}
                             for value, label in [("all", "All"), ("enabled", "Enabled"), ("disabled", "Disabled")]
@@ -174,7 +192,13 @@ def catalogue_layout(kind: str) -> html.Div:
                         size="sm",
                         w=150,
                     ),
-                    dmc.Button("Refresh", id=f"{prefix}-refresh", variant="light", size="sm"),
+                    dmc.Button(
+                        "Refresh",
+                        id=f"{prefix}-refresh",
+                        variant="light",
+                        size="sm",
+                        className="runbook-button",
+                    ),
                     dmc.Anchor("Configuration management", href=f"#runbook-ui-{kind}s-config", size="sm"),
                 ],
                 gap="sm",
@@ -189,6 +213,7 @@ def catalogue_layout(kind: str) -> html.Div:
                         html.Div(id=f"{prefix}-summary", className="runbook-muted"),
                         dag.AgGrid(
                             id=f"{prefix}-grid",
+                            className="runbook-grid",
                             rowData=[],
                             columnDefs=columns,
                             defaultColDef={"resizable": True, "sortable": True, "filter": True},
@@ -199,7 +224,8 @@ def catalogue_layout(kind: str) -> html.Div:
                     ]
                 ),
             ),
-        ]
+        ],
+        className="runbook-panel runbook-catalogue",
     )
 
 
@@ -208,7 +234,7 @@ _STATUS_OPTIONS = tuple(
     for value, label in (
         ("queued", "Queued"),
         ("running", "Running"),
-        ("success", "Success"),
+        ("success", "Succeeded"),
         ("failed", "Failed"),
         ("waiting", "Waiting"),
         ("not_ready", "Not ready"),

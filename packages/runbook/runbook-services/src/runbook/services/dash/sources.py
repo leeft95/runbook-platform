@@ -20,9 +20,10 @@ def _layout() -> html.Div:
             ),
             catalogue_layout("source"),
             html.Hr(className="runbook-divider"),
-            html.H2("Configuration management", id="runbook-ui-sources-config"),
+            html.H2("Configuration management", id="runbook-ui-sources-config", className="runbook-panel-title"),
             *config.children,
-        ]
+        ],
+        className="runbook-page",
     )
 
 

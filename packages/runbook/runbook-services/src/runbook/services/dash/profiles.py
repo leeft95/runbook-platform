@@ -20,9 +20,10 @@ def _layout() -> html.Div:
             ),
             catalogue_layout("profile"),
             html.Hr(className="runbook-divider"),
-            html.H2("Configuration management", id="runbook-ui-profiles-config"),
+            html.H2("Configuration management", id="runbook-ui-profiles-config", className="runbook-panel-title"),
             *config.children,
-        ]
+        ],
+        className="runbook-page",
     )
 
 

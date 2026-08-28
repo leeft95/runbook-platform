@@ -11,6 +11,7 @@ from dash import Input, Output, State, ctx, dcc, html, no_update, register_page
 
 from ..repository import AsyncRunRepository
 from .operations import (
+    STATUS_CELL_CLASS_RULES,
     copy_value,
     detail_row,
     empty_state,
@@ -33,6 +34,7 @@ def _grid(component_id: str, columns: list[dict[str, Any]], height: str = "300px
         grid_options["getRowId"] = {"function": "params.data.run_id"}
     return dag.AgGrid(
         id=component_id,
+        className="runbook-grid runbook-grid--clickable" if component_id == f"{PREFIX}-runs-grid" else "runbook-grid",
         rowData=[],
         columnDefs=columns,
         defaultColDef={"resizable": True, "sortable": True, "filter": True},
@@ -64,8 +66,19 @@ def layout() -> Any:
                         dmc.Group(
                             [
                                 dmc.Anchor("Configuration", href="/ui/sources#runbook-ui-sources-config", size="sm"),
-                                dmc.Button("Run historical job", id=f"{PREFIX}-historical-open", size="sm"),
-                                dmc.Button("Refresh", id=f"{PREFIX}-manual-refresh", variant="light", size="sm"),
+                                dmc.Button(
+                                    "Run historical job",
+                                    id=f"{PREFIX}-historical-open",
+                                    size="sm",
+                                    className="runbook-button runbook-button--primary",
+                                ),
+                                dmc.Button(
+                                    "Refresh",
+                                    id=f"{PREFIX}-manual-refresh",
+                                    variant="light",
+                                    size="sm",
+                                    className="runbook-button",
+                                ),
                             ],
                             gap="xs",
                         ),
@@ -73,11 +86,18 @@ def layout() -> Any:
                     justify="space-between",
                     align="flex-end",
                     mb="md",
+                    className="runbook-page-heading",
                 ),
-                dmc.SimpleGrid(id=f"{PREFIX}-metrics", cols={"base": 1, "sm": 2, "lg": 4}, spacing="sm", mb="md"),
+                dmc.SimpleGrid(
+                    id=f"{PREFIX}-metrics",
+                    cols={"base": 1, "sm": 2, "lg": 4},
+                    spacing="sm",
+                    mb="md",
+                    className="runbook-metrics",
+                ),
                 dmc.Card(
                     [
-                        dmc.Title("Outputs and current pointers", order=4),
+                        dmc.Title("Outputs and current pointers", order=4, className="runbook-panel-title"),
                         dmc.Text(
                             "Configured datasets and the latest durable watermark state.",
                             size="sm",
@@ -89,10 +109,11 @@ def layout() -> Any:
                     withBorder=True,
                     padding="md",
                     mb="md",
+                    className="runbook-panel",
                 ),
                 dmc.Card(
                     [
-                        dmc.Title("Used by profiles", order=4),
+                        dmc.Title("Used by profiles", order=4, className="runbook-panel-title"),
                         dmc.Text(
                             "Derived by matching current profile dataset bindings.", size="sm", c="dimmed", mb="xs"
                         ),
@@ -101,17 +122,23 @@ def layout() -> Any:
                     withBorder=True,
                     padding="md",
                     mb="md",
+                    className="runbook-panel",
                 ),
                 dmc.Card(
                     [
-                        dmc.Title("Run history", order=4),
+                        dmc.Title("Run history", order=4, className="runbook-panel-title"),
                         dmc.Text("Select a run to inspect details and immutable logs.", size="sm", c="dimmed", mb="xs"),
                         _grid(
                             f"{PREFIX}-runs-grid",
                             [
                                 {"field": "run_id", "headerName": "Run ID", "pinned": "left"},
-                                {"field": "status_text", "headerName": "Status"},
-                                {"field": "mode", "headerName": "Mode"},
+                                {
+                                    "field": "status_text",
+                                    "headerName": "Status",
+                                    "cellClass": "runbook-grid-status",
+                                    "cellClassRules": STATUS_CELL_CLASS_RULES,
+                                },
+                                {"field": "mode_text", "headerName": "Mode"},
                                 {"field": "start_date", "headerName": "Start date"},
                                 {"field": "end_date", "headerName": "End date"},
                                 {"field": "config_revision", "headerName": "Base revision"},
@@ -126,6 +153,7 @@ def layout() -> Any:
                     ],
                     withBorder=True,
                     padding="md",
+                    className="runbook-panel",
                 ),
                 dcc.Store(id=f"{PREFIX}-historical-request"),
                 dmc.Modal(
@@ -135,38 +163,53 @@ def layout() -> Any:
                     children=[
                         html.Div(
                             [
-                                dmc.Text(id=f"{PREFIX}-historical-source", size="sm"),
-                                dmc.TextInput(
-                                    id=f"{PREFIX}-historical-start-date",
-                                    inputProps={"type": "date"},
-                                    label="Start date (inclusive)",
-                                    required=True,
-                                    style={"width": "100%"},
+                                dmc.Text(id=f"{PREFIX}-historical-source", size="sm", className="runbook-secondary"),
+                                html.Div(
+                                    [
+                                        dmc.TextInput(
+                                            id=f"{PREFIX}-historical-start-date",
+                                            inputProps={"type": "date"},
+                                            label="Start date (inclusive)",
+                                            required=True,
+                                            style={"width": "100%"},
+                                        ),
+                                        dmc.TextInput(
+                                            id=f"{PREFIX}-historical-end-date",
+                                            inputProps={"type": "date"},
+                                            label="End date (inclusive)",
+                                            required=True,
+                                            style={"width": "100%"},
+                                        ),
+                                    ],
+                                    className="runbook-date-range",
                                 ),
-                                dmc.TextInput(
-                                    id=f"{PREFIX}-historical-end-date",
-                                    inputProps={"type": "date"},
-                                    label="End date (inclusive)",
-                                    required=True,
-                                    style={"width": "100%"},
-                                ),
-                                html.Div(id=f"{PREFIX}-historical-feedback"),
+                                html.Div(id=f"{PREFIX}-historical-feedback", className="runbook-form-error"),
                                 dmc.Group(
                                     [
-                                        dmc.Button("Cancel", id=f"{PREFIX}-historical-cancel", variant="subtle"),
-                                        dmc.Button("Review", id=f"{PREFIX}-historical-review"),
+                                        dmc.Button(
+                                            "Cancel",
+                                            id=f"{PREFIX}-historical-cancel",
+                                            variant="subtle",
+                                            className="runbook-button",
+                                        ),
+                                        dmc.Button(
+                                            "Review",
+                                            id=f"{PREFIX}-historical-review",
+                                            className="runbook-button runbook-button--primary",
+                                        ),
                                     ],
                                     justify="flex-end",
                                     mt="sm",
                                 ),
                             ],
                             id=f"{PREFIX}-historical-form",
+                            className="runbook-form",
                         ),
                         html.Div(id=f"{PREFIX}-historical-review-panel", style={"display": "none"}),
                     ],
                 ),
             ],
-            className="runbook-detail-page",
+            className="runbook-page runbook-detail-page",
         ),
     )
 
@@ -250,36 +293,40 @@ def register(dash_app: Any, sessions: Any) -> None:
             metrics = [
                 dmc.Card(
                     [
-                        dmc.Text("Current status", size="sm", c="dimmed"),
+                        dmc.Text("Current status", size="sm", c="dimmed", className="runbook-metric-label"),
                         status_badge(run_status(latest) if latest else "not_ready"),
                     ],
                     withBorder=True,
                     padding="sm",
+                    className="runbook-metric",
                 ),
                 dmc.Card(
                     [
-                        dmc.Text("Adapter", size="sm", c="dimmed"),
+                        dmc.Text("Adapter", size="sm", c="dimmed", className="runbook-metric-label"),
                         dmc.Text(str(payload.get("adapter") or "—"), size="sm"),
                     ],
                     withBorder=True,
                     padding="sm",
+                    className="runbook-metric",
                 ),
                 dmc.Card(
                     [
-                        dmc.Text("Enabled", size="sm", c="dimmed"),
+                        dmc.Text("Enabled", size="sm", c="dimmed", className="runbook-metric-label"),
                         dmc.Text("Yes" if payload.get("enabled", True) else "No", size="sm"),
                     ],
                     withBorder=True,
                     padding="sm",
+                    className="runbook-metric",
                 ),
                 dmc.Card(
                     [
-                        dmc.Text("Latest watermark", size="sm", c="dimmed"),
+                        dmc.Text("Latest watermark", size="sm", c="dimmed", className="runbook-metric-label"),
                         dmc.Text(exact_time(watermark), size="sm"),
                         dmc.Text(relative_time(watermark), size="xs", c="dimmed"),
                     ],
                     withBorder=True,
                     padding="sm",
+                    className="runbook-metric",
                 ),
             ]
             outputs = [
@@ -407,8 +454,17 @@ def register(dash_app: Any, sessions: Any) -> None:
                     dmc.Text("Overrides: None"),
                     dmc.Group(
                         [
-                            dmc.Button("Back", id=f"{PREFIX}-historical-back", variant="subtle"),
-                            dmc.Button("Submit historical run", id=f"{PREFIX}-historical-submit"),
+                            dmc.Button(
+                                "Back",
+                                id=f"{PREFIX}-historical-back",
+                                variant="subtle",
+                                className="runbook-button runbook-button--secondary",
+                            ),
+                            dmc.Button(
+                                "Submit historical run",
+                                id=f"{PREFIX}-historical-submit",
+                                className="runbook-button runbook-button--primary",
+                            ),
                         ],
                         justify="flex-end",
                         mt="sm",
