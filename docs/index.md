@@ -1,6 +1,6 @@
 # Runbook
 
-```{image} _static/RunbookLogo_white_backgroud.png
+```{image} _static/RunbookLogo_transparent.png
 :alt: Runbook logo
 :width: 420px
 :align: center
