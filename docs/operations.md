@@ -116,10 +116,11 @@ host:
 /ui/system              factual service/repository state
 ```
 
-Selecting any run row opens one shared right-side drawer without changing the
-underlying page. Its metadata and log panes scroll independently. Use the
-drawer controls for manual log refresh, copy-all, and durable cancellation of
-queued/running runs.
+Click a run to inspect status, lifecycle timing, provenance, outputs, actions,
+and logs in the shared run drawer. Selecting any run row opens it without
+changing the underlying page. Its metadata and log panes scroll independently.
+Use the drawer controls for manual log refresh, copy-all, and durable
+cancellation of queued/running runs.
 
 The local process backend is the first `ExecutionBackend` implementation;
 Kubernetes is the next backend direction. No retries, priority queue,
