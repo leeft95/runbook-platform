@@ -18,7 +18,13 @@ from runbook.services.dash.operations import (
     status_label,
 )
 from runbook.services.dash.profile_detail import layout as profile_detail_layout
-from runbook.services.dash.run_drawer import _ROW_INPUTS, _run_id_for_trigger, _run_id_from_click
+from runbook.services.dash.run_drawer import (
+    _ROW_INPUTS,
+    _details,
+    _historical_failure_reason,
+    _run_id_for_trigger,
+    _run_id_from_click,
+)
 from runbook.services.dash.source_detail import layout as source_detail_layout
 from runbook.services.dash.system import layout as system_layout
 from runbook.services.routers.ui import mount_ui
@@ -111,6 +117,40 @@ def test_async_pages_have_loading_surfaces_and_shared_error_alert() -> None:
     for page, loading_id in pages:
         assert loading_id in str(page)
     assert isinstance(error_state("database unavailable"), dmc.Alert)
+
+
+def test_source_historical_inputs_keep_native_date_and_value_semantics() -> None:
+    inputs: dict[str, dmc.TextInput] = {}
+    captions: list[str] = []
+
+    def collect(node: object) -> None:
+        if isinstance(node, dmc.TextInput) and node.id in {
+            "runbook-ui-source-detail-historical-start-date",
+            "runbook-ui-source-detail-historical-end-date",
+        }:
+            inputs[node.id] = node
+        if isinstance(node, dmc.Text) and isinstance(node.children, str):
+            captions.append(node.children)
+        children = getattr(node, "children", None)
+        if isinstance(children, (list, tuple)):
+            for child in children:
+                collect(child)
+        elif children is not None:
+            collect(children)
+
+    collect(source_detail_layout())
+    assert set(inputs) == {
+        "runbook-ui-source-detail-historical-start-date",
+        "runbook-ui-source-detail-historical-end-date",
+    }
+    assert all(input_.to_plotly_json()["props"]["inputProps"] == {"type": "date"} for input_ in inputs.values())
+    assert all(input_.to_plotly_json()["props"]["required"] is True for input_ in inputs.values())
+    assert {input_.to_plotly_json()["props"]["label"] for input_ in inputs.values()} == {
+        "Start date (inclusive)",
+        "End date (inclusive)",
+    }
+    assert "Start date (inclusive)" not in captions
+    assert "End date (inclusive)" not in captions
 
 
 def test_run_drawer_does_not_reopen_stale_selection_on_navigation() -> None:
@@ -281,6 +321,153 @@ def test_run_drawer_uses_the_grid_that_triggered_click() -> None:
         )
         == "other-run"
     )
+
+
+def test_historical_run_drawer_renders_summary_inputs_outputs_and_complete_copy_refs() -> None:
+    stamp = datetime(2026, 4, 1, tzinfo=timezone.utc)
+    first_ref = "curated/historical-prices/manifests/sha256=0123456789abcdef0123456789abcdef.json"
+    second_ref = "curated/historical-volumes/manifests/sha256=fedcba9876543210fedcba9876543210.json"
+    first_wrong_ref = "curated/wrong-prices/manifests/sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json"
+    second_wrong_ref = "curated/wrong-volumes/manifests/sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json"
+    row = SimpleNamespace(
+        run_id="historical-run",
+        kind="source",
+        target_id="prices",
+        mode="historical",
+        start_date="2026-01-01",
+        end_date="2026-03-31",
+        trigger="manual",
+        slot=stamp,
+        requested_at=stamp,
+        started_at=stamp,
+        finished_at=stamp,
+        worker_id="local:1",
+        cancel_requested_at=None,
+        config_revision=18,
+        config_hash="config-hash",
+        snapshot_id=None,
+        context_hash=None,
+        code_version=None,
+        artifact_id=None,
+        reason=None,
+        status="success",
+        result={
+            "status": "success",
+            "datasets": {"historical-prices": first_ref, "historical-volumes": second_ref},
+            "pointer_updates": [
+                {
+                    "dataset_id": "historical-prices",
+                    "manifest_ref": first_wrong_ref,
+                    "watermark": "2026-02-28T00:00:00+00:00",
+                    "published_at": "2026-04-02T00:00:00+00:00",
+                },
+                {
+                    "dataset_id": "historical-volumes",
+                    "manifest_ref": second_wrong_ref,
+                    "watermark": "2026-03-31T00:00:00+00:00",
+                    "published_at": "2026-04-03T00:00:00+00:00",
+                },
+            ],
+        },
+    )
+
+    rendered = repr(_details(row, None))
+    for text in (
+        "Historical source run completed",
+        "Range: 2026-01-01 → 2026-03-31 (inclusive)",
+        "Datasets produced: 2",
+        "Production pointer: Unchanged",
+        "Inputs",
+        "Base source revision",
+        "Config hash",
+        "Pointer update",
+        "Outputs",
+        "Dataset ID",
+        "Watermark",
+        "Published at",
+        "2026-02-28T00:00:00+00:00",
+        "2026-04-02T00:00:00+00:00",
+        "2026-03-31T00:00:00+00:00",
+        "2026-04-03T00:00:00+00:00",
+        first_ref,
+        second_ref,
+        f"content='{first_ref}'",
+        f"content='{second_ref}'",
+    ):
+        assert text in rendered
+    assert first_wrong_ref not in rendered
+    assert second_wrong_ref not in rendered
+
+
+def test_unsupported_historical_run_drawer_keeps_domain_error_before_logs() -> None:
+    stamp = datetime(2026, 4, 1, tzinfo=timezone.utc)
+    row = SimpleNamespace(
+        run_id="historical-run",
+        kind="source",
+        target_id="prices",
+        mode="historical",
+        start_date="2026-01-01",
+        end_date="2026-03-31",
+        trigger="manual",
+        slot=stamp,
+        requested_at=stamp,
+        started_at=None,
+        finished_at=stamp,
+        worker_id="local:1",
+        cancel_requested_at=None,
+        config_revision=18,
+        config_hash="config-hash",
+        snapshot_id=None,
+        context_hash=None,
+        code_version=None,
+        artifact_id=None,
+        reason="Source 'prices' does not support historical date-range execution.",
+        status="failed",
+        result={"status": "failed", "reason": "TypeError: unexpected keyword argument 'execution_context'"},
+    )
+
+    rendered = repr(_details(row, None))
+    assert "Historical source run failed" in rendered
+    assert "Source 'prices' does not support historical date-range execution." in rendered
+    assert "Range: 2026-01-01 → 2026-03-31 (inclusive)" in rendered
+    assert "TypeError" not in rendered
+
+
+def test_historical_run_drawer_keeps_genuine_runtime_type_error() -> None:
+    stamp = datetime(2026, 4, 1, tzinfo=timezone.utc)
+    runtime_reason = "TypeError: vendor payload has an invalid value"
+    row = SimpleNamespace(
+        run_id="historical-run",
+        kind="source",
+        target_id="prices",
+        mode="historical",
+        start_date="2026-01-01",
+        end_date="2026-03-31",
+        trigger="manual",
+        slot=stamp,
+        requested_at=stamp,
+        started_at=None,
+        finished_at=stamp,
+        worker_id="local:1",
+        cancel_requested_at=None,
+        config_revision=18,
+        config_hash="config-hash",
+        snapshot_id=None,
+        context_hash=None,
+        code_version=None,
+        artifact_id=None,
+        reason=runtime_reason,
+        status="failed",
+        result={"status": "failed"},
+    )
+
+    rendered = repr(_details(row, None))
+    assert runtime_reason in rendered
+    assert "does not support historical date-range execution" not in rendered
+
+
+def test_historical_run_drawer_reports_missing_failure_reason_neutrally() -> None:
+    assert _historical_failure_reason(SimpleNamespace(target_id="prices", reason=None)) == "No failure reason recorded"
 
 
 def test_run_drawer_ignores_malformed_or_missing_click() -> None:

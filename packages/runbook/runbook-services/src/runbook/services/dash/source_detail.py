@@ -28,12 +28,15 @@ PREFIX = "runbook-ui-source-detail"
 
 def _grid(component_id: str, columns: list[dict[str, Any]], height: str = "300px") -> dag.AgGrid:
     """Build one dense source-detail AG Grid."""
+    grid_options: dict[str, Any] = {"pagination": True, "paginationPageSize": 25, "rowSelection": "single"}
+    if component_id == f"{PREFIX}-runs-grid":
+        grid_options["getRowId"] = {"function": "params.data.run_id"}
     return dag.AgGrid(
         id=component_id,
         rowData=[],
         columnDefs=columns,
         defaultColDef={"resizable": True, "sortable": True, "filter": True},
-        dashGridOptions={"pagination": True, "paginationPageSize": 25, "rowSelection": "single"},
+        dashGridOptions=grid_options,
         style={"height": height, "width": "100%"},
     )
 
@@ -133,17 +136,17 @@ def layout() -> Any:
                         html.Div(
                             [
                                 dmc.Text(id=f"{PREFIX}-historical-source", size="sm"),
-                                dmc.Text("Start date (inclusive)", size="sm", fw=600),
-                                dcc.Input(
+                                dmc.TextInput(
                                     id=f"{PREFIX}-historical-start-date",
-                                    type="date",
+                                    inputProps={"type": "date"},
+                                    label="Start date (inclusive)",
                                     required=True,
                                     style={"width": "100%"},
                                 ),
-                                dmc.Text("End date (inclusive)", size="sm", fw=600),
-                                dcc.Input(
+                                dmc.TextInput(
                                     id=f"{PREFIX}-historical-end-date",
-                                    type="date",
+                                    inputProps={"type": "date"},
+                                    label="End date (inclusive)",
                                     required=True,
                                     style={"width": "100%"},
                                 ),

@@ -79,11 +79,126 @@ def _metadata_group(title: str, values: list[tuple[str, Any]]) -> Any:
     )
 
 
+def _historical_range(row: Any) -> str:
+    """Format the immutable requested range for the historical summary."""
+    start = getattr(row, "start_date", None) or "—"
+    end = getattr(row, "end_date", None) or "—"
+    return f"{start} → {end} (inclusive)"
+
+
+def _historical_datasets(result: dict[str, Any]) -> dict[str, str]:
+    """Return persisted historical dataset outputs without querying storage."""
+    datasets = result.get("datasets")
+    if not isinstance(datasets, dict):
+        return {}
+    return {
+        str(dataset_id): str(manifest_ref)
+        for dataset_id, manifest_ref in datasets.items()
+        if dataset_id is not None and manifest_ref not in (None, "")
+    }
+
+
+def _historical_failure_reason(row: Any) -> str:
+    """Display the worker's persisted reason, or state that none was recorded."""
+    return str(getattr(row, "reason", None) or "No failure reason recorded")
+
+
+def _historical_summary(row: Any, result: dict[str, Any]) -> Any | None:
+    """Render a prominent completion or failure summary before diagnostic logs."""
+    status = str(getattr(row, "status", "") or "").lower()
+    if status == "success":
+        return dmc.Alert(
+            [
+                dmc.Text("Completed", fw=600),
+                dmc.Text(f"Range: {_historical_range(row)}"),
+                dmc.Text(f"Datasets produced: {len(_historical_datasets(result))}"),
+                dmc.Text("Production pointer: Unchanged"),
+            ],
+            title="Historical source run completed",
+            color="green",
+            variant="light",
+        )
+    if status == "failed":
+        return dmc.Alert(
+            [
+                dmc.Text(_historical_failure_reason(row), fw=600),
+                dmc.Text(f"Source: {row.target_id}"),
+                dmc.Text(f"Range: {_historical_range(row)}"),
+            ],
+            title="Historical source run failed",
+            color="red",
+            variant="light",
+        )
+    return None
+
+
+def _historical_inputs(row: Any) -> Any:
+    """Render the immutable historical request and its provenance."""
+    return _metadata_group(
+        "Inputs",
+        [
+            ("Source", dmc.Text(str(row.target_id), size="sm")),
+            ("Mode", dmc.Text("Historical", size="sm")),
+            ("Date range", dmc.Text(_historical_range(row), size="sm")),
+            ("Base source revision", dmc.Text(str(row.config_revision), size="sm")),
+            ("Config hash", copy_value(row.config_hash, label="config hash")),
+            ("Pointer update", dmc.Text("No", size="sm")),
+            ("Trigger", dmc.Text(str(row.trigger), size="sm")),
+            ("Requested", dmc.Text(str(row.requested_at), size="sm")),
+        ],
+    )
+
+
+def _historical_outputs(result: dict[str, Any]) -> Any:
+    """Render immutable manifest refs and persisted publication metadata."""
+    datasets = _historical_datasets(result)
+    updates: dict[str, dict[str, Any]] = {}
+    raw_updates = result.get("pointer_updates")
+    if isinstance(raw_updates, (list, tuple)):
+        for item in raw_updates:
+            if not isinstance(item, dict) or item.get("dataset_id") is None:
+                continue
+            updates[str(item["dataset_id"])] = item
+
+    dataset_groups: list[Any] = []
+    for dataset_id, stored_manifest_ref in datasets.items():
+        metadata = updates.get(dataset_id, {})
+        dataset_groups.append(
+            _metadata_group(
+                dataset_id,
+                [
+                    ("Dataset ID", dmc.Text(dataset_id, size="sm")),
+                    ("Manifest", copy_value(stored_manifest_ref, label=f"{dataset_id} manifest")),
+                    ("Watermark", dmc.Text(str(metadata.get("watermark") or "—"), size="sm")),
+                    ("Published at", dmc.Text(str(metadata.get("published_at") or "—"), size="sm")),
+                ],
+            )
+        )
+    if not dataset_groups:
+        dataset_groups.append(dmc.Text("No datasets produced.", c="dimmed", size="sm"))
+    return dmc.Card(
+        [dmc.Text("Outputs", fw=600, size="sm", mb=4), dmc.Stack(dataset_groups, gap="xs")],
+        withBorder=True,
+        padding="xs",
+        radius="sm",
+    )
+
+
 def _details(row: Any, config: Any | None) -> Any:
     """Group execution, ownership, provenance, and outcome metadata."""
     status = run_status(row)
-    result = getattr(row, "result", None) or {}
-    return dmc.Stack(
+    result = getattr(row, "result", None)
+    if not isinstance(result, dict):
+        result = {}
+    historical = str(getattr(row, "mode", None) or "normal").lower() == "historical"
+    reason = _historical_failure_reason(row) if historical and status == "failed" else getattr(row, "reason", None)
+    sections: list[Any] = []
+    if historical:
+        summary = _historical_summary(row, result)
+        if summary is not None:
+            sections.append(summary)
+        sections.extend([_historical_inputs(row), _historical_outputs(result)])
+    sections.extend(
         [
             _metadata_group(
                 "Execution",
@@ -130,12 +245,15 @@ def _details(row: Any, config: Any | None) -> Any:
                 "Outcome",
                 [
                     ("Status", status_badge(status)),
-                    ("Reason", dmc.Text(row.reason or "—", size="sm")),
+                    ("Reason", dmc.Text(reason or "—", size="sm")),
                     ("Result", dmc.Text(str(result.get("status") or result.get("message") or "—"), size="sm")),
                     ("Pinned config", copy_value(getattr(config, "config_hash", None), label="pinned config hash")),
                 ],
             ),
-        ],
+        ]
+    )
+    return dmc.Stack(
+        sections,
         gap="xs",
     )
 
