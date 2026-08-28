@@ -102,11 +102,17 @@ baseline.
 authentication. Do not expose it directly to an untrusted network; place it
 behind an authenticated, appropriately secured boundary.
 
-Source detail pages can queue one-off historical runs with inclusive
-`start_date`/`end_date` values. These runs use the pinned persisted source
-revision through the normal queue and worker path, retain immutable output
-manifests and provenance, and do not create temporary revisions, update the
-current pointer, or release downstream scheduled reports.
+Source detail pages can queue one-off historical runs for research, report
+development, historical validation, and reproducible bounded source
+acquisition. The user-facing `start_date` and `end_date` are inclusive. These
+runs pin the persisted source revision and hash, use the normal durable queue
+and worker path, and retain immutable output manifests and provenance. Open a
+completed run to inspect and copy its complete manifest refs from the shared
+drawer. Historical runs do not create temporary revisions, update the current
+pointer, or release downstream scheduled reports. Historical capability is an
+explicit adapter opt-in checked by the worker before acquisition; a request
+may be queued before an unsupported adapter is rejected. Arbitrary temporary
+source-parameter overrides are intentionally outside the v0.3.1 contract.
 
 ## License
 

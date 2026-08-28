@@ -31,8 +31,13 @@ class VendorAdapter:
 Historical source runs are an explicit adapter opt-in. To support them, both
 `check` and `acquire` must also accept the immutable
 `HistoricalExecutionContext` keyword. Its `start_date` and `end_date` are
-inclusive. Adapters that do not accept that keyword fail before acquisition
-with a source-specific unsupported-capability error.
+inclusive. The worker checks this capability before acquisition begins; a
+request can therefore enter the normal durable queue before an unsupported
+adapter is rejected with a source-specific error. The control plane does not
+inspect plugin composition because its installed extensions may differ from
+the worker's. A historical-capable adapter must read both dates and bound its
+vendor request to that inclusive window rather than silently ignoring the
+context.
 
 `PreviousAcquisitionState` contains a conceptual `watermark` and JSON-safe
 `metadata`. Runbook transports and serializes the state; the adapter owns the
@@ -104,12 +109,22 @@ the required context keyword to both hooks:
 ```python
 class HistoricalSourceAdapter(Protocol):
     def check(
-        self, *, source_config, acquisition_run, observed_at,
-        previous_state=None, execution_context: HistoricalExecutionContext,
+        self,
+        *,
+        source_config,
+        acquisition_run,
+        observed_at,
+        previous_state=None,
+        execution_context: HistoricalExecutionContext,
     ) -> ReadinessResult: ...
     def acquire(
-        self, *, source_config, readiness, fetched_at,
-        previous_watermarks=None, previous_state=None,
+        self,
+        *,
+        source_config,
+        readiness,
+        fetched_at,
+        previous_watermarks=None,
+        previous_state=None,
         execution_context: HistoricalExecutionContext,
     ) -> AcquisitionResult: ...
 ```
@@ -137,10 +152,10 @@ For example, an authenticated JSON download could be implemented in
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlencode
 
 import requests
 
@@ -171,6 +186,23 @@ class AuthenticatedJsonAdapter:
             raise RuntimeError(f"source credential is not set: {token_env}")
         return {"Authorization": f"Bearer {token}"}
 
+    def _request_url(
+        self,
+        source_config: SourceConfig,
+        execution_context: HistoricalExecutionContext | None,
+    ) -> str:
+        """Bound every historical request to the user-supplied inclusive dates."""
+        url = source_config.params["url"]
+        if execution_context is None:
+            return url
+        window = urlencode(
+            {
+                "start_date": execution_context.start_date.isoformat(),
+                "end_date": execution_context.end_date.isoformat(),
+            }
+        )
+        return f"{url}{'&' if '?' in url else '?'}{window}"
+
     def check(
         self,
         *,
@@ -180,7 +212,7 @@ class AuthenticatedJsonAdapter:
         execution_context: HistoricalExecutionContext | None = None,
     ) -> ReadinessResult:
         self.validate(source_config)
-        url = source_config.params["url"]
+        url = self._request_url(source_config, execution_context)
         response = (self.session or requests.Session()).get(
             url,
             headers=self._headers(source_config),
@@ -217,7 +249,7 @@ class AuthenticatedJsonAdapter:
         previous_state=None,
     ) -> AcquisitionResult:
         del previous_state  # This source always returns a complete export.
-        url = source_config.params["url"]
+        url = self._request_url(source_config, execution_context)
         response = (self.session or requests.Session()).get(
             url,
             headers=self._headers(source_config),

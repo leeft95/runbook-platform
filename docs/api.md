@@ -84,7 +84,17 @@ never reaches into the polling runner's local process registry.
 `start_date` and `end_date` values (both inclusive) and returns the queued
 historical run. The run pins the latest persisted source revision; it does not
 create a temporary revision, update current pointers, or release downstream
-scheduled report dependencies.
+scheduled report dependencies. Arbitrary source-parameter overrides are not
+accepted in v0.3.1. Historical capability is checked by the worker before
+acquisition, so an unsupported request may be queued before it fails with a
+source-specific reason.
+
+`GET /api/v1/runs/{run_id}` exposes the generic run provenance needed by API
+clients: `mode`, inclusive `start_date`/`end_date`, pinned `config_revision`
+and `config_hash`, lifecycle `status`, and persisted `result`. For a successful
+historical source run, `result.datasets` contains immutable dataset-to-manifest
+references and `result.pointer_updates` contains each output's watermark and
+publication timestamp.
 
 ```{eval-rst}
 .. automodule:: runbook.services.schedule

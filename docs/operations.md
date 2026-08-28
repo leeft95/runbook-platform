@@ -127,19 +127,32 @@ heartbeat, broker, or PID adoption is performed.
 
 ### One-off historical source runs
 
-From a source detail page, choose **Run historical job**, enter the required
-inclusive start and end dates, review the pinned source revision, and submit.
-The request is persisted as an ordinary `source` run (`mode=historical`) in
-the normal durable queue, so existing serialization, worker ownership,
-cancellation, restart reconciliation, logs, and status lifecycle apply.
+Historical runs support research, report development, historical validation,
+and reproducible bounded source acquisition. From a source detail page, choose
+**Run historical job**, enter the required inclusive `start_date` and
+`end_date`, review the pinned source revision and hash, and submit. The request
+is persisted as an ordinary `source` run (`mode=historical`) in the normal
+durable queue, so existing serialization, worker ownership, cancellation,
+restart reconciliation, logs, and status lifecycle apply.
 
 Historical execution uses the existing source definition at its latest
-persisted revision when submitted. It records the base revision and immutable
-date range on the run; it never creates a temporary source configuration
-revision. Adapters must explicitly accept the historical execution context.
-Outputs and manifests are immutable and retained by run provenance, but the
-current dataset pointer is not updated and downstream scheduled report
-dependencies are not released.
+persisted revision when submitted. It records the base revision/hash and
+immutable inclusive date range on the run; it never creates a temporary source
+configuration revision. Successful runs expose their immutable curated
+datasets and complete manifest refs in the run result and shared run drawer,
+where each ref can be copied for analysis. The current production dataset
+pointer is not updated and downstream scheduled report dependencies are not
+released.
+
+Historical support is an explicit adapter opt-in. The worker validates that
+the adapter accepts the historical execution context before acquisition
+begins. A request may enter the normal durable queue before an unsupported
+adapter is rejected, because service and worker runtimes may not have the same
+installed plugin composition; the control plane does not inspect plugin
+composition. Unsupported requests fail with a source-specific message while
+remaining in the normal run lifecycle. Arbitrary temporary source-parameter
+overrides are intentionally not part of the v0.3.1 historical-run contract;
+only the source, inclusive date range, and pinned revision/hash are supported.
 
 For deterministic local source checks, run `python scripts/demo_http_server.py`
 and enable one of the optional `demo_http_*` configurations. The server uses
