@@ -20,7 +20,7 @@ from runbook.data import (
 )
 from runbook.services import cli
 from runbook.services.app import create_app, version_payload
-from runbook.services.dash import runs
+from runbook.services.dash import OperationsBrand, runs
 from runbook.services.dash._config import _profile_new_row, _source_new_row, register_config_page
 from runbook.services.dash.operations import STATUS_CELL_CLASS_RULES
 from runbook.services.dash.runs import _cancel_state
@@ -92,6 +92,63 @@ def test_root_version_endpoint_and_dash_mount() -> None:
         await lifespan
 
     asyncio.run(check_routes())
+
+
+def test_operations_brand_flows_through_public_create_app() -> None:
+    app = create_app(
+        database="postgresql+psycopg://postgres:postgres@localhost:5432/runbook",
+        operations_brand=OperationsBrand(
+            name="Example Company",
+            logo_src="/assets/example-company.svg",
+            favicon_src="/assets/example-company.ico",
+            primary="#0f766e",
+            primary_hover="#115e59",
+            primary_soft="#ccfbf1",
+        ),
+    )
+
+    def components(node: object):
+        if isinstance(node, dict):
+            if {"namespace", "type", "props"}.issubset(node):
+                yield node
+            for value in node.values():
+                yield from components(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from components(value)
+
+    async def check_branding() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            index = await client.get("/ui/")
+            assert index.status_code == 200
+            assert '<link rel="icon" href="/assets/example-company.ico">' in index.text
+
+            layout = await client.get("/ui/_dash-layout")
+            assert layout.status_code == 200
+            serialized = layout.json()
+            dash_components = list(components(serialized))
+            shell = next(item for item in dash_components if item["type"] == "AppShell")
+            assert shell["props"]["style"] == {
+                "--rb-primary": "#0f766e",
+                "--rb-primary-hover": "#115e59",
+                "--rb-primary-soft": "#ccfbf1",
+            }
+            image = next(item for item in dash_components if item["type"] == "Image")
+            assert image["props"] == {
+                "alt": "Example Company logo",
+                "fit": "contain",
+                "h": 24,
+                "src": "/assets/example-company.svg",
+            }
+            assert any(
+                item["type"] == "Text" and item["props"].get("children") == "Example Company"
+                for item in dash_components
+            )
+
+    asyncio.run(check_branding())
 
 
 def test_serve_reload_uses_uvicorn_factory(monkeypatch) -> None:

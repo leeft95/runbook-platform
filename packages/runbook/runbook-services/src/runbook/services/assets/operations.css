@@ -49,7 +49,7 @@ select:focus-visible,
 textarea:focus-visible,
 .mantine-Select-input:focus-visible,
 .mantine-TextInput-input:focus-visible {
-  outline: 3px solid #74a9df;
+  outline: 3px solid var(--rb-primary);
   outline-offset: 2px;
 }
 

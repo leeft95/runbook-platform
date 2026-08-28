@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import dash
 import dash_mantine_components as dmc
+import httpx
+import pytest
 from dash import no_update
 from fastapi import FastAPI
-from runbook.services.dash import run_drawer
+from runbook.services.dash import OperationsBrand, run_drawer
 from runbook.services.dash.catalogue import _latest_runs, _successful_runs, catalogue_layout, profile_rows, source_rows
 from runbook.services.dash.operations import (
     dataset_ids,
@@ -218,6 +221,91 @@ def test_run_drawer_accepts_all_table_click_shapes() -> None:
     assert _run_id_from_click({"rowId": "run-1"}) == "run-1"
     assert _run_id_from_click({"data": {"run_id": 3}}) is None
     assert _run_id_from_click(None) is None
+
+
+def test_operations_brand_is_frozen_and_defaults_to_runbook() -> None:
+    brand = OperationsBrand()
+
+    assert brand.name == "Runbook"
+    assert brand.logo_src is None
+    assert brand.favicon_src is None
+    assert brand.primary is None
+    assert brand.primary_hover is None
+    assert brand.primary_soft is None
+    with pytest.raises(FrozenInstanceError):
+        brand.name = "Private"
+
+    app = mount_ui(FastAPI(), sessions=None, data_store=None, reports_root="", operations_brand=brand)
+    shell = app.layout.children[2]
+    header = shell.children[0]
+    brand_group = header.children.children[0]
+    assert brand_group.children[0].children == "Runbook"
+    assert not any(isinstance(child, dmc.Image) for child in brand_group.children)
+    assert shell.style is None
+
+
+def test_operations_brand_renders_name_logo_tokens_and_preserves_semantic_css() -> None:
+    brand = OperationsBrand(
+        name="Example Company",
+        logo_src="/assets/example-company.svg",
+        primary="#0f766e",
+        primary_soft="#ccfbf1",
+    )
+    app = mount_ui(FastAPI(), sessions=None, data_store=None, reports_root="", operations_brand=brand)
+    shell = app.layout.children[2]
+    header = shell.children[0]
+    brand_group = header.children.children[0]
+
+    assert brand_group.children[0].src == "/assets/example-company.svg"
+    assert brand_group.children[0].alt == "Example Company logo"
+    assert brand_group.children[1].children == "Example Company"
+    assert header.children.children[1].children == "Control plane"
+    assert shell.style == {"--rb-primary": "#0f766e", "--rb-primary-soft": "#ccfbf1"}
+
+    css = (
+        Path(__file__).resolve().parents[2]
+        / "packages/runbook/runbook-services/src/runbook/services/assets/operations.css"
+    ).read_text(encoding="utf-8")
+    assert "--rb-primary: #2563eb;" in css
+    assert "--rb-primary-hover: #1d4ed8;" in css
+    assert "--rb-primary-soft: #eff6ff;" in css
+    assert ".runbook-status--success," in css
+    assert ".runbook-status--succeeded { color: var(--rb-success);" in css
+    assert ".runbook-status--failed { color: var(--rb-danger);" in css
+    assert ".runbook-status--running," in css
+    assert ".runbook-status--cancelling { color: var(--rb-running);" in css
+    assert "outline: 3px solid var(--rb-primary);" in css
+
+
+def test_operations_brand_favicon_is_escaped_and_default_uses_dash_fallback() -> None:
+    default_app = mount_ui(FastAPI(), sessions=None, data_store=None, reports_root="")
+    assert "{%favicon%}" in default_app.index_string
+
+    custom_app = mount_ui(
+        FastAPI(),
+        sessions=None,
+        data_store=None,
+        reports_root="",
+        operations_brand=OperationsBrand(favicon_src='</head><script>alert("x")</script>'),
+    )
+    assert "{%favicon%}" not in custom_app.index_string
+    assert (
+        '<link rel="icon" href="&lt;/head&gt;&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;">'
+        in custom_app.index_string
+    )
+
+    async def get_index() -> str:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=custom_app.server),
+            base_url="http://test",
+        ) as client:
+            response = await client.get("/ui/")
+            assert response.status_code == 200
+            return response.text
+
+    assert '<link rel="icon" href="&lt;/head&gt;&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;">' in asyncio.run(
+        get_index()
+    )
     assert _run_id_from_click({}) is None
 
 

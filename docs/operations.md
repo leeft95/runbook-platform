@@ -101,6 +101,43 @@ binding or put the service behind an authenticated, appropriately secured
 boundary before exposing it to a network. See the repository [security
 policy](https://github.com/redcombojnr/runbook-platform/blob/main/SECURITY.md).
 
+### Operations branding
+
+The Operations UI defaults to the public Runbook identity. Deployments can
+provide a small immutable `OperationsBrand` object when composing the service:
+
+```python
+from runbook.services.dash import OperationsBrand
+from runbook.services.app import create_app
+
+brand = OperationsBrand(
+    name="Example Company",
+    logo_src="/assets/example-company-logo.svg",
+    favicon_src="/assets/example-company-favicon.ico",
+    primary="#0f766e",
+    primary_hover="#115e59",
+    primary_soft="#ccfbf1",
+)
+app = create_app(operations_brand=brand)
+```
+
+At composition time, import and construct the brand, arrange for the deployment
+to serve its logo and favicon URLs, pass it as
+`create_app(operations_brand=brand)`, then run or mount the returned app through
+the deployment's normal server entry point.
+
+The fields are `name` (default `"Runbook"`), optional URL/path strings
+`logo_src` and `favicon_src`, and optional CSS identity tokens `primary`,
+`primary_hover`, and `primary_soft`. The deployment is responsible for serving
+logo and favicon assets at those URLs or paths; the public service does not
+store or encode image data. If no favicon is supplied, Dash's default Runbook
+favicon behavior is retained.
+
+Brand tokens affect identity accents such as navigation, links, and primary
+controls. Semantic status colours remain public and stable: success, failure,
+warning, running, queued, and cancelled continue to communicate operational
+state.
+
 ### Operations UI navigation
 
 The UI is a profile-first operational surface, separate from the PDL report

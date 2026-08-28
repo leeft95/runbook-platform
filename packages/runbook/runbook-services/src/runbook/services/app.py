@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .config import database_url, reports_root, store_uri, validate_config
+from .dash import OperationsBrand
 from .db import async_engine
 from .repository import AsyncRunRepository, ConflictError
 from .routers.ui import mount_ui
@@ -56,6 +57,7 @@ def create_app(
     database: str | None = None,
     data_store: str | None = None,
     report_root: str | None = None,
+    operations_brand: OperationsBrand | None = None,
 ) -> FastAPI:
     """Create the FastAPI API and mount the Dash UI."""
     url = database_url(database)
@@ -276,6 +278,7 @@ def create_app(
         sessions=sessions,
         data_store=store_uri(data_store),
         reports_root=reports_root(report_root),
+        operations_brand=operations_brand,
     )
     return app
 

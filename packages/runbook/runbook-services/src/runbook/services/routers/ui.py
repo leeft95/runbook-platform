@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+from html import escape
 from pathlib import Path
 from typing import Any
 
 from fastapi import Request
 
+from ..dash import OperationsBrand
 
-def mount_ui(server: Any, *, sessions: Any, data_store: str | None, reports_root: str) -> Any:
+
+def mount_ui(
+    server: Any,
+    *,
+    sessions: Any,
+    data_store: str | None,
+    reports_root: str,
+    operations_brand: OperationsBrand | None = None,
+) -> Any:
     """Mount the multipage operations UI at ``/ui/``."""
     import dash
     import dash_mantine_components as dmc
@@ -38,6 +48,13 @@ def mount_ui(server: Any, *, sessions: Any, data_store: str | None, reports_root
         assets_folder=str(Path(__file__).resolve().parents[1] / "assets"),
         title="Runbook operations",
     )
+    if operations_brand is None:
+        operations_brand = OperationsBrand()
+    if operations_brand.favicon_src is not None:
+        dash_app.index_string = dash_app.index_string.replace(
+            "{%favicon%}",
+            f'<link rel="icon" href="{escape(operations_brand.favicon_src, quote=True)}">',
+        )
     dashboard.register(dash_app, sessions)
     sources.register(dash_app, sessions)
     profiles.register(dash_app, sessions)
@@ -56,6 +73,26 @@ def mount_ui(server: Any, *, sessions: Any, data_store: str | None, reports_root
         ("Runs", "/ui/runs", "runbook-ui-nav-runs"),
         ("System", "/ui/system", "runbook-ui-nav-system"),
     ]
+    brand_style = {
+        key: value
+        for key, value in {
+            "--rb-primary": operations_brand.primary,
+            "--rb-primary-hover": operations_brand.primary_hover,
+            "--rb-primary-soft": operations_brand.primary_soft,
+        }.items()
+        if value is not None
+    }
+    brand_slot = [
+        dmc.Image(
+            src=operations_brand.logo_src,
+            alt=f"{operations_brand.name} logo",
+            h=24,
+            fit="contain",
+        )
+        if operations_brand.logo_src
+        else None,
+        dmc.Text(operations_brand.name, fw=700),
+    ]
     dash_app.layout = dmc.MantineProvider(
         [
             dcc.Location(id="runbook-ui-location"),
@@ -65,7 +102,7 @@ def mount_ui(server: Any, *, sessions: Any, data_store: str | None, reports_root
                     dmc.AppShellHeader(
                         dmc.Group(
                             [
-                                dmc.Text("Runbook Operations", fw=700),
+                                dmc.Group([item for item in brand_slot if item is not None], gap="xs"),
                                 dmc.Text("Control plane", size="sm", c="dimmed"),
                             ],
                             h="100%",
@@ -98,6 +135,7 @@ def mount_ui(server: Any, *, sessions: Any, data_store: str | None, reports_root
                 navbar={"width": 220, "breakpoint": "sm"},
                 padding=0,
                 className="runbook-shell",
+                style=brand_style or None,
             ),
             run_drawer.drawer(),
         ],
