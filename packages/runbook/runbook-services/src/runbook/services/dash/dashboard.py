@@ -8,7 +8,7 @@ import dash_mantine_components as dmc
 from dash import Input, Output, dcc, html, register_page
 
 from ..repository import AsyncRunRepository
-from .operations import empty_state, error_state
+from .operations import STATUS_CELL_CLASS_RULES, empty_state, error_state, mode_label, run_status, status_label
 
 REFRESH_MS = 5_000
 ACTIVE_LIMIT = 250
@@ -43,10 +43,12 @@ def _active_row(row: Any, now: datetime) -> dict[str, Any]:
         "kind": row.kind,
         "target_id": row.target_id,
         "mode": getattr(row, "mode", None) or "normal",
+        "mode_text": mode_label(getattr(row, "mode", None), trigger=getattr(row, "trigger", None)),
         "start_date": _text(getattr(row, "start_date", None)),
         "end_date": _text(getattr(row, "end_date", None)),
         "config_revision": getattr(row, "config_revision", None),
         "status": row.status,
+        "status_text": status_label(run_status(row)),
         "worker_id": getattr(row, "worker_id", None),
         "cancelling": row.status == "running" and getattr(row, "cancel_requested_at", None) is not None,
         "elapsed": _elapsed(row, now),
@@ -62,10 +64,12 @@ def _attention_row(row: Any) -> dict[str, Any]:
         "kind": row.kind,
         "target_id": row.target_id,
         "mode": getattr(row, "mode", None) or "normal",
+        "mode_text": mode_label(getattr(row, "mode", None), trigger=getattr(row, "trigger", None)),
         "start_date": _text(getattr(row, "start_date", None)),
         "end_date": _text(getattr(row, "end_date", None)),
         "config_revision": getattr(row, "config_revision", None),
         "status": row.status,
+        "status_text": status_label(run_status(row)),
         "finished_at": _terminal_time(row),
         "reason": row.reason or "—",
     }
@@ -85,24 +89,27 @@ def _pointer_row(pointer: dict[str, Any]) -> dict[str, Any]:
 
 def _stat_card(label: str, component_id: str, *, note: str | None = None) -> html.Div:
     """Build one compact dashboard status card."""
-    children: list[Any] = [dmc.Text(label, size="sm", c="dimmed"), dmc.Title(id=component_id, children="—", order=3)]
+    children: list[Any] = [
+        dmc.Text(label, size="sm", c="dimmed", className="runbook-metric-label"),
+        dmc.Title(id=component_id, children="—", order=3, className="runbook-metric-value"),
+    ]
     if note:
-        children.append(dmc.Text(note, size="xs", c="dimmed"))
+        children.append(dmc.Text(note, size="xs", c="dimmed", className="runbook-metric-note"))
     return dmc.Card(children, withBorder=True, padding="sm", radius="sm", className="runbook-metric")
 
 
 _STATUS_STYLE = {
     "styleConditions": [
         {
-            "condition": "params.value === 'failed'",
+            "condition": "params.value === 'Failed'",
             "style": {"fontWeight": "600"},
         },
         {
-            "condition": "params.value === 'running'",
+            "condition": "params.value === 'Running'",
             "style": {"fontWeight": "600"},
         },
         {
-            "condition": "params.value === 'waiting' || params.value === 'not_ready'",
+            "condition": "params.value === 'Waiting' || params.value === 'Not ready'",
             "style": {"fontWeight": "600"},
         },
     ]
@@ -118,14 +125,16 @@ ACTIVE_COLUMNS = [
     },
     {"field": "kind", "headerName": "Kind", "width": 105},
     {"field": "target_id", "headerName": "Target", "minWidth": 190, "flex": 1},
-    {"field": "mode", "headerName": "Mode", "width": 110},
+    {"field": "mode_text", "headerName": "Mode", "width": 110},
     {"field": "start_date", "headerName": "Start date", "width": 125},
     {"field": "end_date", "headerName": "End date", "width": 125},
     {"field": "config_revision", "headerName": "Base revision", "width": 120},
     {
-        "field": "status",
+        "field": "status_text",
         "headerName": "Status",
         "width": 120,
+        "cellClass": "runbook-grid-status",
+        "cellClassRules": STATUS_CELL_CLASS_RULES,
         "cellStyle": _STATUS_STYLE,
     },
     {"field": "worker_id", "headerName": "Worker", "minWidth": 160},
@@ -144,14 +153,16 @@ ATTENTION_COLUMNS = [
     },
     {"field": "kind", "headerName": "Kind", "width": 105},
     {"field": "target_id", "headerName": "Target", "minWidth": 190},
-    {"field": "mode", "headerName": "Mode", "width": 110},
+    {"field": "mode_text", "headerName": "Mode", "width": 110},
     {"field": "start_date", "headerName": "Start date", "width": 125},
     {"field": "end_date", "headerName": "End date", "width": 125},
     {"field": "config_revision", "headerName": "Base revision", "width": 120},
     {
-        "field": "status",
+        "field": "status_text",
         "headerName": "Status",
         "width": 120,
+        "cellClass": "runbook-grid-status",
+        "cellClassRules": STATUS_CELL_CLASS_RULES,
         "cellStyle": _STATUS_STYLE,
     },
     {"field": "finished_at", "headerName": "Updated (UTC)", "minWidth": 210},
@@ -209,6 +220,9 @@ def _grid(
         )
     return dag.AgGrid(
         id=component_id,
+        className="runbook-grid runbook-grid--clickable"
+        if "active" in component_id or "attention" in component_id
+        else "runbook-grid",
         rowData=[],
         columnDefs=columns,
         defaultColDef={
@@ -312,9 +326,10 @@ def register(dash_app: Any, sessions: Any) -> None:
                     [
                         html.Div(
                             [
-                                html.H2("Operations", style={"marginBottom": "2px"}),
+                                html.H1("Operations", style={"marginBottom": "2px"}),
                                 html.Div(
                                     "Live control-plane health and current dataset state.",
+                                    className="runbook-secondary",
                                     style={"opacity": 0.65},
                                 ),
                             ]
@@ -332,6 +347,7 @@ def register(dash_app: Any, sessions: Any) -> None:
                         "gap": "20px",
                         "marginBottom": "16px",
                     },
+                    className="runbook-page-heading",
                 ),
                 html.Div(
                     [
@@ -351,18 +367,23 @@ def register(dash_app: Any, sessions: Any) -> None:
                         "gap": "10px",
                         "marginBottom": "24px",
                     },
+                    className="runbook-metrics",
                 ),
                 html.Div(
                     [
                         html.Div(
                             [
-                                html.H3("Active operations", style={"marginBottom": "3px"}),
+                                html.H2(
+                                    "Active operations", className="runbook-panel-title", style={"marginBottom": "3px"}
+                                ),
                                 html.Div(
                                     f"Newest {ACTIVE_LIMIT} queued and running operations.",
+                                    className="runbook-secondary",
                                     style={"opacity": 0.6, "fontSize": "13px"},
                                 ),
                             ],
                             style={"marginBottom": "8px"},
+                            className="runbook-panel-header",
                         ),
                         _grid(
                             f"{prefix}-active-grid",
@@ -373,6 +394,7 @@ def register(dash_app: Any, sessions: Any) -> None:
                         html.Div(id=f"{prefix}-active-empty"),
                     ],
                     style={"marginBottom": "26px"},
+                    className="runbook-panel",
                 ),
                 html.Div(
                     [
@@ -380,14 +402,17 @@ def register(dash_app: Any, sessions: Any) -> None:
                             [
                                 html.H3(
                                     "Profiles and sources requiring attention",
+                                    className="runbook-panel-title",
                                     style={"marginBottom": "3px"},
                                 ),
                                 html.Div(
                                     "Recent failures, waiting, and not-ready operations from the previous 24 hours.",
+                                    className="runbook-secondary",
                                     style={"opacity": 0.6, "fontSize": "13px"},
                                 ),
                             ],
                             style={"marginBottom": "8px"},
+                            className="runbook-panel-header",
                         ),
                         _grid(
                             f"{prefix}-attention-grid",
@@ -400,18 +425,23 @@ def register(dash_app: Any, sessions: Any) -> None:
                         html.Div(id=f"{prefix}-attention-empty"),
                     ],
                     style={"marginBottom": "26px"},
+                    className="runbook-panel",
                 ),
                 html.Div(
                     [
                         html.Div(
                             [
-                                html.H3("Dataset pointers", style={"marginBottom": "3px"}),
+                                html.H2(
+                                    "Dataset pointers", className="runbook-panel-title", style={"marginBottom": "3px"}
+                                ),
                                 html.Div(
                                     f"Current dataset state, capped at {POINTER_LIMIT} rows on the dashboard.",
+                                    className="runbook-secondary",
                                     style={"opacity": 0.6, "fontSize": "13px"},
                                 ),
                             ],
                             style={"marginBottom": "8px"},
+                            className="runbook-panel-header",
                         ),
                         _grid(
                             f"{prefix}-pointers-grid",
@@ -422,9 +452,11 @@ def register(dash_app: Any, sessions: Any) -> None:
                             page_size=50,
                         ),
                         html.Div(id=f"{prefix}-pointers-empty"),
-                    ]
+                    ],
+                    className="runbook-panel",
                 ),
-            ]
+            ],
+            className="runbook-page",
         ),
     )
 

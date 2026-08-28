@@ -4,10 +4,19 @@ from datetime import date, datetime
 from typing import Any
 
 import dash_ag_grid as dag
+import dash_mantine_components as dmc
 from dash import Input, Output, dcc, html, register_page
 
 from ..repository import AsyncRunRepository
-from .operations import empty_state, error_state
+from .operations import (
+    STATUS_CELL_CLASS_RULES,
+    empty_state,
+    error_state,
+    format_duration,
+    mode_label,
+    run_status,
+    status_label,
+)
 
 
 def _run_row(row: Any) -> dict[str, Any]:
@@ -23,6 +32,9 @@ def _run_row(row: Any) -> dict[str, Any]:
         "status",
         "worker_id",
         "cancel_requested_at",
+        "requested_at",
+        "started_at",
+        "finished_at",
         "slot",
         "trigger",
         "reason",
@@ -37,6 +49,10 @@ def _run_row(row: Any) -> dict[str, Any]:
             value = value or "normal"
         result[name] = value.isoformat() if isinstance(value, (date, datetime)) else value
     result["cancelling"] = result["status"] == "running" and result["cancel_requested_at"] is not None
+    result["status_text"] = status_label(run_status(row))
+    result["type_text"] = "Source" if result["kind"] == "source" else "Profile"
+    result["mode_text"] = mode_label(result["mode"], trigger=result["trigger"])
+    result["duration"] = format_duration(getattr(row, "started_at", None), getattr(row, "finished_at", None))
     return result
 
 
@@ -45,7 +61,7 @@ def _cancel_state(row: Any | None) -> tuple[bool, str]:
     if row is None:
         return True, "Select a queued or running run to cancel."
     if row.status not in {"queued", "running"}:
-        return True, f"Run is already {row.status}."
+        return True, f"Run is already {status_label(row.status)}."
     if row.cancel_requested_at is not None:
         return True, "Cancellation requested."
     return False, ""
@@ -61,93 +77,121 @@ def register(dash_app: Any, sessions: Any) -> None:
         order=2,
         layout=html.Div(
             [
-                html.H2("Runs"),
-                html.Div(id=f"{prefix}-summary"),
+                html.Div(
+                    [
+                        html.Div(
+                            [
+                                html.H1("Runs"),
+                                html.P("Scan current and recent execution activity."),
+                            ]
+                        ),
+                        html.Div(id=f"{prefix}-summary", className="runbook-muted"),
+                    ],
+                    className="runbook-page-heading",
+                ),
                 dcc.Loading(
                     id=f"{prefix}-loading",
                     type="default",
                     children=html.Div(id=f"{prefix}-state"),
                 ),
                 dcc.Interval(id=f"{prefix}-refresh", interval=5000, n_intervals=0),
-                dcc.Dropdown(
-                    id=f"{prefix}-kind",
-                    options=[{"label": value.title(), "value": value} for value in ("source", "profile")],
-                    placeholder="kind",
-                    clearable=True,
-                    style={
-                        "width": "180px",
-                        "display": "inline-block",
-                        "marginRight": "8px",
-                    },
-                ),
-                dcc.Dropdown(
-                    id=f"{prefix}-status",
-                    options=[
-                        {"label": value.replace("_", " ").title(), "value": value}
-                        for value in (
-                            "queued",
-                            "running",
-                            "cancelling",
-                            "cancelled",
-                            "success",
-                            "failed",
-                            "waiting",
-                            "not_ready",
-                            "skipped",
-                        )
+                html.Div(
+                    [
+                        html.Div(
+                            [
+                                dmc.Select(
+                                    id=f"{prefix}-kind",
+                                    label="Type",
+                                    data=[{"label": value.title(), "value": value} for value in ("source", "profile")],
+                                    placeholder="All types",
+                                    clearable=True,
+                                ),
+                            ],
+                            className="runbook-form-field",
+                        ),
+                        html.Div(
+                            [
+                                dmc.Select(
+                                    id=f"{prefix}-status",
+                                    label="Status",
+                                    data=[
+                                        {"label": status_label(value), "value": value}
+                                        for value in (
+                                            "queued",
+                                            "running",
+                                            "cancelling",
+                                            "cancelled",
+                                            "success",
+                                            "failed",
+                                            "waiting",
+                                            "not_ready",
+                                            "skipped",
+                                        )
+                                    ],
+                                    placeholder="All statuses",
+                                    clearable=True,
+                                ),
+                            ],
+                            className="runbook-form-field",
+                        ),
+                        html.Div(
+                            [
+                                html.Label("Name / target", htmlFor=f"{prefix}-target", className="runbook-form-label"),
+                                dcc.Input(
+                                    id=f"{prefix}-target",
+                                    placeholder="Filter by target",
+                                    type="text",
+                                    className="runbook-filter-input",
+                                ),
+                            ],
+                            className="runbook-form-field",
+                        ),
+                        html.Div(
+                            [
+                                html.Label("Search", htmlFor=f"{prefix}-search", className="runbook-form-label"),
+                                dcc.Input(
+                                    id=f"{prefix}-search",
+                                    placeholder="Search runs",
+                                    type="text",
+                                    className="runbook-filter-input",
+                                ),
+                            ],
+                            className="runbook-form-field",
+                        ),
                     ],
-                    placeholder="status",
-                    clearable=True,
-                    style={
-                        "width": "180px",
-                        "display": "inline-block",
-                        "marginRight": "8px",
-                    },
+                    className="runbook-filters",
                 ),
-                dcc.Input(
-                    id=f"{prefix}-target",
-                    placeholder="target id",
-                    type="text",
-                    style={"width": "180px"},
+                html.Div(
+                    [
+                        html.Button(
+                            "Cancel run",
+                            id=f"{prefix}-cancel",
+                            disabled=True,
+                            className="runbook-button runbook-button--danger",
+                        ),
+                        html.Span(id=f"{prefix}-cancel-result", className="runbook-muted"),
+                    ],
+                    className="runbook-form-actions runbook-run-actions",
                 ),
-                dcc.Input(
-                    id=f"{prefix}-search",
-                    placeholder="search runs",
-                    type="text",
-                    style={"width": "180px"},
-                ),
-                html.Button("Cancel", id=f"{prefix}-cancel", disabled=True),
-                html.Span(id=f"{prefix}-cancel-result"),
                 dag.AgGrid(
                     id=f"{prefix}-grid",
+                    className="runbook-grid runbook-grid--clickable",
                     rowData=[],
                     columnDefs=[
                         {
-                            "field": "run_id",
-                            "headerName": "Run ID",
+                            "field": "status_text",
+                            "headerName": "Status",
                             "filter": "agTextColumnFilter",
+                            "cellClass": "runbook-grid-status",
+                            "cellClassRules": STATUS_CELL_CLASS_RULES,
                         },
                         *[
-                            {"field": field, "filter": True}
-                            for field in (
-                                "kind",
-                                "target_id",
-                                "mode",
-                                "start_date",
-                                "end_date",
-                                "config_revision",
-                                "status",
-                                "worker_id",
-                                "cancelling",
-                                "cancel_requested_at",
-                                "slot",
-                                "trigger",
-                                "reason",
-                                "snapshot_id",
-                                "context_hash",
-                                "code_version",
-                                "artifact_id",
-                            )
+                            {"field": "type_text", "headerName": "Type", "filter": True},
+                            {"field": "target_id", "headerName": "Name / target", "filter": True},
+                            {"field": "mode_text", "headerName": "Mode", "filter": True},
+                            {"field": "requested_at", "headerName": "Queued / requested", "filter": True},
+                            {"field": "started_at", "headerName": "Started", "filter": True},
+                            {"field": "duration", "headerName": "Duration", "filter": True},
                         ],
                     ],
                     dashGridOptions={
@@ -157,7 +201,8 @@ def register(dash_app: Any, sessions: Any) -> None:
                     },
                     style={"height": "360px", "width": "100%"},
                 ),
-            ]
+            ],
+            className="runbook-page",
         ),
     )
 

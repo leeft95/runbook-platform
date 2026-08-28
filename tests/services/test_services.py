@@ -22,6 +22,7 @@ from runbook.services import cli
 from runbook.services.app import create_app, version_payload
 from runbook.services.dash import runs
 from runbook.services.dash._config import _profile_new_row, _source_new_row, register_config_page
+from runbook.services.dash.operations import STATUS_CELL_CLASS_RULES
 from runbook.services.dash.runs import _cancel_state
 from runbook.services.db import sync_sessions, upgrade_with_metadata
 from runbook.services.logging import RunLogIdentity, read_log_tail
@@ -225,16 +226,22 @@ def test_config_pages_use_grid_editors() -> None:
     assert "runbook-ui-runs-state" in str(run_page)
     grid = next(child for child in run_page.children if getattr(child, "id", None) == "runbook-ui-runs-grid")
     assert grid.columnDefs[0] == {
-        "field": "run_id",
-        "headerName": "Run ID",
+        "field": "status_text",
+        "headerName": "Status",
         "filter": "agTextColumnFilter",
+        "cellClass": "runbook-grid-status",
+        "cellClassRules": STATUS_CELL_CLASS_RULES,
     }
     serialized = runs._run_row(
         SimpleNamespace(
             run_id="run-1",
             kind="source",
             target_id="source-1",
+            mode="normal",
             status="success",
+            requested_at=datetime(2026, 1, 1, 11, 59, tzinfo=timezone.utc),
+            started_at=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 1, 1, 12, 0, 42, tzinfo=timezone.utc),
             slot=datetime(2026, 1, 1, tzinfo=timezone.utc),
             trigger="manual",
             reason=None,
@@ -245,7 +252,24 @@ def test_config_pages_use_grid_editors() -> None:
         )
     )
     assert serialized["run_id"] == "run-1"
+    assert serialized["status_text"] == "Succeeded"
+    assert serialized["type_text"] == "Source"
+    assert serialized["mode_text"] == "Manual"
+    assert serialized["requested_at"] == "2026-01-01T11:59:00+00:00"
+    assert serialized["started_at"] == "2026-01-01T12:00:00+00:00"
+    assert serialized["duration"] == "42.0 s"
     assert "run_link" not in serialized
+    cancelling = runs._run_row(
+        SimpleNamespace(
+            status="running",
+            cancel_requested_at=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+            kind="source",
+            trigger="automatic",
+        )
+    )
+    assert cancelling["status"] == "running"
+    assert cancelling["status_text"] == "Cancelling"
+    assert cancelling["cancelling"] is True
 
 
 def test_new_config_rows_are_complete_and_disabled() -> None:

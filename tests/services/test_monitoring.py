@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from loguru import logger
 from runbook.data import open_blob_store
-from runbook.services.dash.dashboard import _attention_row, _elapsed
+from runbook.services.dash.dashboard import _active_row, _attention_row, _elapsed
 from runbook.services.dash.run_logs import _bounded_log, _run_id_from_path
 from runbook.services.logging import (
     RunLogIdentity,
@@ -191,3 +191,22 @@ def test_dashboard_repository_queries_and_elapsed_serialization() -> None:
     assert "run_link" not in attention
     assert attention["finished_at"] == finished.isoformat()
     assert attention["reason"] == "boom"
+
+    cancelling = _active_row(
+        SimpleNamespace(
+            run_id="run-3",
+            kind="source",
+            target_id="source-1",
+            mode="normal",
+            trigger="automatic",
+            status="running",
+            cancel_requested_at=now,
+            requested_at=now,
+            started_at=now,
+            slot=now,
+            config_revision=1,
+        ),
+        now,
+    )
+    assert cancelling["status"] == "running"
+    assert cancelling["status_text"] == "Cancelling"
