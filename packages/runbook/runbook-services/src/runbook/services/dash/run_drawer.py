@@ -13,7 +13,7 @@ from runbook.core import open_blob_store
 
 from ..logging import RunLogIdentity, read_log_tail
 from ..repository import AsyncRunRepository
-from .operations import copy_value, empty_state, format_duration, run_status, status_badge
+from .operations import copy_value, empty_state, format_duration, run_status, status_badge, status_label
 
 PREFIX = "runbook-ui-run-drawer"
 _POLL_INTERVAL_MS = 5_000
@@ -82,25 +82,23 @@ def _copy(value: Any, *, label: str, max_length: int = 26) -> Any:
 
 def _metadata_group(title: str, values: list[tuple[str, Any]]) -> Any:
     """Render one compact grouped metadata card."""
+    details: list[Any] = []
+    for label, value in values:
+        details.extend(
+            [
+                html.Div(label, className="runbook-detail-label"),
+                html.Div(value, className="runbook-detail-value"),
+            ]
+        )
     return dmc.Card(
         [
-            dmc.Text(title, fw=600, size="sm", mb=4),
-            dmc.Stack(
-                [
-                    dmc.Group(
-                        [dmc.Text(label, size="xs", c="dimmed", w=135), value],
-                        gap="xs",
-                        wrap="nowrap",
-                        align="start",
-                    )
-                    for label, value in values
-                ],
-                gap=3,
-            ),
+            dmc.Text(title, fw=600, size="sm", mb=4, className="runbook-detail-section-title"),
+            html.Div(details, className="runbook-detail-grid"),
         ],
         withBorder=True,
         padding="xs",
         radius="sm",
+        className="runbook-detail-section",
     )
 
 
@@ -212,10 +210,11 @@ def _status_summary(row: Any) -> Any:
     else:
         message = status.replace("_", " ").title() or "Status unavailable"
     return dmc.Alert(
-        [dmc.Text(message, fw=600), dmc.Text(f"Status: {status.replace('_', ' ').title() or 'Unknown'}")],
+        [dmc.Text(message, fw=600), dmc.Text(f"Status: {status_label(status)}")],
         title="Operational status",
         color="red" if status == "failed" else "blue" if status in {"running", "cancelling"} else "gray",
         variant="light",
+        className="runbook-drawer-status",
     )
 
 
@@ -592,7 +591,7 @@ def _details(row: Any, config: Any | None) -> Any:
         sections.append(_provenance(row, result))
         sections.append(_report_outputs(row, result))
     sections.append(_raw_details(row))
-    return dmc.Stack(sections, gap="xs")
+    return dmc.Stack(sections, gap="xs", className="runbook-drawer-details-sections")
 
 
 def _header(row: Any, config: Any | None) -> Any:
@@ -602,7 +601,12 @@ def _header(row: Any, config: Any | None) -> Any:
             dmc.Stack(
                 [
                     dmc.Text(_config_title(row, config), fw=700, size="lg"),
-                    dmc.Text(f"{_run_type(row)} · {_mode_label(row)}", size="sm", c="dimmed"),
+                    dmc.Text(
+                        f"{_run_type(row)} · {_mode_label(row)}",
+                        size="sm",
+                        c="dimmed",
+                        className="runbook-mode-label",
+                    ),
                 ],
                 gap=0,
             ),
@@ -611,6 +615,7 @@ def _header(row: Any, config: Any | None) -> Any:
         justify="space-between",
         align="start",
         wrap="nowrap",
+        className="runbook-drawer-header",
     )
 
 
@@ -618,6 +623,7 @@ def drawer() -> Any:
     """Build the mounted right-side drawer and its independent panes."""
     return dmc.Drawer(
         id=PREFIX,
+        className="runbook-drawer",
         opened=False,
         title=html.Div(id=f"{PREFIX}-title"),
         position="right",
@@ -643,9 +649,11 @@ def drawer() -> Any:
                                 variant="light",
                                 disabled=True,
                                 style={"display": "none"},
+                                className="runbook-button runbook-button--danger",
                             ),
                         ],
                         justify="space-between",
+                        className="runbook-drawer-action-row",
                     ),
                     html.Div(
                         dcc.Loading(
@@ -671,6 +679,7 @@ def drawer() -> Any:
                                                             id=f"{PREFIX}-log-refresh",
                                                             size="xs",
                                                             variant="light",
+                                                            className="runbook-button",
                                                         ),
                                                         dcc.Clipboard(
                                                             id=f"{PREFIX}-copy",

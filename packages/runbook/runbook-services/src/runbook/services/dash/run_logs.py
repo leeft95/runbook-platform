@@ -9,6 +9,7 @@ from runbook.core import open_blob_store
 
 from ..logging import RunLogIdentity, read_log_tail
 from ..repository import AsyncRunRepository
+from .operations import status_label
 
 _MAX_TEXT = 128 * 1024
 
@@ -103,7 +104,7 @@ def register(dash_app: Any, sessions: Any, data_store: str) -> None:
             state, disabled = "historical run without diagnostic logging", True
         captured = manifest.get("bytes") if manifest else len(text.encode("utf-8"))
         report = identity.report_id or "—"
-        status = f"{state} · run status={row.status} · kind={row.kind} · target={row.target_id} · report={report} · slot={row.slot} · captured={captured} bytes"
+        status = f"{state} · run status={status_label(row.status)} · kind={row.kind} · target={row.target_id} · report={report} · slot={row.slot} · captured={captured} bytes"
         return text, status, tail.get("next_part", after_part), text, disabled
 
     register_page(
@@ -118,10 +119,11 @@ def register(dash_app: Any, sessions: Any, data_store: str) -> None:
                 dcc.Interval(id=f"{prefix}-refresh", interval=2000, n_intervals=0, disabled=False),
                 dcc.Store(id=f"{prefix}-cursor", data=0),
                 dcc.Store(id=f"{prefix}-buffer", data=""),
-                html.H2("Run logs"),
-                html.Div(id=f"{prefix}-status"),
+                html.H1("Run logs"),
+                html.Div(id=f"{prefix}-status", className="runbook-muted"),
                 html.Pre(id=f"{prefix}-text", className="runbook-log"),
-            ]
+            ],
+            className="runbook-page runbook-detail-page",
         ),
     )
 

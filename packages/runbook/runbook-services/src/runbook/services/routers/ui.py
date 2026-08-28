@@ -53,7 +53,7 @@ def mount_ui(server: Any, *, sessions: Any, data_store: str | None, reports_root
         ("Overview", "/ui/", "runbook-ui-nav-overview"),
         ("Profiles", "/ui/profiles", "runbook-ui-nav-profiles"),
         ("Sources", "/ui/sources", "runbook-ui-nav-sources"),
-        ("All Runs", "/ui/runs", "runbook-ui-nav-runs"),
+        ("Runs", "/ui/runs", "runbook-ui-nav-runs"),
         ("System", "/ui/system", "runbook-ui-nav-system"),
     ]
     dash_app.layout = dmc.MantineProvider(
@@ -73,23 +73,30 @@ def mount_ui(server: Any, *, sessions: Any, data_store: str | None, reports_root
                             gap="sm",
                         ),
                         withBorder=True,
+                        className="runbook-product-header",
                     ),
                     dmc.AppShellNavbar(
                         dmc.Stack(
                             [
-                                dmc.NavLink(label=label, href=href, id=component_id)
+                                dmc.NavLink(
+                                    label=label,
+                                    href=href,
+                                    id=component_id,
+                                    className="runbook-nav-link",
+                                )
                                 for label, href, component_id in nav_items
                             ],
                             gap=4,
                             p="sm",
                         ),
                         withBorder=True,
+                        className="runbook-product-nav",
                     ),
-                    dmc.AppShellMain(dash.page_container),
+                    dmc.AppShellMain(dash.page_container, className="runbook-app-main"),
                 ],
                 header={"height": 56},
                 navbar={"width": 220, "breakpoint": "sm"},
-                padding="md",
+                padding=0,
                 className="runbook-shell",
             ),
             run_drawer.drawer(),

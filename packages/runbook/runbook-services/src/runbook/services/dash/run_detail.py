@@ -6,6 +6,7 @@ from typing import Any
 from dash import Input, Output, ctx, dcc, html, register_page
 
 from ..repository import AsyncRunRepository
+from .operations import format_duration, mode_badge, run_status, status_badge
 
 
 def register(dash_app: Any, sessions: Any) -> None:
@@ -57,27 +58,35 @@ def register(dash_app: Any, sessions: Any) -> None:
             "result": row.result,
             "current_pointers": current_pointers,
         }
-        display_status = "cancelling" if row.status == "running" and row.cancel_requested_at is not None else row.status
+        display_status = run_status(row)
         return (
             [
-                html.Div(["Status: ", html.Span(display_status, className="runbook-status")]),
-                html.Div(f"Mode: {str(getattr(row, 'mode', None) or 'normal').title()}"),
+                html.Div(["Status: ", status_badge(display_status)], className="runbook-detail-row"),
                 html.Div(
-                    f"Date range: {getattr(row, 'start_date', None) or '—'} → {getattr(row, 'end_date', None) or '—'}"
+                    ["Mode: ", mode_badge(getattr(row, "mode", None), trigger=getattr(row, "trigger", None))],
+                    className="runbook-detail-row",
                 ),
-                html.Div(f"Base source revision: {row.config_revision}"),
-                html.Div(f"Worker: {row.worker_id or '—'}"),
-                html.Div(f"Cancellation requested: {row.cancel_requested_at or '—'}"),
-                html.Div(f"Requested: {row.requested_at}"),
-                html.Div(f"Started: {row.started_at or '—'}"),
-                html.Div(f"Finished: {row.finished_at or '—'}"),
-                html.Div(f"Reason: {row.reason or '—'}"),
+                html.Div(
+                    f"Date range: {getattr(row, 'start_date', None) or '—'} → {getattr(row, 'end_date', None) or '—'}",
+                    className="runbook-detail-row",
+                ),
+                html.Div(f"Base source revision: {row.config_revision}", className="runbook-technical"),
+                html.Div(f"Worker: {row.worker_id or '—'}", className="runbook-technical"),
+                html.Div(f"Cancellation requested: {row.cancel_requested_at or '—'}", className="runbook-technical"),
+                html.Div(f"Requested: {row.requested_at}", className="runbook-detail-row"),
+                html.Div(f"Started: {row.started_at or '—'}", className="runbook-detail-row"),
+                html.Div(f"Finished: {row.finished_at or '—'}", className="runbook-detail-row"),
+                html.Div(
+                    f"Duration: {format_duration(row.started_at, row.finished_at)}", className="runbook-detail-row"
+                ),
+                html.Div(f"Reason: {row.reason or '—'}", className="runbook-detail-row"),
                 html.A(
                     "Open diagnostic logs",
                     href=f"/ui/runs/{row.run_id}/logs",
+                    className="runbook-button",
                 ),
-                html.H3("Pinned configuration and provenance"),
-                html.Pre(json.dumps(payload, default=str, indent=2, sort_keys=True)),
+                html.H3("Pinned configuration and provenance", className="runbook-panel-title"),
+                html.Pre(json.dumps(payload, default=str, indent=2, sort_keys=True), className="runbook-drawer-raw"),
             ],
             row.status not in {"queued", "running"} or row.cancel_requested_at is not None,
             message,
@@ -93,11 +102,18 @@ def register(dash_app: Any, sessions: Any) -> None:
             [
                 dcc.Location(id=f"{prefix}-location"),
                 dcc.Interval(id=f"{prefix}-refresh", interval=5000, n_intervals=0),
-                html.H2("Run detail"),
-                html.Button("Cancel", id=f"{prefix}-cancel", n_clicks=0, disabled=True),
-                html.Div(id=f"{prefix}-cancel-result"),
-                html.Div(id=f"{prefix}-content"),
-            ]
+                html.H1("Run detail"),
+                html.Button(
+                    "Cancel run",
+                    id=f"{prefix}-cancel",
+                    n_clicks=0,
+                    disabled=True,
+                    className="runbook-button runbook-button--danger",
+                ),
+                html.Div(id=f"{prefix}-cancel-result", className="runbook-muted"),
+                html.Div(id=f"{prefix}-content", className="runbook-panel runbook-detail-grid"),
+            ],
+            className="runbook-page runbook-detail-page",
         ),
     )
 

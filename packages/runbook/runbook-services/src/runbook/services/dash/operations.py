@@ -14,7 +14,8 @@ _KNOWN_STATUSES = {
     "queued": "Queued",
     "running": "Running",
     "cancelling": "Cancelling",
-    "success": "Success",
+    "success": "Succeeded",
+    "succeeded": "Succeeded",
     "failed": "Failed",
     "cancelled": "Cancelled",
     "waiting": "Waiting",
@@ -31,6 +32,17 @@ _STATUS_COLOURS = {
     "waiting": "orange",
     "not_ready": "orange",
     "skipped": "gray",
+}
+STATUS_CELL_CLASS_RULES = {
+    "runbook-grid-status--succeeded": "params.value === 'Succeeded'",
+    "runbook-grid-status--failed": "params.value === 'Failed'",
+    "runbook-grid-status--running": "params.value === 'Running'",
+    "runbook-grid-status--queued": "params.value === 'Queued'",
+    "runbook-grid-status--cancelling": "params.value === 'Cancelling'",
+    "runbook-grid-status--cancelled": "params.value === 'Cancelled'",
+    "runbook-grid-status--neutral": (
+        "!['Succeeded','Failed','Running','Queued','Cancelling','Cancelled'].includes(params.value)"
+    ),
 }
 
 
@@ -101,7 +113,27 @@ def status_label(status: Any) -> str:
 def status_badge(status: Any) -> Any:
     """Render one status consistently and safely degrade unknown values."""
     value = str(status or "unknown").lower()
-    return dmc.Badge(status_label(value), color=_STATUS_COLOURS.get(value, "gray"), variant="light")
+    return dmc.Badge(
+        status_label(value),
+        color=_STATUS_COLOURS.get(value, "gray"),
+        variant="light",
+        className=f"runbook-status runbook-status--{value.replace('_', '-')}",
+    )
+
+
+def mode_label(mode: Any = None, *, trigger: Any = None) -> str:
+    """Return a neutral operator-facing execution mode label."""
+    value = str(mode or "normal").lower()
+    if value == "historical":
+        return "Historical"
+    if value == "manual" or str(trigger or "").lower() == "manual":
+        return "Manual"
+    return "Automatic"
+
+
+def mode_badge(mode: Any = None, *, trigger: Any = None) -> Any:
+    """Render an execution mode as a neutral, text-bearing badge."""
+    return dmc.Badge(mode_label(mode, trigger=trigger), color="gray", variant="light", className="runbook-mode")
 
 
 def copy_value(value: Any, *, label: str | None = None, max_length: int = 20) -> Any:
@@ -122,15 +154,18 @@ def copy_value(value: Any, *, label: str | None = None, max_length: int = 20) ->
 
 def metric_card(label: str, value: Any, *, note: str | None = None) -> Any:
     """Build a compact operational metric surface."""
-    children: list[Any] = [dmc.Text(label, size="sm", c="dimmed"), dmc.Title(str(value), order=3)]
+    children: list[Any] = [
+        dmc.Text(label, size="sm", c="dimmed", className="runbook-metric-label"),
+        dmc.Title(str(value), order=3, className="runbook-metric-value"),
+    ]
     if note:
-        children.append(dmc.Text(note, size="xs", c="dimmed"))
+        children.append(dmc.Text(note, size="xs", c="dimmed", className="runbook-metric-note"))
     return dmc.Card(children, withBorder=True, padding="sm", radius="sm", className="runbook-metric")
 
 
 def empty_state(title: str, message: str) -> Any:
     """Explain an empty table instead of leaving a blank surface."""
-    return dmc.Alert(message, title=title, color="gray", variant="light")
+    return dmc.Alert(message, title=title, color="gray", variant="light", className="runbook-empty")
 
 
 def error_state(message: str, *, retry_id: str | None = None) -> Any:
@@ -138,7 +173,13 @@ def error_state(message: str, *, retry_id: str | None = None) -> Any:
     children: list[Any] = [dmc.Text(message)]
     if retry_id:
         children.append(dmc.Button("Retry", id=retry_id, variant="light", size="xs"))
-    return dmc.Alert(children, title="Unable to load operations data", color="red", variant="light")
+    return dmc.Alert(
+        children,
+        title="Unable to load operations data",
+        color="red",
+        variant="light",
+        className="runbook-error",
+    )
 
 
 def entity_link(kind: str, entity_id: Any, *, label: str | None = None) -> Any:
@@ -227,6 +268,8 @@ def detail_row(row: Any) -> dict[str, Any]:
     result = {name: as_iso(row_value(row, name)) for name in names}
     result["mode"] = result["mode"] or "normal"
     result["status"] = run_status(row)
+    result["status_text"] = status_label(result["status"])
+    result["mode_text"] = mode_label(result["mode"], trigger=result["trigger"])
     result["duration"] = format_duration(row_value(row, "started_at"), row_value(row, "finished_at"))
     return result
 
@@ -244,10 +287,13 @@ __all__ = [
     "format_duration",
     "load_operations",
     "metric_card",
+    "mode_badge",
+    "mode_label",
     "profile_source_ids",
     "relative_time",
     "row_value",
     "run_status",
+    "STATUS_CELL_CLASS_RULES",
     "status_badge",
     "status_label",
     "timestamp",

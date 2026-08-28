@@ -44,6 +44,8 @@ def test_operations_formatting_and_dependency_derivation() -> None:
     now = datetime(2026, 8, 24, 12, tzinfo=timezone.utc)
     assert relative_time(datetime(2026, 8, 24, 11, 59, tzinfo=timezone.utc), now=now) == "1m ago"
     assert format_duration(datetime(2026, 8, 24, 11, 59, tzinfo=timezone.utc), now, now=now) == "1m 0s"
+    assert status_label("success") == "Succeeded"
+    assert status_label("cancelled") == "Cancelled"
     assert status_label("future_status") == "Future Status"
     profile = {"datasets": {"prices": "market-prices"}}
     source = SimpleNamespace(config_id="market", payload={"datasets": {"prices": {"dataset_id": "market-prices"}}})
