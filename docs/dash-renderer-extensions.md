@@ -1,9 +1,16 @@
 # Dash renderer extensions
 
+For renderer-extension authors and deployment owners
+
 Runbook's Dash renderer owns report semantics and provides an optional,
 trusted-Python presentation seam. Pass one object to `render_dash_page` (or to
 `compose_report_page`) to customize page chrome, controls, or block wrappers
-without copying report execution, validation, or callback code.
+without copying report execution, validation, or callback code. A report should
+already work as static HTML; see [Interactive reports](pdl-interactive.md).
+
+This is deliberately separate from `OperationsBrand`: branding customises the
+control-plane Operations UI, while a `DashRendererExtension` customises report
+presentation. Deployment wiring for both seams is in [Deployment](deployment.md).
 
 ```python
 from runbook.sdk.extensions.dash import render_dash_page

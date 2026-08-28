@@ -1,13 +1,19 @@
-# Service operations
+# Operations UI
 
-`runbook-services` is the PostgreSQL-backed control plane. PostgreSQL stores
-validated configuration revisions, current dataset pointers, and the run
-ledger. Blob storage retains immutable raw data, curated files, manifests,
-report artifacts, and per-run worker log chunks.
+For operators
 
-## Configure the service
+The Operations UI is the user-facing control plane for source and report runs.
+It answers what is healthy, what is running, what failed, what data was used,
+and what a run produced. PostgreSQL stores configuration revisions, dataset
+pointers, and the durable run ledger; the shared data store retains immutable
+outputs and logs.
 
-The default values are suitable for local development:
+For installation, startup, backups, and networking, see
+[Deployment](deployment.md). For the data model, see [Data](data.md).
+
+## Configure and start
+
+The default local settings are:
 
 ```text
 RUNBOOK_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/runbook
@@ -15,105 +21,210 @@ RUNBOOK_DATA_STORE_URI=file:.runbook
 RUNBOOK_REPORTS_ROOT=reports
 ```
 
-Apply migrations and import source/profile configuration:
+Initialize the schema, import validated configuration, then start the service
+and polling runner as separate processes:
 
 ```bash
 runbook-services db upgrade
 runbook-services config import \
   --source-config data/contract/source_configs.json \
-  --profiles data/contract/report_profiles.json \
-  --reports-root reports  # retained deprecated compatibility option
-```
-
-The config import validates source configs and profile dataset IDs before
-writing revisions. `--reports-root` is retained as a deprecated no-op for
-v0.2.1 compatibility; report aliases and report module discovery are validated
-by the worker at execution time, where the configured report root is available.
-
-## Polling runner and compatibility tick
-
-Run the API/UI and long-lived polling runner as separate processes:
-
-```bash
+  --profiles data/contract/report_profiles.json
+runbook-services serve
 runbook-services run --workers 4 --poll-interval 5
 ```
 
-The runner holds one PostgreSQL advisory lock for its lifetime and cycles in
-schedule, cancellation, poll/reconcile, dependency release, and dispatch order.
-Each run maps to one short-lived `runbook-worker` process. `LocalProcessBackend`
-owns only its in-memory `run_id -> Popen` handles; PostgreSQL owns run status,
-worker identity, cancellation timestamps, and pinned snapshots. Capacity is
-checked before spawning, dispatch is FIFO among eligible work, and source runs
-for one source remain serialized without blocking unrelated sources. `tick`
-uses this same cycle, drains locally owned work, and exits for debugging.
+The service listens on `127.0.0.1:8050` by default. `/healthz` checks the
+process, `/readyz` checks PostgreSQL, API routes are under `/api/v1`, and the UI
+is under `/ui/`. There is no built-in authentication; keep loopback binding or
+place the service behind an authenticated boundary.
 
-Cancel a queued or running run through the API. Queued cancellation is terminal
-immediately; running cancellation records intent and the polling runner
-terminates only its locally owned process before guarded cancellation. A runner
-restart never adopts PIDs: unowned running rows become failed or cancelled with
-`worker ownership lost / runner restarted`. SIGINT/SIGTERM stop scheduling and
-dispatch, then cancel only local workers with bounded termination.
+The runner uses PostgreSQL as the queue, launches one `runbook-worker` per
+admitted run, and leaves excess work queued. Independent work can run in
+parallel, while source runs for one source are serialized. Cancellation is
+durable intent: queued work becomes cancelled, and a running worker is stopped
+only by its owning runner.
 
-### Staggered multi-source settlement
+## General usage
 
-Profile releases are based on advancement, not an exact shared clock slot. The
-runner validates and locks every current pointer, verifies its manifest, and
-requires the pointer's source run to be a durable success for the configured
-producer. All aliases owned by one producer must use one source run; multiple
-successful attempts coalesce to the run represented by the current pointer.
+Use the navigation under `/ui/` according to the task, rather than treating
+every page as a configuration editor:
 
-The first complete automatic pointer set is accepted as that profile revision's
-baseline. Later releases require every producer to advance to a different
-successful source run. For example, A0/B0 establishes a baseline, A1 at 07:00
-waits while B is still B0, and B1 at 09:00 releases the A1/B1 snapshot. Queued
-or running future work is ignored. Failed, cancelled, not-ready, invalid, or
-pointerless work leaves `dependencies_released_at` null. A source row may be
-reconciled repeatedly; the profile identity key means only one pinned run is
-queued, including when multiple source rows observe the same snapshot.
+- **Overview** (`/ui/`) answers “what needs attention?” It shows the current
+  **Queued** and **Running** metrics, previous-24-hour **Succeeded**, **Failed**,
+  and **Waiting / not ready** metrics, the **Active operations** and attention
+  grids, and current **Dataset pointers**. It refreshes automatically every
+  five seconds; use **Refresh** for an immediate update.
 
-Automatic baselines are scoped to the exact profile revision and config hash,
-and include runs in any lifecycle state. Legacy baselines without producer
-provenance fall back to per-producer manifest-reference comparison. A new
-revision starts with no baseline. Manual profile actions use the latest
-pointers without waiting for advancement, require confirmation in the UI, and
-persist immutable provenance plus warnings listing non-advanced producers (or
-that no baseline was available). Manual runs never become baselines.
-This advancement rule is not a calendar/SLA guarantee and does not add a DAG,
-retry policy, or cross-run scheduler; operators must diagnose and rerun failed
-source work through the existing controls.
+```{figure} _static/operations/overview.png
+:alt: Operations Overview showing run metrics, attention grids, and dataset pointers
+:width: 100%
 
-## Serve the API and UI
-
-Start the service locally with:
-
-```bash
-runbook-services serve
+The Overview page groups current run health, attention items, and dataset pointers.
 ```
 
-It binds to `127.0.0.1:8050` by default. `--reload` enables Uvicorn reload
-for development only. The root endpoint returns versions, `/healthz` is a
-process health check, `/readyz` checks database readiness, API routes are
-under `/api/v1`, and the Dash UI is mounted at `/ui/`.
+- **Profiles** (`/ui/profiles`) is the report catalogue. Use **Search**,
+  **Status**, **Availability**, and **Refresh** to find a profile, then select
+  its row for profile detail. Detail shows dependent sources, latest snapshot,
+  last successful run, snapshot-as-of time, and run history. Use **Configuration
+  management** when changing the saved profile; a profile does not have an
+  independent schedule.
+- **Sources** (`/ui/sources`) is the acquisition catalogue. The same **Search**,
+  **Status**, **Availability**, and **Refresh** controls filter sources. Select
+  a source for detail (`/ui/sources/{source_id}`), where **Configuration**,
+  **Refresh**, and **Run historical job** are available alongside outputs,
+  current pointers, dependent profiles, and source run history.
 
-The dashboard provides run history, provenance, status, and links to the
-immutable worker logs. The service has no authentication. Keep the loopback
-binding or put the service behind an authenticated, appropriately secured
-boundary before exposing it to a network. See the repository [security
-policy](https://github.com/redcombojnr/runbook-platform/blob/main/SECURITY.md).
+```{figure} _static/operations/source-detail.png
+:alt: Source detail page showing configuration, refresh, historical job, outputs, and pointers
+:width: 100%
 
-### Operations branding
+Source detail keeps acquisition configuration and its published outputs together.
+```
 
-The Operations UI defaults to the public Runbook identity. Deployments can
-provide a small immutable `OperationsBrand` object when composing the service:
+- **Runs** (`/ui/runs`) is the execution search. Filter by **Type**, **Status**,
+  **Name / target**, or **Search**, select one row to inspect it, and use
+  **Cancel run** only while it is queued or running. The action is disabled for
+  terminal runs or after cancellation has already been requested.
+
+```{figure} _static/operations/runs.png
+:alt: Runs page showing filters and a table of recent operations
+:width: 100%
+
+Use Runs to filter and select an operation for the drawer.
+```
+
+- **System** (`/ui/system`) gives bounded repository summaries: **Profiles**,
+  **Sources**, **Recent runs**, **Current pointers**, and status counts. Use
+  **Refresh** when checking a suspected service or database problem.
+
+Overview, detail pages, and Runs also have automatic polling in addition to
+their manual **Refresh** controls. A source or profile detail page refreshes
+every 30 seconds; Runs refreshes every five seconds. The run drawer polls an
+open active run separately.
+
+## Track a run
+
+Click any run row to open the shared right-side run drawer. Read it in this
+order:
+
+1. **Status and timeline** — what state the run is in, when it was requested,
+   started, and finished, and how long it took.
+2. **Execution** — source/profile, mode, trigger, pinned revision, adapter or
+   report details, and whether a production pointer update was attempted.
+3. **Inputs & provenance** — run/config hashes, snapshot and dataset manifests,
+   producer/source run IDs, code version, worker, and submitted time.
+4. **Outputs & artifacts** — immutable dataset/manifest references for source
+   runs, or report artifact and stage-manifest references for report runs.
+5. **Raw details** — an expandable technical section for uncommon ledger
+   metadata.
+6. **Logs** — an expandable section with manual refresh and copy-all controls.
+
+```{figure} _static/operations/run-drawer.png
+:alt: Run drawer showing operational status and lifecycle, part of Execution, and expanded Logs with Refresh logs
+:width: 720px
+
+The run drawer shows operational status and lifecycle, part of Execution, and expanded Logs with Refresh logs.
+```
+
+Failures display their persisted reason before the technical details. For a
+historical source run, Outputs is where you copy the immutable manifest refs;
+do not inspect object-store paths manually. The drawer's cancel action records
+the durable cancellation request for a queued or running run.
+
+These are sections in one progressive-disclosure drawer, not Overview/Inputs/
+Outputs/Logs tabs. Select a row in Overview, Profiles detail, Sources detail, or
+Runs to open it. For a direct URL, use `/ui/runs/{run_id}` for the full detail
+page or `/ui/runs/{run_id}/logs` for the live bounded log page. In the drawer,
+expand **Logs**, use **Refresh logs** to fetch new chunks, and use the copy
+control (labelled **Copy all logs**) when handing the captured text to another
+operator. **Raw details** is collapsed and is only needed for uncommon ledger
+metadata.
+
+From a profile's run history, select a report run to open the same drawer. This
+view focuses on the report outputs and technical details:
+
+```{figure} _static/operations/profile-drawer-detail.png
+:alt: Report run drawer opened from profile run history, showing Outputs and artifacts with HTML and manifests plus Raw details
+:width: 675px
+
+The report run drawer shows Outputs and artifacts, including HTML and manifests, plus Raw details.
+```
+
+For a historical source run, check the completion summary and then
+**Inputs & provenance** for the inclusive range, base source revision, config
+hash, **No overrides**, and pointer-update state. **Outputs** contains the
+produced immutable dataset manifest references, while the summary says
+**Production pointer: Unchanged**. A historical run never replaces the current
+production pointer, even when it succeeds.
+
+Cancellation is durable but has two visible timings: cancelling a queued run
+terminalizes it before a worker starts; cancelling a running run first records
+the request and shows **Cancelling**, then its owning runner stops and
+terminalizes that worker. Do not expect the running case to disappear
+immediately or assume that another runner owns the process.
+
+## Diagnose failures
+
+Start with the status and reason in the run drawer, then inspect the named
+section in this compact order:
+
+| Symptom | Inspect | Action |
+| --- | --- | --- |
+| **Queued** for longer than expected | Status/timeline, worker column, and Overview **Active operations** | Confirm the polling runner is connected to the same PostgreSQL database; check its process and shared data-store setting. |
+| **Running** too long | **Execution**, **Inputs & provenance**, and refreshed **Logs** | Check the owning runner/worker, database connectivity, and shared store; inspect the last log event before submitting another run. |
+| **Cancelling** | Cancellation requested time, timeline, and **Logs** | Wait for the owning runner to stop and reconcile the worker; a running cancellation is not an instant terminal transition. |
+| **Failed** | The drawer's **Failure** reason first, then **Execution**, **Inputs & provenance**, and **Logs** | Correct the source, parser, report, or profile configuration and submit a new run; a failed source run does not advance its production pointer. |
+| **Waiting** or **Not ready** | Status reason, dependent source state, and current **Dataset pointers** | Refresh the dependency/source, make the expected data ready, or resolve the queue condition; do not treat waiting as a successful publication. |
+| Success but **missing outputs** | **Outputs & artifacts**, run result, and the shared data store | Confirm the run is truly successful and that service and runner use the same store; do not manufacture artifact or manifest paths. |
+| Successful source run but **no pointer** | Source **Outputs**, Overview **Dataset pointers**, mode, and run status | A normal successful source run should publish; a historical run intentionally leaves the production pointer unchanged. Check runner/database state before retrying. |
+| **Logs unavailable** or incomplete | Drawer log status, direct `/ui/runs/{run_id}/logs` page, run slot, and shared store | Check the same data-store URI and runner ownership. Logs can be bounded or incomplete after worker termination; the persisted run reason and metadata remain authoritative. |
+| Unsure whether to cancel | Current status and **Cancel run** availability | Cancel queued work when it should not run; for running work expect **Cancelling** and eventual runner reconciliation. Terminal runs cannot be cancelled. |
+
+The service and runner must share PostgreSQL for the queue and the same durable
+data-store URI for manifests, artifacts, and logs. If both are healthy but a
+run remains unresolved, preserve the run ID and captured reason/logs for the
+next operator rather than deleting revisions or replaying from an object-store
+path.
+
+## Historical source runs
+
+Historical runs fetch a specific past date range for research, report
+development, validation, or reproducible bounded acquisition. They do not
+replace today's production data.
+
+From **Sources**:
+
+```text
+choose source -> Run historical job -> inclusive start/end -> review
+             -> submit -> normal queue -> inspect Outputs and Logs
+```
+
+The request is `POST /api/v1/sources/{source_id}/historical-runs` with only
+`start_date` and `end_date`. Both dates are inclusive. Runbook pins the source
+revision and hash at submission, keeps the request in the normal queue and run
+lifecycle, and produces separate immutable dataset/manifest outputs. It does
+not create a temporary source revision, advance the production pointer, or
+automatically trigger downstream reports.
+
+Historical support is checked by the adapter in the worker. A request can be
+queued before an unsupported adapter is rejected; the run then fails clearly in
+the normal lifecycle. The checked-in `local_file` adapter is not
+historical-capable. Arbitrary temporary source-parameter overrides are not part
+of this feature.
+
+## Operations branding
+
+Deployment owners can supply an `OperationsBrand` in a private Python
+composition root; ordinary analysts do not configure it:
 
 ```python
-from runbook.services.dash import OperationsBrand
 from runbook.services.app import create_app
+from runbook.services.dash import OperationsBrand
 
 brand = OperationsBrand(
-    name="Example Company",
-    logo_src="/assets/example-company-logo.svg",
-    favicon_src="/assets/example-company-favicon.ico",
+    name="Company",
+    logo_src="/assets/company-logo.svg",
+    favicon_src="/assets/company-favicon.ico",
     primary="#0f766e",
     primary_hover="#115e59",
     primary_soft="#ccfbf1",
@@ -121,91 +232,14 @@ brand = OperationsBrand(
 app = create_app(operations_brand=brand)
 ```
 
-At composition time, import and construct the brand, arrange for the deployment
-to serve its logo and favicon URLs, pass it as
-`create_app(operations_brand=brand)`, then run or mount the returned app through
-the deployment's normal server entry point.
+The deployment serves the asset URLs. Brand colours affect identity accents;
+Runbook retains semantic status colours for success, failure, warning, running,
+queued, and cancelled. See [Deployment](deployment.md) for asset placement and
+the distinct report renderer extension seam.
 
-The fields are `name` (default `"Runbook"`), optional URL/path strings
-`logo_src` and `favicon_src`, and optional CSS identity tokens `primary`,
-`primary_hover`, and `primary_soft`. The deployment is responsible for serving
-logo and favicon assets at those URLs or paths; the public service does not
-store or encode image data. If no favicon is supplied, Dash's default Runbook
-favicon behavior is retained.
+## Recovery
 
-Brand tokens affect identity accents such as navigation, links, and primary
-controls. Semantic status colours remain public and stable: success, failure,
-warning, running, queued, and cancelled continue to communicate operational
-state.
-
-### Operations UI navigation
-
-The UI is a profile-first operational surface, separate from the PDL report
-host:
-
-```text
-/ui/                    overview and triage
-/ui/profiles            profile catalogue and configuration management
-/ui/profiles/<id>       profile state, sources, and run history
-/ui/sources             source catalogue and configuration management
-/ui/sources/<id>        source outputs, freshness, dependants, and runs
-/ui/runs                secondary global run triage
-/ui/system              factual service/repository state
-```
-
-Click a run to inspect status, lifecycle timing, provenance, outputs, actions,
-and logs in the shared run drawer. Selecting any run row opens it without
-changing the underlying page. Its metadata and log panes scroll independently.
-Use the drawer controls for manual log refresh, copy-all, and durable
-cancellation of queued/running runs.
-
-The local process backend is the first `ExecutionBackend` implementation;
-Kubernetes is the next backend direction. No retries, priority queue,
-heartbeat, broker, or PID adoption is performed.
-
-### One-off historical source runs
-
-Historical runs support research, report development, historical validation,
-and reproducible bounded source acquisition. From a source detail page, choose
-**Run historical job**, enter the required inclusive `start_date` and
-`end_date`, review the pinned source revision and hash, and submit. The request
-is persisted as an ordinary `source` run (`mode=historical`) in the normal
-durable queue, so existing serialization, worker ownership, cancellation,
-restart reconciliation, logs, and status lifecycle apply.
-
-Historical execution uses the existing source definition at its latest
-persisted revision when submitted. It records the base revision/hash and
-immutable inclusive date range on the run; it never creates a temporary source
-configuration revision. Successful runs expose their immutable curated
-datasets and complete manifest refs in the run result and shared run drawer,
-where each ref can be copied for analysis. The current production dataset
-pointer is not updated and downstream scheduled report dependencies are not
-released.
-
-Historical support is an explicit adapter opt-in. The worker validates that
-the adapter accepts the historical execution context before acquisition
-begins. A request may enter the normal durable queue before an unsupported
-adapter is rejected, because service and worker runtimes may not have the same
-installed plugin composition; the control plane does not inspect plugin
-composition. Unsupported requests fail with a source-specific message while
-remaining in the normal run lifecycle. Arbitrary temporary source-parameter
-overrides are intentionally not part of the v0.3.1 historical-run contract;
-only the source, inclusive date range, and pinned revision/hash are supported.
-
-For deterministic local source checks, run `python scripts/demo_http_server.py`
-and enable one of the optional `demo_http_*` configurations. The server uses
-only checked-in CSV fixtures and exposes CSV, slow, 404, and 500 routes. The
-standard suite uses SQLite and must have zero skips. The PostgreSQL release
-suite is explicit: use
-`RUNBOOK_TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/runbook-platform-demo`
-for the disposable release database and run `pixi run test-postgres`. The
-harness fails immediately when the URL is absent or names the vendor database
-`runbook`; arbitrary disposable CI database names remain supported.
-
-## Failure and recovery
-
-Acquisition and curation outputs are immutable. A failed run does not advance
-the pointer. Inspect the run ledger and logs, correct the source or parser
-configuration, and trigger the source again. Do not delete curated revisions
-to force a current view; the pointer and manifests provide the intended
-recovery boundary.
+Acquisition and curation outputs are immutable. A failed run does not advance a
+dataset pointer. Inspect Execution, Inputs & provenance, and Logs; correct the
+source/parser/report configuration; then submit a new run. Do not delete
+curated revisions to force a current view.

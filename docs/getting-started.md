@@ -1,112 +1,160 @@
 # Getting started
 
-For normal reports, start with ordinary Python and the composable layout API:
+For report authors
+
+Runbook reports are ordinary Python. A report declares the datasets it expects,
+defines named calculations, creates Plotly/table artifacts, and returns a
+`Report` layout. Start with the composable API; raw PDL is an advanced escape
+hatch covered in [reports](reports.md).
+
+## Your first report
+
+This small report reads a pinned dataset, calculates returns, stores a Plotly
+figure as an artifact, and places it in a named section and grid:
+
+Save it as `reports/returns_report.py`. The filename matches the
+`report_id: "returns_report"` used by the profile below.
 
 ```python
+import pandas as pd
+
+from runbook.sdk import plot_line, report, required_aliases
 from runbook.sdk.layout import Report
 
-page = Report("Prices")
-with page.section("Markets") as markets:
-    with markets.grid(columns=2) as cards:
-        for symbol in symbols:
-            cards.table(ctx.artifact.table(make_table(symbol), name=symbol), title=symbol)
-            cards.plot(ctx.artifact.plot(make_chart(symbol), name=f"{symbol}-chart"), title=symbol)
-return page
+
+ALIASES = required_aliases(prices="prices")
+
+
+@report.calc("returns")
+def returns(ctx) -> pd.DataFrame:
+    frame = ctx.dataset(ALIASES.prices).copy()
+    frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
+    frame = frame.sort_values("timestamp").set_index("timestamp")
+    return frame["close"].astype(float).pct_change(fill_method=None).to_frame("returns")
+
+
+@report.page
+def page(ctx):
+    frame = ctx.calc("returns")
+    figure = plot_line(frame, title="Returns")
+    plot_ref = ctx.artifact.plot(figure, name="returns")
+
+    layout = Report("Returns")
+    with layout.section("Summary") as section:
+        section.text(f"Rows: {len(frame)}")
+        with section.grid(columns=1) as grid:
+            grid.plot(plot_ref, title="Returns")
+    return layout
 ```
 
-The execution layer compiles this `Report` to the existing PDL manifest, then
-the same manifest can render to HTML or Dash. See [Composable report
-layouts](composable-report-layouts) for list/generator and span examples.
+The flow is:
 
-Runbook development uses Python 3.11 and Pixi. The repository's normal test
-and lint commands are:
+1. `required_aliases` says the report needs a dataset alias called `prices`.
+2. `ctx.dataset(...)` reads that alias from the run's immutable snapshot.
+3. `@report.calc` names a reusable calculation; `ctx.calc` evaluates it once.
+4. `plot_line` returns a normal Plotly figure.
+5. `ctx.artifact.plot` stores that figure and returns its report reference.
+6. `Report`, `Section`, and `Grid` place the artifact without coordinates.
 
-```bash
-pixi run test
-pixi run lint
-pixi run format-check
+Tables use the same path: create a pandas frame, call
+`ctx.artifact.table(frame, name="...", style=...)`, and pass the returned
+table reference to `grid.table(...)`. See [plotting helpers](plotting-helpers.md)
+and [table templates](table-templates.md).
+
+## Set up a local profile
+
+A profile connects the report alias to a stable curated dataset ID:
+
+Add this map entry to
+`data/contract/report_profiles.json` (or in another profile file passed to
+`config import`):
+
+```json
+{
+  "returns_demo": {
+    "report_id": "returns_report",
+    "title": "Returns demo",
+    "enabled": true,
+    "datasets": {"prices": "demo_daily_prices"}
+  }
+}
 ```
 
-The editable packages are already declared in `pixi.toml`, so `pixi install`
-sets up the local development environment.
+The checked-in examples use `data/contract/report_profiles.json` and report
+modules under `reports/`. A source run must publish the dataset pointer before
+a report can read it. Profiles are validated at import and again when the
+worker loads the report.
 
-## Run the example report
+## Publish the demo dataset first
 
-The checked-in fixtures and reports demonstrate the full flow. First make
-sure PostgreSQL is available, then apply the service schema and import the
-validated configuration:
+`config import` stores and validates configuration; it does not acquire data
+or create a dataset pointer. From the repository root, use separate terminals
+for the service, runner, and request:
 
 ```bash
+# Terminal 1: initialize PostgreSQL and import source/profile configuration
 runbook-services db upgrade
-runbook-services config import
-```
+runbook-services config import \
+  --source-config data/contract/source_configs.json \
+  --profiles data/contract/report_profiles.json
 
-The default data store is `file:.runbook`. It can be changed with
-`RUNBOOK_DATA_STORE_URI` or an explicit `--store file:/path` or
-`--store s3://bucket/prefix` argument. S3 support is optional; install
-`runbook-data[s3]` when using it.
-
-For a bounded compatibility run, use one externally scheduled service tick:
-
-```bash
-runbook-services tick --workers 4
-```
-
-For continuous local operation, run the API/UI and durable polling runner as
-separate processes:
-
-```bash
+# Terminal 2: serve the API and Operations UI
 runbook-services serve
-runbook-services run --workers 2 --poll-interval 1
+
+# Terminal 3: keep claiming queued work
+runbook-services run --workers 1 --poll-interval 1
 ```
 
-The runner keeps the PostgreSQL queue authoritative, launches one
-`runbook-worker --run-id ...` process per admitted run, and leaves excess work
-queued. Cancellation is durable intent through the API; only the runner
-terminates its own local process handles. The checked-in optional demo configs
-include local append, HTTP CSV, slow, 404, and 500 cases and are disabled by
-default. Start their standard-library fixture server with:
+In a fourth terminal, submit the checked-in `demo_daily_prices` source. The
+`local_file` adapter reads `data/fixtures/daily_prices.csv`, curates it as
+`demo_daily_prices`, and the successful run advances that dataset's production
+pointer:
 
 ```bash
-python scripts/demo_http_server.py
+curl -sS -X POST http://127.0.0.1:8050/api/v1/sources/demo_daily_prices/runs \
+  -H 'content-type: application/json' \
+  -d '{}'
 ```
 
-The disposable PostgreSQL release suite is opt-in and fails closed without an
-explicit URL:
+Copy the returned `run_id`, then poll its status until it is
+`"status":"success"` before previewing. A queued response alone is not
+enough; a failed run does not create or advance the pointer:
 
 ```bash
-RUNBOOK_TEST_DATABASE_URL=postgresql+psycopg://... pixi run test-postgres
+curl -sS http://127.0.0.1:8050/api/v1/runs/RUN_ID
 ```
 
-For a local report preview, use the SDK command with a profile from
-`data/contract/report_profiles.json`:
+The request is an ordinary normal source run, not a historical run. The
+Operations UI's Sources and Runs pages show the same lifecycle and logs.
+
+## Preview the result
+
+Once the source run reports `"status":"success"`, run the profile and copy
+its static HTML to a local path:
 
 ```bash
-runbook-preview PROFILE_ID --output preview/report.html
+runbook-preview returns_demo --output preview/report.html
 ```
 
-The preview resolves the latest dataset pointers and writes the generated
-HTML to the requested path. See {doc}`reports` for the report authoring
-contract and {doc}`operations` for production service setup.
+The command resolves the latest pointers, pins a snapshot for that preview,
+and does not advance production pointers. Open `preview/report.html` in a
+browser. For a full service workflow, see [Operations](operations.md); for
+installation and startup order, see [Deployment](deployment.md).
 
-The deterministic PnL Explorer demonstrates the PDL-first interactive path:
+The repository's `reports/market_dashboard.py`, `reports/vol_report.py`, and
+`reports/pnl_explorer.py` are useful next examples. `snapshot_report.py` shows
+the lower-level PDL builder escape hatch.
+
+## Environment
+
+The repository uses Python 3.11 and Pixi:
 
 ```bash
-runbook-preview interactive pnl_explorer_demo --demo-live
+pixi install
+pixi run test
 ```
 
-This is a local development server only. It renders the same static-first PDL
-as HTML and as a namespaced `DashPage`; the optional live provider is injected
-by runtime composition and is not serialized into the profile or manifest.
-
-## Repository layout
-
-| Path | Purpose |
-| --- | --- |
-| `packages/runbook/runbook-core` | Contracts, deterministic utilities, tables, and plots. |
-| `packages/runbook/runbook-data` | Acquisition, curation, manifests, pointers, and blob storage. |
-| `packages/runbook/runbook-sdk` | Report authoring, execution, preview, and HTML rendering. |
-| `packages/runbook/runbook-worker` | One-process-per-run source and report execution. |
-| `packages/runbook/runbook-services` | PostgreSQL control plane, API, CLI, and operations UI. |
-| `reports/` | External report templates selected by profile. |
-| `data/contract/` | Source and report profile configuration. |
+The default local blob store is `file:.runbook`. Set
+`RUNBOOK_DATA_STORE_URI` or pass a `file:`/`s3://` URI when needed. PostgreSQL
+is configured with `RUNBOOK_DATABASE_URL`. See [Data](data.md) for the
+source-to-snapshot lifecycle and [CLI](cli.md) for all command flags.

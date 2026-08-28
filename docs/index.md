@@ -1,11 +1,24 @@
 # Runbook
 
-Runbook is a deterministic PDL-first data-to-report framework. It resolves
-curated, immutable datasets into snapshot-pinned calculations and one
-canonical report manifest that can render to HTML or an optional interactive
-DashPage.
+```{image} _static/RunbookLogo_white_backgroud.png
+:alt: Runbook logo
+:width: 420px
+:align: center
+```
 
-The documentation is organized around the work you need to do:
+Runbook is a Python-native reporting platform that turns curated data into
+reproducible static and interactive reports. You write ordinary Python for
+calculations, tables, and plots; Runbook records the exact data used, stores
+the outputs, and renders the report as HTML or Dash.
+
+## Follow the analyst journey
+
+```text
+choose data -> calculate -> create artifacts -> compose a report -> preview
+       -> understand snapshots -> operate source/report runs
+```
+
+Read in this order if Runbook is new to you:
 
 ```{toctree}
 :maxdepth: 2
@@ -15,80 +28,77 @@ getting-started
 concepts
 reports
 composable-report-layouts
-maintaining-layout-authoring
-pdl-interactive
-dash-renderer-extensions
+plotting-helpers
+table-templates
 data
-source-adapters-and-curation
 operations
-architecture/north-star
-repository-lineage
+pdl-interactive
 ```
+
+The [first report](getting-started.md) is the best starting point. After
+authoring, follow [Data](data.md) and [Operations](operations.md) to understand
+snapshots and runs, then [Interactive reports](pdl-interactive.md) when you
+need controls. Deployment, renderer extensions, adapter development, API, CLI,
+and architecture are advanced/reference material.
+
+## Cookbook
+
+Use the [Reports cookbook](reports.md#reports-cookbook) for composed plotting
+and monthly-table recipes, the [ingestion cookbook](source-adapters-and-curation.md#write-an-ingester-the-sourceadapter-contract)
+for adapter/parser and private-extension contracts, and the [Operations
+guide](operations.md#general-usage) for everyday UI work and failure
+diagnosis. The focused [Plotting helpers](plotting-helpers.md) and [Table
+templates](table-templates.md) pages remain the API details behind those
+recipes.
 
 ```{toctree}
 :maxdepth: 2
 :caption: Reference
 
+deployment
+dash-renderer-extensions
+source-adapters-and-curation
+architecture/north-star
+maintaining-layout-authoring
+repository-lineage
 cli
 api
 contributing
 ```
 
-## The short version
-
-Runbook separates source acquisition, data curation, report calculation, and
-HTML rendering:
+## The platform model
 
 ```text
-source -> immutable raw artifact -> curated dataset -> snapshot -> report -> PDL -> HTML / DashPage
+source -> curated dataset -> snapshot -> Python report -> PDL -> HTML / Dash
 ```
 
-Reports read a resolved snapshot. They do not call source systems or choose
-files directly. This makes a report run reproducible from its dataset
-snapshot, report configuration, and code version.
+A source produces a curated dataset. A snapshot freezes the exact dataset
+versions for one report run. Python report code creates calculations and
+artifacts, and the renderer turns the resulting standard report definition
+into HTML or an interactive Dash page.
 
-## Build the documentation locally
+## Build and preview the docs
 
-With Pixi installed, build the site with warnings as errors:
+With Pixi installed:
 
 ```bash
 pixi run docs
-```
-
-Preview the built site at <http://127.0.0.1:8765/>:
-
-```bash
 pixi run docs-serve
 ```
 
-Alternatively, from a fresh Python 3.11 environment, install the documentation
-dependencies and editable Runbook packages before running Sphinx directly:
+The generated site is `docs/_build/html/`. The build uses warnings as errors.
+The repository also has `pixi run test`, `pixi run lint`,
+`pixi run format-check`, and `pixi run typecheck` tasks.
 
-```bash
-python -m pip install -r docs/requirements.txt
-python -m pip install -e packages/runbook/runbook-core \
-  -e packages/runbook/runbook-data \
-  -e packages/runbook/runbook-sdk \
-  -e packages/runbook/runbook-services \
-  -e packages/runbook/runbook-worker
-sphinx-build -W --keep-going -b html docs docs/_build/html
-```
-
-The generated site is in `docs/_build/html/`. The same command runs in CI
-for pull requests and is published to
-<https://redcombojnr.github.io/runbook-platform/> from `main`.
-
-## Packages
-
-The repository is a small dependency chain:
+## Package boundaries
 
 ```text
 runbook-core -> runbook-data / runbook-sdk / runbook-services
-runbook-sdk -> runbook-data
+runbook-sdk  -> runbook-data
 runbook-worker -> runbook-core / runbook-data / runbook-sdk / runbook-services
 ```
 
-Use the package APIs documented in the reference section rather than relying
-on private modules. The repository's [README](https://github.com/redcombojnr/runbook-platform/blob/main/README.md)
+Use the public APIs in the guides and [API reference](api.md). The
+[repository README](https://github.com/redcombojnr/runbook-platform/blob/main/README.md)
 and [security policy](https://github.com/redcombojnr/runbook-platform/blob/main/SECURITY.md)
 cover project-wide setup and reporting security issues.

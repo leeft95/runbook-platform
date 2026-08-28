@@ -1,5 +1,11 @@
 # Building source adapters and curators
 
+For adapter and parser developers
+
+An adapter acquires raw bytes; a Stage 2 parser turns those persisted bytes into
+curated DataFrames. The [Data guide](data.md) is the analyst-facing view. For
+deployment of private adapters, see [Deployment](deployment.md).
+
 ## Installed extensions
 
 `runbook-data` discovers out-of-tree integrations from trusted installed
@@ -8,36 +14,21 @@ group and parser names in `runbook.parsers`; the built-in names `http`,
 `local_file`, and `csv_timeseries_v1` are reserved and cannot be shadowed.
 Lookup is exact, and duplicate installed names fail clearly.
 
-A minimal extension package declares both groups in its `pyproject.toml`:
+The complete package layout and entry-point metadata appear in [Private
+extension adapters](#private-extension-adapters). The examples there use a
+small authenticated JSON source and its parser; replace the package and
+identifiers with those owned by your installation.
 
-```toml
-[project.entry-points."runbook.adapters"]
-vendor = "my_package.adapters:VendorAdapter"
-
-[project.entry-points."runbook.parsers"]
-vendor_v1 = "my_package.parsers:parse_vendor"
-```
-
-The adapter is a zero-argument class implementing the public
-`SourceAdapter` contract. Its `check` and `acquire` methods may receive the
-generic, frozen `PreviousAcquisitionState`:
-
-```python
-class VendorAdapter:
-    def check(self, *, source_config, acquisition_run, observed_at, previous_state=None): ...
-    def acquire(self, *, source_config, readiness, fetched_at, previous_state=None): ...
-```
-
-Historical source runs are an explicit adapter opt-in. To support them, both
-`check` and `acquire` must also accept the immutable
-`HistoricalExecutionContext` keyword. Its `start_date` and `end_date` are
-inclusive. The worker checks this capability before acquisition begins; a
-request can therefore enter the normal durable queue before an unsupported
-adapter is rejected with a source-specific error. The control plane does not
-inspect plugin composition because its installed extensions may differ from
-the worker's. A historical-capable adapter must read both dates and bound its
-vendor request to that inclusive window rather than silently ignoring the
-context.
+Historical source runs are an explicit adapter opt-in. A dual-mode adapter
+accepts an optional immutable `HistoricalExecutionContext` in both hooks. The
+context is `None` for a normal run; the worker supplies it for a historical
+run. Its `start_date` and `end_date` are inclusive. The worker checks this
+capability before acquisition begins; a request can therefore enter the normal
+durable queue before an unsupported adapter is rejected with a source-specific
+error. The control plane does not inspect plugin composition because its
+installed extensions may differ from the worker's. A historical-capable adapter
+must read both dates and bound its vendor request to that inclusive window
+rather than silently ignoring the context.
 
 `PreviousAcquisitionState` contains a conceptual `watermark` and JSON-safe
 `metadata`. Runbook transports and serializes the state; the adapter owns the
@@ -75,7 +66,15 @@ Adapters must not apply business transformations. Parsers must not call the
 source system. The ingest runner owns raw persistence, content hashes,
 Parquet revisions, manifests, and pointer publication.
 
-## Build a source adapter
+## Write an ingester: the `SourceAdapter` contract
+
+“Ingester” is informal shorthand here; `SourceAdapter` is the public API. The
+adapter validates configuration, checks readiness without consuming the vendor
+payload, and acquires the raw bytes. The runner then persists those bytes
+immutably, calls the configured Stage 2 parser, writes curated files and a
+manifest, and publishes the dataset pointer for a normal run. Historical runs
+follow the same acquisition and curation path but do not publish the
+production pointer.
 
 An adapter implements the
 [`SourceAdapter`](https://github.com/redcombojnr/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/adapters/base/contracts.py)
@@ -98,110 +97,27 @@ class SourceAdapter(Protocol):
         source_config: SourceConfig,
         readiness: ReadinessResult,
         fetched_at: datetime,
+        previous_watermarks: Mapping[str, datetime] | None = None,
         previous_state: PreviousAcquisitionState | None = None,
     ) -> AcquisitionResult: ...
 ```
 
+The contract's `Mapping` is `collections.abc.Mapping`. `previous_state` and
+`previous_watermarks` are optional compatibility inputs for incremental
+adapters; an adapter can ignore them when each acquisition is complete.
+
 An adapter that opts into historical runs additionally implements the
-`HistoricalSourceAdapter` capability. It keeps the legacy methods and adds
-the required context keyword to both hooks:
+`HistoricalSourceAdapter` capability. `SourceAdapter` is the standard
+ordinary-run contract; `HistoricalSourceAdapter` is an additional
+historical/backfill capability, not its replacement. Both are valid contracts.
+The public historical protocol requires the context keyword for a historical
+invocation:
 
 ```python
 class HistoricalSourceAdapter(Protocol):
-    def check(
-        self,
-        *,
-        source_config,
-        acquisition_run,
-        observed_at,
-        previous_state=None,
-        execution_context: HistoricalExecutionContext,
-    ) -> ReadinessResult: ...
-    def acquire(
-        self,
-        *,
-        source_config,
-        readiness,
-        fetched_at,
-        previous_watermarks=None,
-        previous_state=None,
-        execution_context: HistoricalExecutionContext,
-    ) -> AcquisitionResult: ...
-```
+    """Optional source capability for inclusive date-range acquisitions."""
 
-The legacy `SourceAdapter` contract remains unchanged, so existing adapters
-continue to work for ordinary runs without accepting this keyword.
-
-The methods have distinct jobs:
-
-- `validate` fails fast when required configuration is absent or malformed.
-  It runs while source configuration is loaded and again before acquisition.
-- `check` performs a cheap, non-destructive readiness check. Return `ready`
-  only when `acquire` can proceed, `not_ready` when expected data is not yet
-  available, and `failed` for authentication, server, or protocol failures.
-  It may inspect persisted `previous_state` metadata, but Stage 1A must not
-  download or parse the vendor business payload. The runner passes state only
-  to compatible signatures, so legacy three-keyword checks remain supported.
-- `acquire` reads the source and returns its raw payload. It may interpret the
-  adapter-owned metadata in `previous_state` for an incremental request.
-
-For example, an authenticated JSON download could be implemented in
-`ingest/adapters/authenticated_json.py`:
-
-```python
-from __future__ import annotations
-
-import os
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Any
-from urllib.parse import urlencode
-
-import requests
-
-from runbook.data.config import SourceConfig
-from runbook.data.ingest.models import (
-    AcquisitionResult,
-    HistoricalExecutionContext,
-    RawArtifactRecord,
-    ReadinessResult,
-    ReadinessStatus,
-)
-
-
-@dataclass
-class AuthenticatedJsonAdapter:
-    session: Any | None = None
-
-    def validate(self, source_config: SourceConfig) -> None:
-        for key in ("url", "token_env"):
-            value = source_config.params.get(key)
-            if not isinstance(value, str) or not value:
-                raise ValueError(f"authenticated_json requires params.{key}")
-
-    def _headers(self, source_config: SourceConfig) -> dict[str, str]:
-        token_env = source_config.params["token_env"]
-        token = os.environ.get(token_env)
-        if not token:
-            raise RuntimeError(f"source credential is not set: {token_env}")
-        return {"Authorization": f"Bearer {token}"}
-
-    def _request_url(
-        self,
-        source_config: SourceConfig,
-        execution_context: HistoricalExecutionContext | None,
-    ) -> str:
-        """Bound every historical request to the user-supplied inclusive dates."""
-        url = source_config.params["url"]
-        if execution_context is None:
-            return url
-        window = urlencode(
-            {
-                "start_date": execution_context.start_date.isoformat(),
-                "end_date": execution_context.end_date.isoformat(),
-            }
-        )
-        return f"{url}{'&' if '?' in url else '?'}{window}"
+    def validate(self, source_config: SourceConfig) -> None: ...
 
     def check(
         self,
@@ -209,24 +125,121 @@ class AuthenticatedJsonAdapter:
         source_config: SourceConfig,
         acquisition_run: str,
         observed_at: datetime,
+        previous_state: PreviousAcquisitionState | None = None,
+        execution_context: HistoricalExecutionContext,
+    ) -> ReadinessResult: ...
+
+    def acquire(
+        self,
+        *,
+        source_config: SourceConfig,
+        readiness: ReadinessResult,
+        fetched_at: datetime,
+        previous_watermarks: Mapping[str, datetime] | None = None,
+        previous_state: PreviousAcquisitionState | None = None,
+        execution_context: HistoricalExecutionContext,
+    ) -> AcquisitionResult: ...
+```
+
+A concrete dual-mode adapter can support both contracts by making the
+historical context optional. `None` means an ordinary run; a populated context
+means an inclusive historical/backfill run:
+
+```python
+from __future__ import annotations
+
+import os
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+import requests
+
+from runbook.data.config import SourceConfig
+from runbook.data.ingest.models import (
+    AcquisitionResult,
+    HistoricalExecutionContext,
+    PreviousAcquisitionState,
+    RawArtifactRecord,
+    ReadinessResult,
+    ReadinessStatus,
+)
+
+
+def _status_for_http_code(code: int) -> ReadinessStatus:
+    if code < 400:
+        return ReadinessStatus.ready
+    if code == 404 or (400 <= code < 500 and code not in {401, 403}):
+        return ReadinessStatus.not_ready
+    return ReadinessStatus.failed
+
+
+@dataclass
+class AuthenticatedJsonAdapter:
+    """Acquire a vendor JSON export using a bearer token."""
+
+    session: Any | None = None
+
+    def validate(self, source_config: SourceConfig) -> None:
+        url = source_config.params.get("url")
+        token_env = source_config.params.get("token_env")
+        parsed = urlsplit(url) if isinstance(url, str) else None
+        if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("authenticated_json requires a valid params.url")
+        if not isinstance(token_env, str) or not token_env:
+            raise ValueError("authenticated_json requires params.token_env")
+
+    def _url(
+        self,
+        source_config: SourceConfig,
+        execution_context: HistoricalExecutionContext | None,
+    ) -> str:
+        self.validate(source_config)
+        base_url = str(source_config.params["url"])
+        if execution_context is None:
+            return base_url
+        parsed = urlsplit(base_url)
+        query = parse_qsl(parsed.query, keep_blank_values=True)
+        query.extend(
+            [
+                ("start_date", execution_context.start_date.isoformat()),
+                ("end_date", execution_context.end_date.isoformat()),
+            ]
+        )
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), ""))
+
+    def _headers(self, source_config: SourceConfig) -> dict[str, str]:
+        token_env = str(source_config.params["token_env"])
+        token = os.environ.get(token_env)
+        if not token:
+            raise RuntimeError(f"source credential is not set: {token_env}")
+        return {"Authorization": f"Bearer {token}"}
+
+    def _session(self) -> Any:
+        return self.session if self.session is not None else requests.Session()
+
+    def check(
+        self,
+        *,
+        source_config: SourceConfig,
+        acquisition_run: str,
+        observed_at: datetime,
+        previous_state: PreviousAcquisitionState | None = None,
         execution_context: HistoricalExecutionContext | None = None,
     ) -> ReadinessResult:
-        self.validate(source_config)
-        url = self._request_url(source_config, execution_context)
-        response = (self.session or requests.Session()).get(
+        del previous_state
+        url = self._url(source_config, execution_context)
+        response = self._session().get(
             url,
             headers=self._headers(source_config),
             timeout=30,
             stream=True,
         )
         try:
-            status = (
-                ReadinessStatus.ready
-                if response.status_code < 400
-                else ReadinessStatus.not_ready
-                if response.status_code == 404
-                else ReadinessStatus.failed
-            )
+            code = int(response.status_code)
+            status = _status_for_http_code(code)
             return ReadinessResult(
                 source_id=source_config.source_id,
                 acquisition_run=acquisition_run,
@@ -234,7 +247,7 @@ class AuthenticatedJsonAdapter:
                 observed_at=observed_at,
                 remote_filename="orders.json",
                 remote_locator=url,
-                message=None if status is ReadinessStatus.ready else "export is unavailable",
+                message=None if status is ReadinessStatus.ready else f"HTTP readiness status {code}",
             )
         finally:
             response.close()
@@ -245,15 +258,17 @@ class AuthenticatedJsonAdapter:
         source_config: SourceConfig,
         readiness: ReadinessResult,
         fetched_at: datetime,
+        previous_watermarks: Mapping[str, datetime] | None = None,
+        previous_state: PreviousAcquisitionState | None = None,
         execution_context: HistoricalExecutionContext | None = None,
-        previous_state=None,
     ) -> AcquisitionResult:
-        del previous_state  # This source always returns a complete export.
-        url = self._request_url(source_config, execution_context)
-        response = (self.session or requests.Session()).get(
+        del previous_watermarks, previous_state
+        url = self._url(source_config, execution_context)
+        response = self._session().get(
             url,
             headers=self._headers(source_config),
             timeout=60,
+            stream=True,
         )
         try:
             response.raise_for_status()
@@ -272,37 +287,32 @@ class AuthenticatedJsonAdapter:
             response.close()
 ```
 
-Return the response bytes unchanged. Do not set `artifact_ref` or
-`content_sha256`; the runner fills those fields after it has persisted and
-verified the payload.
+With `execution_context=None`, this implements the standard `SourceAdapter`
+ordinary-run contract. With a populated context, it implements the additional
+`HistoricalSourceAdapter` capability and sends both inclusive dates. The runner
+supplies the context only for a historical invocation; it never passes a
+historical context to the parser.
 
-Configuration, metadata, locators, exception messages, and logs must not
-contain credentials. Store the name of a credential environment variable in
-source configuration, as above, rather than the credential itself. Strip
-sensitive URL query parameters before storing or logging a locator.
+The methods have distinct jobs:
 
-### Register an in-tree adapter
+- `validate` fails fast when required configuration is absent or malformed.
+  It runs while source configuration is loaded and again before acquisition.
+- `check` performs a cheap, non-destructive readiness check. Return `ready`
+  only when `acquire` can proceed, `not_ready` when expected data is not yet
+  available, and `failed` for authentication, server, or protocol failures.
+  It may inspect persisted `previous_state` metadata, but Stage 1A must not
+  download or parse the vendor business payload. The runner passes state only
+  to compatible signatures, so ordinary-keyword checks remain supported.
+- `acquire` reads the source and returns its raw payload. It may interpret the
+  adapter-owned metadata in `previous_state` for an incremental request.
 
-Adapters are currently registered in
-[`ingest/adapters/__init__.py`](https://github.com/redcombojnr/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/adapters/__init__.py).
-Import the implementation and add its stable identifier to `_ADAPTERS`:
+Return response bytes unchanged from `acquire`; do not set `artifact_ref` or
+`content_sha256`, because the runner adds those fields after persistence and
+verification. Keep credentials out of configuration, metadata, locators,
+exception messages, and logs. Store a credential environment-variable name,
+not the credential itself.
 
-```python
-from runbook.data.ingest.adapters.authenticated_json import (
-    AuthenticatedJsonAdapter,
-)
-
-_ADAPTERS: dict[str, AdapterType] = {
-    "authenticated_json": AuthenticatedJsonAdapter,
-    "http": HttpAdapter,
-    "local_file": LocalFileAdapter,
-}
-```
-
-Built-ins are reserved. New out-of-tree adapters should use the installed
-entry-point group shown above instead of runtime registration.
-
-## Build a Stage 2 parser
+## Write a parser: the `Stage2Parser` contract
 
 The parser is the curator. It implements the
 [`Stage2Parser`](https://github.com/redcombojnr/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/parsers/base/contracts.py)
@@ -317,11 +327,14 @@ def parse_source(
 ) -> list[CuratedFrame]: ...
 ```
 
-The runner replaces `acquired.payload` with bytes read back from immutable
-raw storage before calling the parser. Parse only that payload; do not reopen
-`source_locator` or make network calls.
+The Stage 2 runner calls this function after reading the persisted raw artifact
+back from immutable storage. Parse only `acquired.payload`; do not reopen
+`source_locator` or make network calls. The parser should make these properties
+explicit:
 
-This example parses an order export and partitions it by year:
+This complete parser decodes an orders export, produces one deterministic
+`CuratedFrame` per year, and supplies merge keys for the configured `append`
+publication mode:
 
 ```python
 from __future__ import annotations
@@ -329,7 +342,6 @@ from __future__ import annotations
 import json
 
 import pandas as pd
-
 from runbook.data.config import SourceConfig
 from runbook.data.ingest.models import AcquisitionResult, CuratedFrame
 
@@ -340,22 +352,30 @@ def parse_orders_json(
     dataset_alias: str,
     acquired: AcquisitionResult,
 ) -> list[CuratedFrame]:
-    del source_config  # Use this when parsing depends on declared params.
+    """Parse and partition a persisted orders export."""
+    del source_config
     try:
         records = json.loads(acquired.payload)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, json.JSONDecodeError) as exc:
         raise ValueError("orders_json_v1 payload is not valid JSON") from exc
     if not isinstance(records, list) or not records:
-        raise ValueError("orders_json_v1 requires at least one order")
+        raise ValueError("orders_json_v1 requires a non-empty JSON list")
+    if any(not isinstance(record, dict) for record in records):
+        raise ValueError("orders_json_v1 requires every item to be an object")
 
     frame = pd.DataFrame.from_records(records)
     required = {"order_id", "updated_at", "amount"}
     missing = sorted(required - set(frame.columns))
     if missing:
         raise ValueError(f"orders_json_v1 fields are missing: {missing}")
+    if frame["order_id"].isna().any():
+        raise ValueError("orders_json_v1 contains an order without order_id")
 
     frame = frame.copy()
     frame["order_id"] = frame["order_id"].astype(str)
+    frame["amount"] = pd.to_numeric(frame["amount"], errors="coerce")
+    if frame["amount"].isna().any():
+        raise ValueError("orders_json_v1 contains an invalid amount")
     frame["updated_at"] = pd.to_datetime(frame["updated_at"], utc=True, errors="coerce")
     if frame["updated_at"].isna().any():
         raise ValueError("orders_json_v1 contains an invalid updated_at")
@@ -366,11 +386,15 @@ def parse_orders_json(
         .reset_index(drop=True)
     )
     batch_watermark = frame["updated_at"].max().to_pydatetime()
-    frame["year"] = frame["updated_at"].dt.year
+    frame["year"] = frame["updated_at"].dt.year.astype(str)
 
     outputs: list[CuratedFrame] = []
     for year, partition_frame in frame.groupby("year", sort=True):
-        curated = partition_frame.drop(columns="year").sort_values("order_id", kind="mergesort").reset_index(drop=True)
+        curated = (
+            partition_frame.drop(columns="year")
+            .sort_values(["updated_at", "order_id"], kind="mergesort")
+            .reset_index(drop=True)
+        )
         outputs.append(
             CuratedFrame(
                 output_alias=dataset_alias,
@@ -382,8 +406,6 @@ def parse_orders_json(
         )
     return outputs
 ```
-
-A parser should make these properties explicit:
 
 - `output_alias` must match a key in `source_config.datasets`. Every
   configured alias must be produced.
@@ -405,30 +427,83 @@ unchanged old partitions are retained and matching partitions are merged.
 Append parsers must provide merge keys, and their watermark cannot move
 backwards.
 
-### Register an in-tree parser
+The built-in `csv_timeseries_v1` parser is registered by `runbook-data`; new
+parser identifiers should be versioned when a schema or parsing change would
+alter the meaning of already-published data. External parsers are ordinary
+callables declared in the `runbook.parsers` entry-point group; they do not need
+a public registration function.
 
-Built-in parsers are registered in
-[`ingest/parsers/__init__.py`](https://github.com/redcombojnr/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/parsers/__init__.py):
+## Private extension adapters
 
-```python
-from runbook.data.ingest.parsers.orders_json import parse_orders_json
+The smallest coherent private package for the example above is:
 
-_PARSERS: dict[str, Stage2Parser] = {
-    "csv_timeseries_v1": parse_csv_timeseries,
-    "orders_json_v1": parse_orders_json,
-}
+```text
+orders-adapter/
+├── pyproject.toml
+└── src/orders_adapter/
+    ├── __init__.py
+    ├── adapters.py
+    └── parsers.py
 ```
 
-External parsers are ordinary callables declared in the `runbook.parsers`
-entry-point group; they use the same `Stage2Parser` call signature and do not
-need a public registration function.
+The adapter entry point is a zero-argument factory or callable (usually a
+class) that returns an object implementing `validate`, `check`, and `acquire`.
+This package's complete metadata is:
 
-Version the parser identifier when a parsing or schema change would alter the
-meaning of already-published data.
+```toml
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "runbook-orders-adapter"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["pandas", "requests", "runbook-data"]
+
+[project.entry-points."runbook.adapters"]
+authenticated_json = "orders_adapter.adapters:AuthenticatedJsonAdapter"
+
+[project.entry-points."runbook.parsers"]
+orders_json_v1 = "orders_adapter.parsers:parse_orders_json"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["orders_adapter*"]
+```
+
+`requests` and `pandas` are direct dependencies because the private package
+imports them; depending on `runbook-data` supplies the Runbook contracts and
+registries. Install this package into the service environment and every fresh
+worker environment. Runbook discovers the zero-argument entry point in each
+process; importing it only in a parent process is not enough. Built-in adapter
+and parser names are reserved, and duplicate or incompatible entry points
+fail explicitly during configuration loading.
+
+The repository's external-plugin tests exercise this install boundary by
+building a wheel and discovering it in a fresh subprocess. Their fixture
+identifiers are test-only evidence, not production adapter or parser names.
+
+## Private extension parsers
+
+The package registers `orders_json_v1` in the separate `runbook.parsers` group;
+the entry point in the `pyproject.toml` above points to the complete
+`parse_orders_json` implementation shown in [Write a parser: the
+`Stage2Parser` contract](#write-a-parser-the-stage2parser-contract). The
+callable receives only the persisted `AcquisitionResult` bytes. It does not
+open `source_locator`, call a network, or receive `HistoricalExecutionContext`:
+that context stops at the adapter boundary. Install the parser package
+wherever parsing can run, including every fresh worker process, and let
+`runbook-data` report unsupported or incompatible entry points clearly.
 
 ## Configure the source and dataset
 
-The adapter and parser are joined in `data/contract/source_configs.json`:
+The adapter and parser are joined in `data/contract/source_configs.json`. The
+following `orders_api` map is illustrative, not a checked-in source; use the
+same fields with identifiers and parameters owned by your installed package:
 
 ```json
 {
@@ -478,12 +553,33 @@ Cover each boundary separately before adding an end-to-end ingest test:
 5. An ingest test uses a temporary blob store, runs two publications, and
    verifies append or full-refresh behavior through the SDK.
 
+For the network adapter, inject a fake `Session` into
+`AuthenticatedJsonAdapter(session=...)`. Its fake `Response` should record the
+URL, headers, timeout, and `stream` flag, return a status/body, implement
+`raise_for_status`, and record `close()`. Call `check` and `acquire` once with
+`execution_context=None` and once with a bounded context; assert that the
+ordinary URL is unchanged, the historical URL has the inclusive
+`start_date`/`end_date` query, the bearer header is present, and every response
+is closed. This tests both modes without contacting a vendor. The custom
+network adapter is not vendor-smoke-tested by this repository.
+
+For the parser, build an exact `AcquisitionResult` with a
+`RawArtifactRecord` (`source_id`, `acquisition_run`, `source_filename`, and
+timezone-aware `fetched_at`) and JSON bytes containing two years plus a
+duplicate `order_id`. Pass it to `parse_orders_json` and assert one frame per
+year, UTC `updated_at`, the later duplicate winning, the batch watermark, the
+`{"year": "2025"}`-shaped partitions, and `merge_keys == ("order_id",)`. This proves
+the parser's deterministic contract without a source locator or network call.
+
 The existing
 [`tests/data/test_generic_ingest.py`](https://github.com/redcombojnr/runbook-platform/blob/main/tests/data/test_generic_ingest.py)
-shows parser and end-to-end examples. Run the focused checks with:
+shows parser and end-to-end examples. The external-package boundary is covered
+by [`tests/data/test_phasee_external_plugins.py`](https://github.com/redcombojnr/runbook-platform/blob/main/tests/data/test_phasee_external_plugins.py).
+Run the focused checks with:
 
 ```bash
 pixi run test tests/data/test_generic_ingest.py
+pixi run test tests/data/test_phasee_external_plugins.py
 pixi run lint
 pixi run format-check
 pixi run typecheck

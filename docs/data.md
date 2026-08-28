@@ -1,81 +1,51 @@
-# Data guide
+# Data and snapshots
 
-`runbook-data` turns source bytes into immutable datasets that reports and
-notebooks can resolve by snapshot. It owns source configuration, acquisition,
-Stage 2 parsing, Parquet revisions, complete dataset manifests, and the
-PostgreSQL current-pointer registry.
+For report authors
 
-Reports do not call source systems or select files directly.
-
-## Lifecycle
+Runbook keeps data collection, curation, and report reads separate. The
+analyst-facing lifecycle is:
 
 ```text
-source config
-    -> Stage 1A readiness check
-    -> Stage 1B raw acquisition
-    -> immutable raw artifact
-    -> Stage 2 parser
-    -> immutable curated Parquet revisions
-    -> complete content-addressed manifest
-    -> PostgreSQL dataset pointer
-    -> snapshot-pinned SDK read or report run
+source -> source run -> curated dataset -> current pointer -> snapshot -> report run
 ```
 
-Stage 2 reparses the persisted raw bytes; it never calls the source. A
-successful publication writes the immutable outputs before advancing the
-dataset pointer. Stage 3 calculations and Stage 4 rendering consume only the
-curated files selected by a snapshot.
+## The lifecycle in plain English
 
-## Try the synthetic datasets
+- A **source** is a file, HTTP endpoint, or private provider that supplies raw
+  data.
+- A source run stores the raw response and cleans it into a **curated dataset**
+  with a stable dataset ID.
+- The **current pointer** records which immutable manifest is production's
+  current version.
+- A report resolves the pointer into a **snapshot**, a frozen list of exact
+  manifests. Later pointer changes cannot alter that report's inputs.
 
-The repository includes two local CSV fixtures and matching source configs.
-Run one source directly for local development:
+For example, a private market source publishes prices at 09:00. A report
+starting at 09:05 freezes that 09:00 manifest. If prices update at 10:00, the
+09:05 report still refers to its original snapshot.
+
+## Read data in a report
+
+Report code uses its declared alias, not a source file path:
 
 ```python
-from datetime import datetime, timezone
+from runbook.sdk import report, required_aliases
 
-from runbook.data import load_source_configs, open_blob_store, open_pointer_registry
-from runbook.data.ingest import IngestRequest, run_ingest
+ALIASES = required_aliases(prices="prices")
 
-configs = load_source_configs("data/contract/source_configs.json")
-store = open_blob_store("file:.runbook")
-pointers = open_pointer_registry("postgresql+psycopg://postgres:postgres@localhost:5432/runbook")
 
-result = run_ingest(
-    IngestRequest(
-        source_config=configs["demo_daily_prices"],
-        run_time=datetime(2026, 1, 2, tzinfo=timezone.utc),
-    ),
-    store=store,
-    pointer_registry=pointers,
-)
-print(result.datasets)
+@report.calc("prices")
+def prices(ctx):
+    return ctx.dataset(ALIASES.prices)
 ```
 
-This produces an immutable raw CSV, a curated Parquet revision, and a manifest,
-then advances the dataset pointer in PostgreSQL. Production source runs should
-be initiated by `runbook-services` so pointer publication and the run outcome
-commit atomically.
+The profile binds `prices` to a stable curated dataset ID. `ctx.dataset` reads
+the immutable snapshot selected for the run. See [Reports](reports.md).
 
-Load the published dataset through the SDK:
+## The checked-in demo source
 
-```python
-from runbook.sdk import create_client
-
-frame, snapshot = create_client(
-    store_uri="file:.runbook",
-    database_url="postgresql+psycopg://postgres:postgres@localhost:5432/runbook",
-).load_dataset("demo_daily_prices")
-
-print(frame.tail())
-print(snapshot.snapshot_id)
-print(snapshot.watermark)
-```
-
-## Source configuration
-
-`data/contract/source_configs.json` is a strict JSON object keyed by
-`source_id`. The checked-in daily fixture is configured as:
+The repository includes a local CSV fixture and source configuration at
+`data/contract/source_configs.json`:
 
 ```json
 {
@@ -100,128 +70,26 @@ print(snapshot.watermark)
 }
 ```
 
-The identifiers have different jobs:
+`local_file` reads an owned file. `http` performs a readiness GET and then
+streams the configured URL. The `csv_timeseries_v1` parser requires the
+configured timestamp column, normalizes it to UTC, stably sorts rows, and uses
+timestamps as the watermark and append key. For custom acquisition or parsing,
+see [Source adapters and curation](source-adapters-and-curation.md).
 
-| Field | Meaning |
-| --- | --- |
-| Source map key | Scheduled source identity. |
-| `adapter` | Reusable acquisition capability. |
-| Dataset map key | Source-local alias connecting acquired content to a parser. |
-| `parser_id` | Stage 2 business-content parser. |
-| `dataset_id` | Stable curated dataset identity used by report profiles and SDK reads. |
+## Current and historical reads
 
-One source may produce multiple datasets, and multiple reports may reuse one
-dataset. A source-config file may declare only one producer for each
-`dataset_id`.
-
-### Built-in adapters
-
-`local_file` checks and reads `params.local_path`. Use it for owned fixtures,
-exports, and local development.
-
-`http` performs a streaming readiness GET and then downloads the raw response.
-It accepts these locator parameters, using the first populated value:
-
-- readiness: `readiness_url_template`, `readiness_url`,
-  `download_url_template`, `download_url`, or `url`;
-- download: `download_url_template`, `download_url`, `url`,
-  `readiness_url_template`, or `readiness_url`;
-- optional output name: `filename_template`.
-
-Templates may use `acquisition_run`, `slot`, `observed_at`, `year`, `month`,
-`month_name`, and `full_month_english`.
-
-### Built-in CSV parser
-
-`csv_timeseries_v1` is an unpartitioned time-series parser. Set
-`params.timestamp_column` to the CSV column containing the observation time.
-The parser:
-
-- requires at least one row and the configured timestamp column;
-- parses timestamps as UTC and rejects invalid values;
-- stably sorts rows by timestamp;
-- keeps the last row when the payload repeats a timestamp;
-- uses the timestamp as both the append merge key and dataset watermark.
-
-Use a different parser when the raw content needs different validation,
-partitioning, or business semantics. Keep source calls in adapters and parsing
-in Stage 2. See [Building source adapters and
-curators](source-adapters-and-curation.md) for the extension contracts,
-registration steps, examples, and test checklist.
-
-## Append and full publication
-
-Every dataset binding chooses an update mode:
-
-| Mode | Result |
-| --- | --- |
-| `append` | Retains unchanged partitions and merges matching partitions using parser-declared row keys. Incoming rows win on duplicate keys. |
-| `full` | Replaces the complete current view with only the partitions emitted by this run. |
-
-`append` is the default. It requires merge keys and rejects a watermark older
-than the current manifest. Neither mode overwrites existing curated files.
-Identical bytes reuse a revision; changed data creates the next numeric
-revision and a new manifest.
-
-## Storage and manifests
-
-File and S3 stores share the same logical layout:
-
-```text
-raw/<source>/<slot>/sha256=<hash>/source.<ext>
-curated/<dataset>/version=<schema>/<partition...>/<revision>.parquet
-curated/<dataset>/manifests/sha256=<hash>.json
-```
-
-A manifest is a complete dataset view. It records selected file references,
-file hashes, partitions, raw lineage, the dataset watermark, publication time,
-and the preceding manifest. PostgreSQL stores the current manifest reference,
-watermark, owning source, and source run for each dataset. Blob storage has no
-mutable pointer state.
-
-Curated directories are storage locations, not query interfaces. Older
-revisions remain present, so reading a directory or glob can combine current
-and superseded data. Always resolve a snapshot and read its selected files
-through the SDK.
-
-The default store is `file:.runbook`. Set `RUNBOOK_DATA_STORE_URI` or pass an
-explicit `file:` or `s3://` URI. S3 support requires the optional dependency:
-
-```bash
-pip install "runbook-data[s3]"
-```
-
-## Current, filtered, and historical reads
-
-`load_dataset` resolves the latest manifest and returns its exact snapshot:
+The SDK client resolves the latest pointer by default:
 
 ```python
-frame, snapshot = create_client().load_dataset("demo_daily_prices")
+from runbook.sdk import create_client
+
+frame, snapshot = create_client(
+    store_uri="file:.runbook",
+    database_url="postgresql+psycopg://postgres:postgres@localhost:5432/runbook",
+).load_dataset("demo_daily_prices")
 ```
 
-For partitioned datasets, keyword arguments filter manifest partitions before
-files are read. Filter values may be scalars or collections:
-
-```python
-frame, snapshot = create_client().load_dataset(
-    "your_partitioned_dataset",
-    year=2026,
-    region=["emea", "americas"],
-)
-```
-
-Load several datasets under one snapshot by assigning local aliases:
-
-```python
-frames, snapshot = create_client().load_datasets(
-    {
-        "daily_prices": "demo_daily_prices",
-        "intraday_bars": "demo_intraday_bars",
-    }
-)
-```
-
-Historical analyst reads use a timezone-aware `as_of` timestamp:
+For a reproducible point-in-time read, pass a timezone-aware `as_of` value:
 
 ```python
 from datetime import datetime, timezone
@@ -232,23 +100,69 @@ frame, snapshot = create_client().load_dataset(
 )
 ```
 
-The resolver walks manifest history and selects the newest publication at or
-before `as_of`. Scheduled report execution remains latest-only and
-snapshot-pinned.
+You can load several datasets under local aliases or filter partitioned data;
+see the [API reference](api.md) for the client methods. Always resolve a
+snapshot rather than reading a curated directory or glob: old immutable
+revisions remain stored beside current ones.
 
-## Data invariants
+## Historical source jobs
+
+An Operations user can request a bounded past range from a source's detail
+page. Dates are inclusive:
+
+```text
+Sources -> choose source -> Run historical job -> start/end -> review -> submit
+       -> normal queue -> run details -> Outputs and immutable manifest refs
+```
+
+The request pins the source revision/hash and uses the normal source-run queue.
+On success it creates separate immutable datasets and manifests. It does not
+change the standing source configuration, advance the production pointer, or
+automatically trigger downstream reports. Copy the manifest references from
+the run drawer's Outputs section; do not inspect object storage manually.
+
+Historical capability is an explicit adapter decision checked before
+acquisition. An unsupported adapter can enter the queue and then fail clearly
+in the worker. The checked-in `local_file` adapter is not historical-capable;
+successful historical smoke tests require a private/external compatible
+adapter. The v0.3.1 request supports only the inclusive date range, not
+temporary arbitrary parameter overrides. See [Operations](operations.md) and
+[API](api.md).
+
+## Storage and manifests
+
+The supported stores are `file:` and `s3://`:
+
+```text
+raw/<source>/<slot>/sha256=<hash>/source.<ext>
+curated/<dataset>/version=<schema>/<partition>/<revision>.parquet
+curated/<dataset>/manifests/sha256=<hash>.json
+```
+
+Blob storage contains immutable raw artifacts, curated files, manifests,
+report artifacts, and worker logs. A manifest records the complete selected
+file set, hashes, partitions, source lineage, watermark, publication time, and
+predecessor. PostgreSQL stores the mutable current pointer and run ledger.
+
+Use `RUNBOOK_DATA_STORE_URI` or an explicit store URI; the local default is
+`file:.runbook`. S3 uses `S3_ENDPOINT_URL` and `AWS_DEFAULT_REGION` (default
+`us-east-1`) and needs the optional S3 dependency. See
+[Deployment](deployment.md) for durable/shared storage requirements.
+
+## Append and full updates
+
+Each dataset binding chooses an update mode. `append` retains unchanged
+partitions and merges incoming rows using parser-declared keys; `full` replaces
+the complete current view with the partitions emitted by that run. Neither mode
+overwrites immutable files. Pointers advance only after all new outputs are
+ready.
+
+## Invariants
 
 - Raw artifacts, curated files, and manifests are immutable.
-- Manifests are complete dataset views and are content-addressed.
-- Dataset pointers advance only after the new outputs are ready.
-- Snapshot identity is SHA-256 over canonical resolved inputs. When present,
-  immutable producer provenance (producer ID, successful source run ID, slot,
-  and aliases) and warnings are included deterministically; legacy empty
-  metadata retains its historical identity.
-- Source acquisition belongs to Stage 1; business parsing belongs to Stage 2.
-- Reports and renderers never call source systems.
-
-Service-pinned snapshots preserve the exact pointer and producer evidence used
-for dispatch. Report execution copies immutable snapshot warnings into both
-PDL manifests; report-authored warnings cannot remove them. This keeps a manual
-barrier bypass visible in static HTML and interactive Dash output.
+- A snapshot identity is derived from its resolved dataset manifests and
+  producer provenance.
+- Reports and renderers never acquire source data.
+- A failed source run does not advance its dataset pointer.
+- Report manifests retain snapshot warnings, including a manual profile run
+  that bypassed an automatic dependency barrier.

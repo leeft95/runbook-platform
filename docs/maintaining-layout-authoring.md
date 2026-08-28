@@ -1,5 +1,7 @@
 # Maintaining layout authoring
 
+For platform maintainers and SDK contributors
+
 The layout path is deliberately small and one-way:
 
 ```text
@@ -29,6 +31,11 @@ renderer
 5. Rendering starts after compilation: `runbook.sdk.html.render_html` handles
    static output, and `runbook.sdk.extensions.dash.renderer` handles the
    optional interactive page.
+
+The authoring contract is intentionally flat: nested grids are rejected,
+high-level layouts default to `max_columns = 12`, and LCM normalization is
+never silently rounded. Keep these rules aligned with
+[Composable report layouts](composable-report-layouts.md).
 
 ## Adding a layout feature safely
 

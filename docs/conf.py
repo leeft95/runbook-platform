@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from importlib import metadata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -12,7 +13,10 @@ for package in ("runbook-core", "runbook-data", "runbook-sdk", "runbook-services
 project = "Runbook"
 copyright = "2026, redcombojnr and contributors"
 author = "redcombojnr and contributors"
-release = "0.2.1"
+try:
+    release = metadata.version("runbook-services")
+except metadata.PackageNotFoundError:
+    release = "development"
 
 extensions = [
     "myst_parser",
@@ -38,6 +42,7 @@ autodoc_preserve_defaults = True
 html_theme = "furo"
 html_title = "Runbook documentation"
 html_baseurl = "https://redcombojnr.github.io/runbook-platform/"
+html_static_path = ["_static"]
 html_theme_options = {
     "source_repository": "https://github.com/redcombojnr/runbook-platform",
     "source_branch": "main",
