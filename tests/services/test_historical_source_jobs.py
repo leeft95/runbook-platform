@@ -49,8 +49,10 @@ class _HistoricalWorkerAdapter:
         source_config,
         acquisition_run,
         observed_at,
+        previous_state=None,
         execution_context: HistoricalExecutionContext | None = None,
     ) -> ReadinessResult:
+        assert previous_state is None
         assert execution_context is not None
         return ReadinessResult(
             source_id=source_config.source_id,
@@ -66,8 +68,10 @@ class _HistoricalWorkerAdapter:
         source_config,
         readiness,
         fetched_at,
+        previous_state=None,
         execution_context: HistoricalExecutionContext | None = None,
     ) -> AcquisitionResult:
+        assert previous_state is None
         assert execution_context is not None
         rows: list[str] = []
         current = execution_context.start_date
@@ -436,6 +440,16 @@ def test_historical_worker_durable_execution_writes_manifest_without_pointer_pub
     store_uri = f"file:{tmp_path / 'store'}"
     upgrade_with_metadata(database)
     monkeypatch.setattr("runbook.data.ingest.runner.get_adapter", lambda _config: _HistoricalWorkerAdapter())
+    stage2_calls: list[dict[str, object]] = []
+    import runbook.worker.execution as worker_execution
+
+    original_stage2 = worker_execution.run_stage2_curate
+
+    def capture_stage2(**kwargs):
+        stage2_calls.append(kwargs)
+        return original_stage2(**kwargs)
+
+    monkeypatch.setattr(worker_execution, "run_stage2_curate", capture_stage2)
     stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
     with sync_sessions(database)() as session:
         repository = RunRepository(session)
@@ -483,3 +497,6 @@ def test_historical_worker_durable_execution_writes_manifest_without_pointer_pub
         assert len(manifest.files) == 1
         current = repository.pointer_registry.all()["historical-prices"]
         assert current == baseline
+        assert manifest_ref != baseline.manifest_ref
+        assert repository.unreleased_successful_sources() == []
+    assert stage2_calls[0]["previous_pointers"] == {}
