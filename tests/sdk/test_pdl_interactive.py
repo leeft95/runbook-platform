@@ -9,6 +9,7 @@ import pytest
 from runbook.core.data import Snapshot
 from runbook.core.pdl.models import PDLManifest, PDLPage, PDLPageType, PDLTableBlock, PDLTextBlock
 from runbook.core.storage import BlobStore
+from runbook.core.table import render_table_html
 from runbook.sdk import (
     column,
     currency,
@@ -33,7 +34,7 @@ from runbook.sdk.extensions.dash import (
     render_dash_page,
     validate_dash_manifest,
 )
-from runbook.sdk.extensions.dash.renderer import _convert_output
+from runbook.sdk.extensions.dash.renderer import _build_native_table, _convert_output
 
 
 def test_interaction_discovery_preserves_calc_and_page() -> None:
@@ -264,7 +265,7 @@ def test_date_formats_have_no_ignored_pattern_contract() -> None:
         PDLDateTimeFormat(pattern="ignored")
 
 
-def test_rendered_table_uses_logical_schema_and_trusted_grid_props(tmp_path) -> None:
+def test_rendered_static_table_is_native_and_preserves_pdl_formats(tmp_path) -> None:
     store = BlobStore(f"file:{tmp_path}")
     ctx = Ctx(
         snapshot=Snapshot(
@@ -329,50 +330,196 @@ def test_rendered_table_uses_logical_schema_and_trusted_grid_props(tmp_path) -> 
     assert len(report_grid.children) == 1
     assert body.__class__.__name__ == "Div"
     assert body.children[0].children[1].id == page.ids.control("book")
-    assert body.children[1].__class__.__name__ == "AgGrid"
-    assert body.children[1].id == page.ids.block("positions")
+    table = body.children[1]
+    assert table.__class__.__name__ == "Table"
+    assert table.id == page.ids.block("positions")
+    assert table.children[0].__class__.__name__ == "Thead"
+    assert table.children[1].__class__.__name__ == "Tbody"
+    headers = table.children[0].children.children
+    assert [header.children for header in headers] == [
+        "",
+        "book",
+        "amount",
+        "currency_amount",
+        "ratio",
+        "date",
+        "timestamp",
+    ]
+    cells = table.children[1].children[0].children
+    assert [cell.children for cell in cells] == [
+        "0",
+        "Alpha",
+        "12.50",
+        "£12.50",
+        "12.50%",
+        "Jan 1, 2024",
+        "Jan 1, 2024 12:30",
+    ]
 
-    def find_grid(node):
-        if node.__class__.__name__ == "AgGrid":
-            return node
-        children = getattr(node, "children", None)
-        if isinstance(children, (list, tuple)):
-            for child in children:
-                found = find_grid(child)
-                if found is not None:
-                    return found
-        elif children is not None:
-            return find_grid(children)
-        return None
 
-    grid = find_grid(layout)
-    assert grid is not None
-    payload = grid.to_plotly_json()
-    encoded = str(payload)
-    assert "__index_level_0__" not in encoded
-    assert payload["props"]["enableEnterpriseModules"] is True
-    assert payload["props"].get("dangerously_allow_code") is not True
-    assert all(value in encoded for value in ("book", "amount", "currency_amount", "ratio", "date", "timestamp"))
-    assert "d3.format" in encoded and "d3.timeFormat" in encoded
-    by_field = {item["field"]: item for item in payload["props"]["columnDefs"]}
-    assert by_field["date"]["cellDataType"] == "dateString"
-    assert by_field["timestamp"]["cellDataType"] == "dateTimeString"
-    assert by_field["date"]["sortable"] is True and by_field["date"]["filter"] == "agDateColumnFilter"
-    assert by_field["timestamp"]["sortable"] is True and by_field["timestamp"]["filter"] == "agDateColumnFilter"
-    assert by_field["date"]["filterParams"] == {"inRangeInclusive": True}
-    assert by_field["timestamp"]["filterParams"] == {"inRangeInclusive": True}
-    formatters = [item["valueFormatter"] for item in payload["props"]["columnDefs"] if "valueFormatter" in item]
-    assert all(set(formatter) == {"function"} for formatter in formatters)
-    formatter_sources = [formatter["function"] for formatter in formatters]
-    assert any("d3.formatLocale" in source for source in formatter_sources)
-    assert any('d3.format(".2%")' in source for source in formatter_sources)
-    assert payload["props"]["rowData"][0]["date"] == "2024-01-01"
-    assert payload["props"]["rowData"][0]["timestamp"] == "2024-01-01T12:30:00.000000Z"
-    assert 'd3.format(",.2f")' in by_field["amount"]["valueFormatter"]["function"]
-    assert (
-        'd3.formatLocale({"decimal":".","thousands":",","grouping":[3],"currency":["£",""]})'
-        in by_field["currency_amount"]["valueFormatter"]["function"]
+def test_interactive_table_stays_ag_grid_when_declared_as_output(tmp_path) -> None:
+    store = BlobStore(f"file:{tmp_path}")
+    ctx = Ctx(
+        snapshot=Snapshot(
+            snapshot_id="a" * 64,
+            watermark=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            datasets={},
+        ),
+        store=store,
+        artifact_store=store,
+        report_id="r",
+        config={},
+        code_version="c",
+        context_hash="h",
+        artifact_prefix="reports/r",
     )
-    assert 'd3.format(".2%")' in by_field["ratio"]["valueFormatter"]["function"]
-    assert "d3.timeParse('%Y-%m-%d')" in by_field["date"]["valueFormatter"]["function"]
-    assert "d3.isoParse(params.value)" in by_field["timestamp"]["valueFormatter"]["function"]
+    ref = ctx.artifact.table(pd.DataFrame({"book": ["Alpha"]}), name="positions")
+    manifest = PDLManifest(
+        title="Grid",
+        snapshot_id="s" * 64,
+        as_of="2024-01-01T00:00:00Z",
+        page=PDLPage(
+            page_type=PDLPageType.grid,
+            rows=1,
+            columns=1,
+            blocks=[PDLTableBlock(name="positions", data_ref=ref.data_ref, row=1, col=1)],
+        ),
+        extensions={
+            "dash": dashboard(interactions=[interaction(handler="filter", outputs=["positions"])]).model_dump(
+                mode="json"
+            )
+        },
+    )
+    definition = ReportDefinition([], {}, lambda _: manifest, {"filter": lambda _ctx, _state: {}})
+    page = render_dash_page(manifest, definition, ctx, namespace="grid")
+    table = page.layout().children[2].children[0].children[0]
+    assert table.__class__.__name__ == "AgGrid"
+
+
+def test_native_table_consumes_persisted_style_resolution(tmp_path) -> None:
+    store = BlobStore(f"file:{tmp_path}")
+    ctx = Ctx(
+        snapshot=Snapshot(
+            snapshot_id="a" * 64,
+            watermark=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            datasets={},
+        ),
+        store=store,
+        artifact_store=store,
+        report_id="r",
+        config={},
+        code_version="c",
+        context_hash="h",
+        artifact_prefix="reports/r",
+    )
+    frame = pd.DataFrame(
+        {
+            "signal": [-1234.56, 10.0, None],
+            "ratio": [0.125, 0.5, None],
+            "day": ["2024-01-01", "2024-02-03", None],
+            "raw": [1234.5, 10.0, None],
+            "_mean": [0.0, 0.0, 0.0],
+            "_std": [1.0, 1.0, 1.0],
+            "empty": ["", "value", None],
+        },
+        index=["negative", "positive", "missing"],
+    )
+    style = {
+        "format": {
+            "na_rep": "NA",
+            "precision": 2,
+            "thousands": ".",
+            "columns": {
+                "signal": "{:,.1f}",
+                "ratio": "{:.1%}",
+                "day": {"kind": "date", "pattern": "%Y/%m/%d"},
+            },
+        },
+        "sizing": {"columns": [{"label": "signal", "width_px": 120}]},
+        "rules": [
+            {
+                "id": "negative",
+                "target": {"scope": "columns", "labels": ["signal"]},
+                "condition": {"op": "lt", "rhs": {"kind": "literal", "value": 0}},
+                "action": {
+                    "background_color": "#fee2e2",
+                    "font_weight": "bold",
+                    "border_bottom": "2px solid #b91c1c",
+                },
+            }
+        ],
+        "options": {
+            "show_index": False,
+            "hidden_columns": ["_std"],
+            "global_style": {
+                "background_color": "#f8fafc",
+                "one_bg_color": True,
+                "font_family": "Arial",
+                "font_size": "12pt",
+                "header_text_align": "left",
+                "header_border_bottom": "3px solid #111827",
+                "table_border": "1px solid #111827",
+            },
+        },
+    }
+    ref = ctx.artifact.table(frame, name="styled", style=style)
+    for style_ref, payload in ctx.artifact.payloads().table_styles.items():
+        store.put_json(f"reports/r/{style_ref}", payload)
+    block = PDLTableBlock(
+        name="styled",
+        data_ref=ref.data_ref,
+        style_ref=ref.style_ref,
+        row=1,
+        col=1,
+        columns=[
+            column("signal", label="Signal"),
+            column("ratio", label="Ratio"),
+            column("day", label="Day"),
+            column("_mean", hidden=True),
+        ],
+    )
+    manifest = PDLManifest(
+        title="Styled",
+        snapshot_id="s" * 64,
+        as_of="2024-01-01T00:00:00Z",
+        page=PDLPage(page_type=PDLPageType.grid, rows=1, columns=1, blocks=[block]),
+    )
+    page = render_dash_page(manifest, ReportDefinition([], {}, lambda _: manifest, {}), ctx, namespace="styled")
+    table = page.layout().children[2].children[0].children[0]
+    payload = table.to_plotly_json()
+    headers = payload["props"]["children"][0].children.children
+    assert [header.children for header in headers] == ["Signal", "Ratio", "Day", "raw", "empty"]
+    rows = payload["props"]["children"][1].children
+    assert len(rows) == 3
+    first_cells = rows[0].children
+    assert [cell.children for cell in first_cells] == ["-1,234.6", "12.5%", "2024/01/01", "1.234.50", ""]
+    assert first_cells[0].style["backgroundColor"] == "#fee2e2"
+    assert first_cells[0].style["fontWeight"] == "bold"
+    assert first_cells[0].style["borderBottom"] == "2px solid #b91c1c"
+    assert first_cells[0].style["width"] == "120px"
+    assert rows[2].children[0].children == "NA"
+    assert table.style["border"] == "1px solid #111827"
+    assert table.style["fontFamily"] == "Arial"
+    assert "_mean" not in str(payload) and "_std" not in str(payload)
+    assert "iframe" not in str(payload).lower()
+    html = next(iter(ctx.artifact.payloads().table_htmls.values()))
+    assert ">1.234.50<" in html
+
+
+@pytest.mark.parametrize("na_rep, expected_nulls", [(None, ["<NA>", "None", "nan"]), ("NA", ["NA", "NA", "NA"])])
+def test_native_null_values_match_html_with_and_without_na_rep(na_rep, expected_nulls, tmp_path) -> None:
+    frame = pd.DataFrame({"value": pd.Series([pd.NA, None, float("nan"), ""], dtype=object)})
+    style = {"format": {"na_rep": na_rep}} if na_rep is not None else None
+    block = PDLTableBlock(name="values", data_ref="values.parquet", row=1, col=1)
+    ctx: object = SimpleNamespace()
+    if style is not None:
+        store = BlobStore(f"file:{tmp_path}")
+        store.put_json("reports/r/styles/values.json", style)
+        block = block.model_copy(update={"style_ref": "styles/values.json"})
+        ctx = SimpleNamespace(_artifact_store=store, _artifact_prefix="reports/r")
+    native = _build_native_table(frame, block, "values", ctx)
+    native_values = [row.children[1].children for row in native.children[1].children]
+    html = render_table_html(frame, style)
+    expected = [*expected_nulls, ""]
+    assert native_values == expected
+    assert all(f">{value}<" in html for value in expected)

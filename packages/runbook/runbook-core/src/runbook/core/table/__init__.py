@@ -1,4 +1,5 @@
 from runbook.core.table.builder import (
+    format_table_value,
     normalize_table_style,
     render_table_html,
     resolve_table_style,
@@ -63,6 +64,7 @@ __all__ = [
     "TABLE_STYLE_SCHEMA_VERSION",
     "ConditionOp",
     "FormatKind",
+    "format_table_value",
     "RHSKind",
     "RowRefMode",
     "StyleInput",

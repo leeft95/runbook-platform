@@ -17,6 +17,7 @@ from runbook.sdk.execution import load_report_module
 from runbook.sdk.extensions.dash.renderer import render_dash_page
 from runbook.sdk.html import render_html
 from runbook.sdk.layout import Report, compile_layout, grid, plot, report, section, table, text
+from runbook.sdk.preview_cli import compose_dash_app
 
 
 def _ctx(config: dict[str, object] | None = None) -> SimpleNamespace:
@@ -405,3 +406,83 @@ def test_market_dashboard_golden_executes_and_uses_renderer_extension(tmp_path, 
     page.layout()
     assert extension.page_calls == 1
     assert extension.block_calls == len(manifest.blocks)
+
+
+def test_vol_report_native_dash_and_html_golden(tmp_path, pointer_registry) -> None:
+    store = open_blob_store(f"file:{tmp_path}")
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    prices = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2024-01-01", periods=7, freq="D", tz="UTC"),
+            "price": [100.0, 80.0, 120.0, 60.0, 120.0, 60.0, 120.0],
+        }
+    )
+    ref, digest = write_dataframe(store, "vol_prices", prices)
+    dataset_manifest, manifest_digest = build_manifest(
+        dataset_id="vol_prices",
+        watermark=now,
+        published_at=now,
+        files=[DatasetFile(ref=ref, sha256=digest, partition={})],
+    )
+    publish_manifests(
+        store,
+        [(dataset_manifest, manifest_digest)],
+        pointer_registry=pointer_registry,
+        source_id="vol_report_golden",
+        source_run_id="test",
+    )
+    snapshot = resolve_snapshot(store, {"prices": "vol_prices"}, pointer_registry=pointer_registry)
+    profile = ReportProfile(
+        profile_id="vol_report_golden",
+        report_id="vol_report",
+        datasets={"prices": "vol_prices"},
+        params={"vol_window": 2},
+        extensions={"modes": {"dash": {"enabled": True}}},
+    )
+    app, result, page = compose_dash_app(
+        store=store,
+        profile=profile,
+        snapshot=snapshot,
+        reports_root="reports",
+        code_version="golden",
+    )
+    layout = page.layout()
+    report_grid = layout.children[2]
+    sections = {section.id: section for section in report_grid.children}
+    returns_section = sections[page.ids.block("returns_table") + "-container"]
+    returns_plot_section = sections[page.ids.block("returns_plot") + "-container"]
+    vol_section = sections[page.ids.block("vol_table") + "-container"]
+    vol_plot_section = sections[page.ids.block("vol_plot") + "-container"]
+    assert returns_section.style == {"gridRow": "1 / span 1", "gridColumn": "1 / span 1"}
+    assert returns_plot_section.style == {"gridRow": "1 / span 1", "gridColumn": "2 / span 1"}
+    assert vol_section.style == {"gridRow": "2 / span 1", "gridColumn": "1 / span 1"}
+    assert vol_plot_section.style == {"gridRow": "2 / span 1", "gridColumn": "2 / span 1"}
+    assert returns_section.children[0].children == "Returns"
+    assert vol_section.children[0].children == "Volatility"
+    returns_table = returns_section.children[1]
+    vol_table = vol_section.children[1]
+    assert returns_table.__class__.__name__ == "Table"
+    assert vol_table.__class__.__name__ == "Table"
+    assert returns_plot_section.children[1].__class__.__name__ == "Graph"
+    assert vol_plot_section.children[1].__class__.__name__ == "Graph"
+    returns_rows = returns_table.children[1].children
+    vol_rows = vol_table.children[1].children
+    assert returns_rows[0].children[2].children == "-"
+    assert returns_rows[1].children[2].children == "-20.00%"
+    assert returns_rows[1].children[2].style["color"] == "#B00020"
+    assert returns_rows[1].children[2].style["fontWeight"] == "600"
+    assert vol_rows[0].children[2].children == "-"
+    assert vol_rows[2].children[2].style["backgroundColor"] == "#FFF3CD"
+    assert all(
+        child.__class__.__name__ not in {"AgGrid", "Iframe"}
+        for section in sections.values()
+        for child in section.children
+    )
+    html = store.get(result.html_ref).decode()
+    assert all(value in html for value in ("Returns", "Volatility", "-20.00%", ">-<"))
+    assert "color: #B00020" in html
+    assert "font-weight: 600" in html
+    assert "background-color: #FFF3CD" in html
+    assert "iframe" not in html.lower()
+    assert html.count("https://cdn.plot.ly/plotly-") == 1
+    assert app.server.test_client().get("/").status_code == 200

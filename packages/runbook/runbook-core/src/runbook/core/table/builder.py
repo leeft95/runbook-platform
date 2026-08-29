@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from html import escape
+from numbers import Number
 from typing import Any, Callable, cast
 
 import pandas as pd
@@ -489,39 +490,57 @@ def _format_date_value(value: Any, pattern: str) -> str:
     return dt.strftime(fmt)
 
 
-def _formatter_from_spec(spec: TableFormatSpec) -> Callable[[Any], Any]:
-    """Handle formatter from spec."""
+def format_table_value(
+    value: Any,
+    spec: TableFormatSpec | None = None,
+    *,
+    na_rep: str | None = None,
+    precision: int | None = None,
+    thousands: str | None = None,
+) -> Any:
+    """Format one scalar without binding the implementation to a renderer."""
+    if _is_null(value):
+        return na_rep if na_rep is not None else value
 
-    def _format(value: Any) -> Any:
-        """Handle format."""
-        if _is_null(value):
-            return value
-
-        if isinstance(spec, TableFormatNumber):
-            try:
-                num = float(value)
-            except Exception:
-                return str(value)
-            if spec.thousands:
-                return f"{num:,.{spec.digits}f}"
-            return f"{num:.{spec.digits}f}"
-
-        if isinstance(spec, TableFormatPercent):
-            try:
-                num = float(value)
-            except Exception:
-                return str(value)
-            return f"{num * 100:.{spec.digits}f}%"
-
-        if isinstance(spec, TableFormatDate):
-            return _format_date_value(value, spec.pattern)
-
-        if isinstance(spec, TableFormatString):
+    if isinstance(spec, TableFormatNumber):
+        try:
+            num = float(cast(Any, value))
+        except Exception:
             return str(value)
+        if spec.thousands:
+            return f"{num:,.{spec.digits}f}"
+        return f"{num:.{spec.digits}f}"
 
+    if isinstance(spec, TableFormatPercent):
+        try:
+            num = float(cast(Any, value))
+        except Exception:
+            return str(value)
+        return f"{num * 100:.{spec.digits}f}%"
+
+    if isinstance(spec, TableFormatDate):
+        return _format_date_value(value, spec.pattern)
+
+    if isinstance(spec, TableFormatString):
         return str(value)
 
-    return _format
+    if precision is not None or thousands is not None:
+        if not isinstance(value, Number) or isinstance(value, bool):
+            return value
+        try:
+            num = float(cast(Any, value))
+        except Exception:
+            return value
+        digits = 6 if precision is None else precision
+        formatted = f"{num:,.{digits}f}" if thousands else f"{num:.{digits}f}"
+        return formatted.replace(",", thousands) if thousands and thousands != "," else formatted
+
+    return value
+
+
+def _formatter_from_spec(spec: TableFormatSpec) -> Callable[[Any], Any]:
+    """Return a renderer-neutral table scalar formatter for pandas Styler."""
+    return lambda value: format_table_value(value, spec)
 
 
 def _deterministic_styler_uuid(df: pd.DataFrame, plan: TableStylePlan, table_class: str) -> str:
@@ -664,6 +683,7 @@ def render_table_html(
 
 
 __all__ = [
+    "format_table_value",
     "normalize_table_style",
     "render_table_html",
     "resolve_table_style",

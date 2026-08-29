@@ -6,7 +6,12 @@ import numpy as np
 import pandas as pd
 import pytest
 from runbook.core.table import (
+    TableFormatDate,
+    TableFormatNumber,
+    TableFormatPercent,
+    TableFormatString,
     TableStylePlan,
+    format_table_value,
     normalize_table_style,
     render_table_html,
     resolve_table_style,
@@ -14,6 +19,15 @@ from runbook.core.table import (
     table_style_json,
     table_style_payload,
 )
+
+
+def test_format_table_value_is_renderer_neutral_for_supported_specs() -> None:
+    assert format_table_value(1234.5, TableFormatNumber(digits=1, thousands=True)) == "1,234.5"
+    assert format_table_value(0.125, TableFormatPercent(digits=2)) == "12.50%"
+    assert format_table_value("2024-01-02", TableFormatDate(pattern="yyyy/MM/dd")) == "2024/01/02"
+    assert format_table_value(123, TableFormatString()) == "123"
+    assert format_table_value(None, TableFormatString(), na_rep="NA") == "NA"
+    assert format_table_value("", TableFormatString()) == ""
 
 
 def test_table_style_versions_default_to_02_and_preserve_01() -> None:

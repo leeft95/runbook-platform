@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 from runbook.core.pdl.models import PDLColumn, PDLColumnRole, PDLManifest, PDLPlotRefBlock, PDLTableBlock, PDLTextBlock
+from runbook.core.table import TableFormatDate, TableStylePlan, format_table_value, resolve_table_style
 from runbook.sdk.discovery import ReportDefinition
 from runbook.sdk.extensions.dash.ids import DashIds
 from runbook.sdk.extensions.dash.models import (
@@ -106,10 +107,12 @@ def _build_components(
     renderer_extension: DashRendererExtension | None,
 ) -> tuple[list[Any], dict[str, _ControlBinding]]:
     """Translate PDL blocks to Dash components and place them in the PDL grid."""
-    import dash_ag_grid as dag
     from dash import dcc, html
 
     controls, bindings = _build_controls(extension, ctx, ids, renderer_extension) if extension else ([], {})
+    interactive_tables = (
+        {output for declaration in extension.interactions for output in declaration.outputs} if extension else set()
+    )
     control_block = next(
         (block for block in manifest.page.blocks if isinstance(block, PDLTableBlock)),
         next(iter(manifest.page.blocks), None),
@@ -131,22 +134,26 @@ def _build_components(
             body = dcc.Graph(id=ids.block(block.name), figure=_read_json(ctx, block.ref))
         elif isinstance(block, PDLTableBlock):
             frame = _read_table(ctx, block.data_ref)
-            # pandas' restored index is intentionally not part of rowData. Derive
-            # the renderer schema from the same logical columns to avoid exposing
-            # parquet's synthetic __index_level_0__ field in AG Grid.
-            schema = pa.Schema.from_pandas(frame, preserve_index=False)
-            grid = dag.AgGrid(
-                id=ids.block(block.name),
-                rowData=_records(frame, block.columns),
-                columnDefs=build_ag_grid_column_defs(schema, block.columns),
-                defaultColDef=ag_grid_default_col_def(),
-                dashGridOptions={"sideBar": "columns"},
-                # Phase C uses client-side grouping/pivot/value aggregation in
-                # local preview. Formatter functions use only Dash AG Grid's
-                # trusted preloaded d3 namespace; PDL has no JS escape hatch.
-                enableEnterpriseModules=True,
-            )
-            body = grid
+            if block.name in interactive_tables:
+                import dash_ag_grid as dag
+
+                # pandas' restored index is intentionally not part of rowData. Derive
+                # the renderer schema from the same logical columns to avoid exposing
+                # parquet's synthetic __index_level_0__ field in AG Grid.
+                schema = pa.Schema.from_pandas(frame, preserve_index=False)
+                body = dag.AgGrid(
+                    id=ids.block(block.name),
+                    rowData=_records(frame, block.columns),
+                    columnDefs=build_ag_grid_column_defs(schema, block.columns),
+                    defaultColDef=ag_grid_default_col_def(),
+                    dashGridOptions={"sideBar": "columns"},
+                    # Phase C uses client-side grouping/pivot/value aggregation in
+                    # local preview. Formatter functions use only Dash AG Grid's
+                    # trusted preloaded d3 namespace; PDL has no JS escape hatch.
+                    enableEnterpriseModules=True,
+                )
+            else:
+                body = _build_native_table(frame, block, ids.block(block.name), ctx)
         else:
             raise ValueError(f"unsupported PDL block type: {block.type!r}")
         if controls and block is control_block:
@@ -312,6 +319,169 @@ def _build_controls(
 def _wrap_default_block(title: Any | None, body: Any) -> list[Any]:
     """Preserve the vanilla block's title/body structure."""
     return [item for item in (title, body) if item is not None]
+
+
+def _build_native_table(frame: pd.DataFrame, block: PDLTableBlock, component_id: str, ctx: Any) -> Any:
+    """Build a static Dash table from resolved renderer-neutral table semantics."""
+    from dash import html
+
+    schema = pa.Schema.from_pandas(frame, preserve_index=False)
+    semantics = merge_columns(schema, block.columns)
+    plan = _read_table_style(ctx, block)
+    resolved = resolve_table_style(frame, plan)
+    by_field = {semantic.field: semantic for semantic in semantics}
+    fields = [field for field in resolved.visible_columns if field in by_field and not by_field[field].hidden]
+    visible = frame.head(resolved.max_rows)
+    global_style = resolved.global_style
+    table_style = {
+        "border": global_style.table_border,
+        "borderCollapse": "collapse",
+        "fontFamily": global_style.font_family,
+        "fontSize": global_style.font_size,
+        "width": "100%",
+    }
+    header_base = {
+        "borderBottom": global_style.header_border_bottom,
+        "fontFamily": global_style.font_family,
+        "fontSize": global_style.font_size,
+        "textAlign": global_style.header_text_align,
+    }
+
+    header_cells: list[Any] = []
+    if resolved.show_index:
+        header_cells.append(html.Th("", style=dict(header_base)))
+    for field in fields:
+        style = dict(header_base)
+        _apply_width(style, resolved.column_width_px.get(field))
+        header_cells.append(html.Th(by_field[field].label or field, style=style))
+
+    body_rows: list[Any] = []
+    for row_pos, (index_value, row) in enumerate(
+        zip(visible.index, visible.itertuples(index=False, name=None), strict=True)
+    ):
+        if row_pos in resolved.hidden_rows:
+            continue
+        row_cells: list[Any] = []
+        row_style = resolved.row_width_px.get(row_pos)
+        if resolved.show_index:
+            index_cell_style: dict[str, Any] = {}
+            _apply_base_row_style(index_cell_style, row_pos, global_style.one_bg_color, global_style.background_color)
+            _apply_width(index_cell_style, row_style)
+            row_cells.append(html.Th(_display_scalar(index_value), style=index_cell_style))
+        values = dict(zip((str(column) for column in visible.columns), row, strict=True))
+        for field in fields:
+            cell_style: dict[str, Any] = {}
+            _apply_base_row_style(cell_style, row_pos, global_style.one_bg_color, global_style.background_color)
+            _apply_width(cell_style, resolved.column_width_px.get(field))
+            _apply_width(cell_style, row_style)
+            cell_style.update(_dash_style(resolved.cell_css.get((row_pos, field), {})))
+            value = _display_value(values[field], by_field[field], resolved)
+            row_cells.append(html.Td(value, style=cell_style))
+        body_rows.append(html.Tr(row_cells))
+
+    return html.Table(
+        [html.Thead(html.Tr(header_cells)), html.Tbody(body_rows)],
+        id=component_id,
+        style=table_style,
+    )
+
+
+def _read_table_style(ctx: Any, block: PDLTableBlock) -> TableStylePlan:
+    """Read one persisted style plan, or use the resolver defaults."""
+    if block.style_ref:
+        return TableStylePlan.model_validate(_read_json(ctx, block.style_ref))
+    if block.style_key:
+        return TableStylePlan(style_key=block.style_key)
+    return TableStylePlan()
+
+
+def _apply_width(style: dict[str, Any], width: int | None) -> None:
+    """Apply resolver width semantics to a Dash style mapping."""
+    if width is not None:
+        value = f"{width}px"
+        style.update({"width": value, "minWidth": value})
+
+
+def _apply_base_row_style(style: dict[str, Any], row_pos: int, one_bg_color: bool, background_color: str) -> None:
+    """Apply the same alternating background rule as the HTML renderer."""
+    if one_bg_color or row_pos % 2 == 0:
+        style["backgroundColor"] = background_color
+
+
+def _dash_style(css: Mapping[str, str]) -> dict[str, str]:
+    """Convert resolver CSS property names to React/Dash style names."""
+    result: dict[str, str] = {}
+    for name, value in css.items():
+        parts = name.split("-")
+        key = parts[0] + "".join(part.capitalize() for part in parts[1:])
+        result[key] = value
+    return result
+
+
+def _display_value(value: Any, semantic: PDLColumn, resolved: Any) -> Any:
+    """Format a table value with style-plan formats taking precedence."""
+    if _is_null_scalar(value):
+        return _display_scalar(format_table_value(value, na_rep=resolved.na_rep))
+    spec = resolved.formats.get(semantic.field)
+    if spec is not None:
+        return _display_scalar(format_table_value(value, spec, na_rep=resolved.na_rep))
+    if resolved.precision is not None or resolved.thousands is not None:
+        return _display_scalar(
+            format_table_value(
+                value,
+                na_rep=resolved.na_rep,
+                precision=resolved.precision,
+                thousands=resolved.thousands,
+            )
+        )
+    return _format_pdl_value(value, semantic.format)
+
+
+def _format_pdl_value(value: Any, spec: Any) -> str:
+    """Preserve the existing PDL column display formats for native tables."""
+    if spec is None:
+        return _display_scalar(value)
+    kind = spec.kind
+    if kind == "number":
+        try:
+            number = float(value)
+        except Exception:
+            return str(value)
+        decimals = getattr(spec, "decimals", None)
+        return format(number, ",g") if decimals is None else f"{number:,.{decimals}f}"
+    if kind == "currency":
+        symbols = {"GBP": "£", "USD": "$", "EUR": "€", "JPY": "¥"}
+        code = str(spec.currency).upper()
+        try:
+            number = float(value)
+        except Exception:
+            return str(value)
+        decimals = getattr(spec, "decimals", None)
+        number_text = format(number, ",g") if decimals is None else f"{number:,.{decimals}f}"
+        return f"{symbols.get(code, code + ' ')}{number_text}"
+    if kind == "percent":
+        try:
+            number = float(value)
+        except Exception:
+            return str(value)
+        decimals = getattr(spec, "decimals", None)
+        return f"{number * 100:.{2 if decimals is None else decimals}f}%"
+    if kind == "date":
+        return _display_scalar(format_table_value(value, TableFormatDate(pattern="%b %-d, %Y")))
+    if kind == "datetime":
+        return _display_scalar(format_table_value(value, TableFormatDate(pattern="%b %-d, %Y %H:%M")))
+    return _display_scalar(value)
+
+
+def _display_scalar(value: Any) -> str:
+    """Return a Dash-safe textual scalar."""
+    return str(value)
+
+
+def _is_null_scalar(value: Any) -> bool:
+    """Check pandas scalar nulls without treating list-like values as null."""
+    result = pd.isna(value)
+    return isinstance(result, bool) and result
 
 
 def _options(options: list[Any] | DatasetValues | None, ctx: Any) -> list[Any] | None:
