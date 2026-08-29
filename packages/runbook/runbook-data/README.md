@@ -32,7 +32,7 @@ Use `runbook.sdk.create_client()` for application and notebook reads. Do not
 glob curated Parquet directories: immutable older revisions remain beside the
 files selected by the current manifest.
 
-See the repository's [data guide](https://github.com/redcombojnr/runbook-platform/blob/main/docs/data.md)
+See the repository's [data guide](https://github.com/leeft95/runbook-platform/blob/main/docs/data.md)
 for the synthetic quickstart, source configuration, update modes, storage
 layout, and historical reads. To add a source capability or parser, follow the
-[source adapter and curation guide](https://github.com/redcombojnr/runbook-platform/blob/main/docs/source-adapters-and-curation.md).
+[source adapter and curation guide](https://github.com/leeft95/runbook-platform/blob/main/docs/source-adapters-and-curation.md).

@@ -37,5 +37,5 @@ service has no authentication and binds to loopback by default; secure it at
 the deployment boundary before network exposure.
 
 For the complete operator guide, see the [Operations
-documentation](https://github.com/redcombojnr/runbook-platform/blob/main/docs/operations.md)
-and [deployment guide](https://github.com/redcombojnr/runbook-platform/blob/main/docs/deployment.md).
+documentation](https://github.com/leeft95/runbook-platform/blob/main/docs/operations.md)
+and [deployment guide](https://github.com/leeft95/runbook-platform/blob/main/docs/deployment.md).

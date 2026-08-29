@@ -401,11 +401,11 @@ def runtime_proof():
         )
     }
     expected_versions = {
-        "runbook-core": "0.2.6",
-        "runbook-data": "0.2.6",
-        "runbook-sdk": "0.2.6",
-        "runbook-services": "0.2.6",
-        "runbook-worker": "0.2.6",
+        "runbook-core": "0.3.1",
+        "runbook-data": "0.3.1",
+        "runbook-sdk": "0.3.1",
+        "runbook-services": "0.3.1",
+        "runbook-worker": "0.3.1",
         "runbook-test-external-plugin": "0.1.0",
     }
     if distributions != expected_versions:

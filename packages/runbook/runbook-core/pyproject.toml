@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "runbook-core"
-version = "0.2.6"
+version = "0.3.1"
 description = "Pure deterministic contracts, analysis, tables, and plots for Runbook."
 requires-python = ">=3.11"
 license = "Apache-2.0"
-authors = [{ name = "redcombojnr" }]
-urls = { Repository = "https://github.com/redcombojnr/runbook-platform" }
+authors = [{ name = "leeft95" }]
+urls = { Repository = "https://github.com/leeft95/runbook-platform" }
 dependencies = [
     "pandas", "numpy", "pyarrow", "prophet", "pydantic", "loguru", "statsmodels", "isoweek", "plotly", "scipy", "holidays", "pytz"
 ]
