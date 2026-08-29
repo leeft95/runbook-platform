@@ -98,5 +98,5 @@ project-wide policies.
 
 ## License
 
-Copyright 2026 redcombojnr and contributors. Licensed under the Apache
+Copyright 2026 leeft95 and contributors. Licensed under the Apache
 License, Version 2.0. See [LICENSE](LICENSE).

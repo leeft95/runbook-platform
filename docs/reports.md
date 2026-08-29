@@ -126,7 +126,7 @@ data-to-layout boundary in a realistic report.
 
 ### Complex plotting: range volatility
 
-The checked-in [`reports/vol_report.py`](https://github.com/redcombojnr/runbook-platform/blob/main/reports/vol_report.py)
+The checked-in [`reports/vol_report.py`](https://github.com/leeft95/runbook-platform/blob/main/reports/vol_report.py)
 is the canonical plotting example. It reads the `prices` alias, sorts an
 immutable timestamp column, calculates returns and rolling annualized
 volatility, then stores two figures and styled tables before composing the
@@ -354,7 +354,7 @@ failed run leaves the source and production dataset state unchanged.
 ## Golden report spec
 
 The canonical checked-in report is
-[`reports/vol_report.py`](https://github.com/redcombojnr/runbook-platform/blob/main/reports/vol_report.py).
+[`reports/vol_report.py`](https://github.com/leeft95/runbook-platform/blob/main/reports/vol_report.py).
 Its contract is the `volatility_demo` profile over the `demo_daily_prices`
 source:
 

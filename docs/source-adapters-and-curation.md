@@ -77,7 +77,7 @@ follow the same acquisition and curation path but do not publish the
 production pointer.
 
 An adapter implements the
-[`SourceAdapter`](https://github.com/redcombojnr/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/adapters/base/contracts.py)
+[`SourceAdapter`](https://github.com/leeft95/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/adapters/base/contracts.py)
 protocol:
 
 ```python
@@ -315,7 +315,7 @@ not the credential itself.
 ## Write a parser: the `Stage2Parser` contract
 
 The parser is the curator. It implements the
-[`Stage2Parser`](https://github.com/redcombojnr/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/parsers/base/contracts.py)
+[`Stage2Parser`](https://github.com/leeft95/runbook-platform/blob/main/packages/runbook/runbook-data/src/runbook/data/ingest/parsers/base/contracts.py)
 call signature and returns one `CuratedFrame` for every produced partition:
 
 ```python
@@ -572,9 +572,9 @@ year, UTC `updated_at`, the later duplicate winning, the batch watermark, the
 the parser's deterministic contract without a source locator or network call.
 
 The existing
-[`tests/data/test_generic_ingest.py`](https://github.com/redcombojnr/runbook-platform/blob/main/tests/data/test_generic_ingest.py)
+[`tests/data/test_generic_ingest.py`](https://github.com/leeft95/runbook-platform/blob/main/tests/data/test_generic_ingest.py)
 shows parser and end-to-end examples. The external-package boundary is covered
-by [`tests/data/test_phasee_external_plugins.py`](https://github.com/redcombojnr/runbook-platform/blob/main/tests/data/test_phasee_external_plugins.py).
+by [`tests/data/test_phasee_external_plugins.py`](https://github.com/leeft95/runbook-platform/blob/main/tests/data/test_phasee_external_plugins.py).
 Run the focused checks with:
 
 ```bash

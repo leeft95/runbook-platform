@@ -100,6 +100,6 @@ runbook-worker -> runbook-core / runbook-data / runbook-sdk / runbook-services
 ```
 
 Use the public APIs in the guides and [API reference](api.md). The
-[repository README](https://github.com/redcombojnr/runbook-platform/blob/main/README.md)
-and [security policy](https://github.com/redcombojnr/runbook-platform/blob/main/SECURITY.md)
+[repository README](https://github.com/leeft95/runbook-platform/blob/main/README.md)
+and [security policy](https://github.com/leeft95/runbook-platform/blob/main/SECURITY.md)
 cover project-wide setup and reporting security issues.

@@ -11,8 +11,8 @@ for package in ("runbook-core", "runbook-data", "runbook-sdk", "runbook-services
     sys.path.insert(0, str(ROOT / "packages" / "runbook" / package / "src"))
 
 project = "Runbook"
-copyright = "2026, redcombojnr and contributors"
-author = "redcombojnr and contributors"
+copyright = "2026, leeft95 and contributors"
+author = "leeft95 and contributors"
 try:
     release = metadata.version("runbook-services")
 except metadata.PackageNotFoundError:
@@ -41,10 +41,10 @@ autodoc_preserve_defaults = True
 
 html_theme = "furo"
 html_title = "Runbook documentation"
-html_baseurl = "https://redcombojnr.github.io/runbook-platform/"
+html_baseurl = "https://leeft95.github.io/runbook-platform/"
 html_static_path = ["_static"]
 html_theme_options = {
-    "source_repository": "https://github.com/redcombojnr/runbook-platform",
+    "source_repository": "https://github.com/leeft95/runbook-platform",
     "source_branch": "main",
     "source_directory": "docs/",
 }
