@@ -11,6 +11,7 @@ from typing import Any, Callable, cast
 import pandas as pd
 from runbook.core.table.models import (
     ConditionOp,
+    ResolvedTableStyle,
     RowRefMode,
     StyleInput,
     TableColumnRHS,
@@ -358,13 +359,8 @@ def _evaluate_condition(
 @dataclass(frozen=True)
 class _ResolvedStyleMaps:
     row_width_px: dict[int, int]
-    column_width_px: dict[int, int]
-    cell_css: dict[tuple[int, int], dict[str, str]]
-
-
-def _resolve_style_maps(df: pd.DataFrame, style: TableStylePlan) -> _ResolvedStyleMaps:
-    """Resolve style maps."""
-    return _resolve_style_maps_for_frames(df, style, style_df=df)
+    column_width_px: dict[str, int]
+    cell_css: dict[tuple[int, str], dict[str, str]]
 
 
 def _resolve_style_maps_for_frames(
@@ -381,18 +377,18 @@ def _resolve_style_maps_for_frames(
         if fmt_col not in visible_col_lookup:
             raise ValueError(f"format column label not found: {fmt_col!r}")
 
-    column_width_px: dict[int, int] = {}
+    column_width_px: dict[str, int] = {}
     for item in style.sizing.columns:
         if item.label not in visible_col_lookup:
             raise ValueError(f"sizing column label not found: {item.label!r}")
-        column_width_px[visible_col_lookup[item.label]] = item.width_px
+        column_width_px[item.label] = item.width_px
 
     row_width_px: dict[int, int] = {}
     for item in style.sizing.rows:
         row_pos = _resolve_row_ref_position(visible_df.index, item.row_ref)
         row_width_px[row_pos] = item.width_px
 
-    cell_css: dict[tuple[int, int], dict[str, str]] = {}
+    cell_css: dict[tuple[int, str], dict[str, str]] = {}
     for rule in style.rules:
         _validate_rhs_shape(rule.condition)
         row_positions, col_positions = _resolve_target(visible_df, rule.target, visible_col_lookup)
@@ -412,7 +408,7 @@ def _resolve_style_maps_for_frames(
                     col_pos=style_col_pos,
                     col_lookup=style_col_lookup,
                 ):
-                    key = (row_pos, col_pos)
+                    key = (row_pos, visible_col_label)
                     existing = cell_css.get(key, {})
                     merged = dict(existing)
                     merged.update(css_props)
@@ -422,6 +418,52 @@ def _resolve_style_maps_for_frames(
         row_width_px=row_width_px,
         column_width_px=column_width_px,
         cell_css=cell_css,
+    )
+
+
+def resolve_table_style(
+    df: pd.DataFrame,
+    style: StyleInput | None = None,
+    *,
+    style_df: pd.DataFrame | None = None,
+    style_key: str | None = None,
+    max_rows: int | None = None,
+) -> ResolvedTableStyle:
+    """Resolve table-style semantics against a dataframe for any renderer."""
+    _ensure_supported_dataframe(df)
+    plan = normalize_table_style(style, style_key=style_key, max_rows=max_rows)
+    visible_df = df.head(plan.options.max_rows)
+    visible_style_df = visible_df if style_df is None else style_df.loc[visible_df.index]
+
+    _ensure_supported_dataframe(visible_df)
+    _ensure_supported_dataframe(visible_style_df)
+    if len(visible_style_df.index) != len(visible_df.index):
+        raise ValueError("style_df must align to visible df rows")
+
+    maps = _resolve_style_maps_for_frames(visible_df, plan, style_df=visible_style_df)
+    visible_labels = tuple(str(col) for col in visible_df.columns)
+    hidden_columns = frozenset(col for col in plan.options.hidden_columns if col in visible_df.columns)
+    hidden_rows = frozenset(
+        _resolve_row_ref_position(visible_df.index, row_ref) for row_ref in plan.options.hidden_rows
+    )
+    visible_columns = tuple(label for label in visible_labels if label not in hidden_columns)
+
+    return ResolvedTableStyle(
+        schema_version=plan.schema_version,
+        style_key=plan.style_key,
+        visible_columns=visible_columns,
+        hidden_columns=hidden_columns,
+        hidden_rows=hidden_rows,
+        column_width_px=maps.column_width_px,
+        row_width_px=maps.row_width_px,
+        cell_css=maps.cell_css,
+        formats=dict(plan.format.columns),
+        na_rep=plan.format.na_rep,
+        precision=plan.format.precision,
+        thousands=plan.format.thousands,
+        global_style=plan.options.global_style,
+        show_index=plan.options.show_index,
+        max_rows=plan.options.max_rows,
     )
 
 
@@ -511,41 +553,38 @@ def render_table_html(
     table_class: str = "rb-table",
 ) -> str:
     """Render deterministic HTML table using the normalized style plan."""
-    _ensure_supported_dataframe(df)
     plan = normalize_table_style(style, style_key=style_key, max_rows=max_rows)
-    visible_df = df.head(plan.options.max_rows)
-    visible_style_df = visible_df if style_df is None else style_df.loc[visible_df.index]
-
-    _ensure_supported_dataframe(visible_df)
-    _ensure_supported_dataframe(visible_style_df)
-    if len(visible_style_df.index) != len(visible_df.index):
-        raise ValueError("style_df must align to visible df rows")
-    maps = _resolve_style_maps_for_frames(visible_df, plan, style_df=visible_style_df)
+    resolved = resolve_table_style(
+        df,
+        plan,
+        style_df=style_df,
+    )
+    visible_df = df.head(resolved.max_rows)
+    visible_col_lookup = _column_lookup(visible_df)
 
     rows = len(visible_df.index)
     cols = len(visible_df.columns)
-    global_style = plan.options.global_style
+    global_style = resolved.global_style
     base_row_backgrounds = set(range(rows)) if global_style.one_bg_color else set(range(0, rows, 2))
-
     cell_css: list[list[dict[str, str]]] = [[{} for _ in range(cols)] for _ in range(rows)]
 
-    for row_pos in range(rows):
-        if row_pos in base_row_backgrounds:
-            for col_pos in range(cols):
-                cell_css[row_pos][col_pos]["background-color"] = global_style.background_color
+    for row_pos in base_row_backgrounds:
+        for col_pos in range(cols):
+            cell_css[row_pos][col_pos]["background-color"] = global_style.background_color
 
-    for col_pos, width in maps.column_width_px.items():
+    for col_label, width in resolved.column_width_px.items():
+        col_pos = visible_col_lookup[col_label]
         for row_pos in range(rows):
             cell_css[row_pos][col_pos]["width"] = f"{width}px"
             cell_css[row_pos][col_pos]["min-width"] = f"{width}px"
 
-    for row_pos, width in maps.row_width_px.items():
+    for row_pos, width in resolved.row_width_px.items():
         for col_pos in range(cols):
             cell_css[row_pos][col_pos]["width"] = f"{width}px"
             cell_css[row_pos][col_pos]["min-width"] = f"{width}px"
 
-    for (row_pos, col_pos), rule_css in maps.cell_css.items():
-        cell_css[row_pos][col_pos].update(rule_css)
+    for (row_pos, col_label), resolved_css in resolved.cell_css.items():
+        cell_css[row_pos][visible_col_lookup[col_label]].update(resolved_css)
 
     css_frame = pd.DataFrame(
         [[_css_string(cell_css[row_pos][col_pos]) for col_pos in range(cols)] for row_pos in range(rows)],
@@ -574,7 +613,8 @@ def render_table_html(
         },
     ]
 
-    for col_pos, width in maps.column_width_px.items():
+    for col_label, width in resolved.column_width_px.items():
+        col_pos = visible_col_lookup[col_label]
         table_styles.append(
             {
                 "selector": f".col{col_pos}",
@@ -582,7 +622,7 @@ def render_table_html(
             }
         )
 
-    for row_pos, width in maps.row_width_px.items():
+    for row_pos, width in resolved.row_width_px.items():
         table_styles.append(
             {
                 "selector": f".row{row_pos}",
@@ -591,10 +631,10 @@ def render_table_html(
         )
 
     formatter_map: dict[str, Callable[[Any], Any]] = {
-        col: _formatter_from_spec(spec) for col, spec in plan.format.columns.items()
+        col: _formatter_from_spec(spec) for col, spec in resolved.formats.items()
     }
 
-    table_attrs = f'class="{escape(table_class)}" data-style-schema="{escape(plan.schema_version)}"'
+    table_attrs = f'class="{escape(table_class)}" data-style-schema="{escape(resolved.schema_version)}"'
 
     styler = cast(Any, visible_df.style)
     styler = styler.set_uuid(_deterministic_styler_uuid(visible_df, plan, table_class))
@@ -603,21 +643,19 @@ def render_table_html(
     styler = styler.apply(lambda _: css_frame, axis=None)
     styler = styler.format(
         formatter=cast(Any, formatter_map) if formatter_map else None,
-        na_rep=plan.format.na_rep,
-        precision=plan.format.precision,
-        thousands=plan.format.thousands,
+        na_rep=resolved.na_rep,
+        precision=resolved.precision,
+        thousands=resolved.thousands,
     )
 
-    if not plan.options.show_index:
+    if not resolved.show_index:
         styler = styler.hide(axis="index")
 
-    hidden_columns = [col for col in plan.options.hidden_columns if col in visible_df.columns]
+    hidden_columns = list(resolved.hidden_columns)
     if hidden_columns:
         styler = styler.hide(subset=hidden_columns, axis="columns")
 
-    hidden_row_positions = [
-        _resolve_row_ref_position(visible_df.index, row_ref) for row_ref in plan.options.hidden_rows
-    ]
+    hidden_row_positions = list(resolved.hidden_rows)
     if hidden_row_positions:
         hidden_row_index = visible_df.index.take(hidden_row_positions)
         styler = styler.hide(subset=hidden_row_index, axis="index")
@@ -628,6 +666,7 @@ def render_table_html(
 __all__ = [
     "normalize_table_style",
     "render_table_html",
+    "resolve_table_style",
     "table_style_hash",
     "table_style_json",
     "table_style_payload",

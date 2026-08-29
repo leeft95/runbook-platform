@@ -6,11 +6,63 @@ import numpy as np
 import pandas as pd
 import pytest
 from runbook.core.table import (
+    TableStylePlan,
     normalize_table_style,
     render_table_html,
+    resolve_table_style,
     table_style_hash,
     table_style_json,
+    table_style_payload,
 )
+
+
+def test_table_style_versions_default_to_02_and_preserve_01() -> None:
+    default_plan = TableStylePlan()
+    assert default_plan.schema_version == "table-style/0.2"
+    assert default_plan.model_dump(mode="python")["schema_version"] == "table-style/0.2"
+    assert table_style_payload(None)["schema_version"] == "table-style/0.2"
+
+    legacy_plan = TableStylePlan.model_validate({"schema_version": "table-style/0.1"})
+    legacy_round_trip = TableStylePlan.model_validate(legacy_plan.model_dump(mode="python"))
+    assert legacy_round_trip.model_dump(mode="python")["schema_version"] == "table-style/0.1"
+    assert table_style_json(legacy_plan) == table_style_json(legacy_round_trip)
+    assert table_style_hash(legacy_plan) == table_style_hash(legacy_round_trip)
+    html = render_table_html(pd.DataFrame({"value": [1]}), legacy_plan)
+    assert 'data-style-schema="table-style/0.1"' in html
+
+
+def test_resolve_table_style_is_deterministic_and_renderer_neutral() -> None:
+    df = pd.DataFrame({"value": [1.0, -1.0], "helper": [0.0, 0.0]}, index=["keep", "hide"])
+    style = {
+        "schema_version": "table-style/0.2",
+        "format": {"columns": {"value": "{:.1f}"}},
+        "sizing": {
+            "columns": [{"label": "value", "width_px": 120}],
+            "rows": [{"row_ref": {"mode": "label", "value": "keep"}, "width_px": 80}],
+        },
+        "rules": [
+            {
+                "id": "negative",
+                "target": {"scope": "columns", "labels": ["value"]},
+                "condition": {"op": "lt", "rhs": {"kind": "literal", "value": 0}},
+                "action": {"text_color": "red"},
+            }
+        ],
+        "options": {
+            "hidden_columns": ["helper"],
+            "hidden_rows": [{"mode": "label", "value": "hide"}],
+        },
+    }
+
+    resolved = resolve_table_style(df, style)
+    assert resolved == resolve_table_style(df, style)
+    assert resolved.visible_columns == ("value",)
+    assert resolved.hidden_columns == frozenset({"helper"})
+    assert resolved.hidden_rows == frozenset({1})
+    assert resolved.column_width_px == {"value": 120}
+    assert resolved.row_width_px == {0: 80}
+    assert resolved.formats["value"].kind == "number"
+    assert resolved.cell_css[(1, "value")]["color"] == "red"
 
 
 def _extract_css_blocks(html: str) -> list[tuple[list[str], dict[str, str]]]:

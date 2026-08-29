@@ -67,6 +67,7 @@ def test_sdk_table_style_builders_produce_valid_canonical_plan() -> None:
     )
 
     plan = normalize_table_style(style)
+    assert style["schema_version"] == "table-style/0.2"
     assert plan.style_key == "returns_v1"
     assert plan.format.columns["returns"].kind == "percent"
     assert plan.options.max_rows == 100

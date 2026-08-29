@@ -14,6 +14,7 @@ from runbook.core.table.builder import (
     table_style_payload as _table_style_payload,
 )
 from runbook.core.table.models import (
+    TABLE_STYLE_SCHEMA_VERSION,
     StyleInput,
     TableAction,
     TableColumnSizing,
@@ -365,7 +366,7 @@ def table_style(
 ) -> dict[str, Any]:
     """Handle table style."""
     payload: dict[str, Any] = {
-        "schema_version": "table-style/0.1",
+        "schema_version": TABLE_STYLE_SCHEMA_VERSION,
         "options": {"max_rows": max_rows, "show_index": show_index},
     }
     if key is not None:

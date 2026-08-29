@@ -1,9 +1,10 @@
-"""Pydantic models for deterministic table-style schema `table-style/0.1`."""
+"""Pydantic models for deterministic table-style schemas."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
 
@@ -17,7 +18,8 @@ from pydantic import (
 )
 from typing_extensions import Annotated
 
-TABLE_STYLE_SCHEMA_VERSION: Literal["table-style/0.1"] = "table-style/0.1"
+TABLE_STYLE_SCHEMA_VERSION: Literal["table-style/0.2"] = "table-style/0.2"
+TableStyleSchemaVersion = Literal["table-style/0.1", "table-style/0.2"]
 NonEmptyRef = Annotated[str, StringConstraints(min_length=1)]
 
 
@@ -412,7 +414,7 @@ class TableStyleOptions(BaseModel):
 class TableStylePlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["table-style/0.1"] = TABLE_STYLE_SCHEMA_VERSION
+    schema_version: TableStyleSchemaVersion = TABLE_STYLE_SCHEMA_VERSION
     style_key: str | None = None
     format: TableStyleFormat = Field(default_factory=TableStyleFormat)
     sizing: TableSizing = Field(default_factory=TableSizing)
@@ -423,11 +425,43 @@ class TableStylePlan(BaseModel):
 TableCondition.model_rebuild()
 
 
+@dataclass(frozen=True)
+class ResolvedTableStyle:
+    """Renderer-neutral table semantics resolved against a concrete dataframe."""
+
+    schema_version: TableStyleSchemaVersion
+    style_key: str | None
+    visible_columns: tuple[str, ...]
+    hidden_columns: frozenset[str]
+    hidden_rows: frozenset[int]
+    column_width_px: dict[str, int]
+    row_width_px: dict[int, int]
+    cell_css: dict[tuple[int, str], dict[str, str]]
+    formats: dict[str, TableFormatSpec]
+    na_rep: str | None
+    precision: int | None
+    thousands: str | None
+    global_style: TableGlobalStyle
+    show_index: bool
+    max_rows: int
+
+    @property
+    def format(self) -> TableStyleFormat:
+        """Return the resolved format definition as a table-style model."""
+        return TableStyleFormat(
+            na_rep=self.na_rep,
+            precision=self.precision,
+            thousands=self.thousands,
+            columns=dict(self.formats),
+        )
+
+
 StyleInput = TableStylePlan | Mapping[str, Any]
 
 
 __all__ = [
     "TABLE_STYLE_SCHEMA_VERSION",
+    "TableStyleSchemaVersion",
     "ConditionOp",
     "FormatKind",
     "RHSKind",
@@ -454,6 +488,7 @@ __all__ = [
     "TableStyleFormat",
     "TableStyleOptions",
     "TableStylePlan",
+    "ResolvedTableStyle",
     "TableTarget",
     "TableZScoreRHS",
     "TargetScope",
