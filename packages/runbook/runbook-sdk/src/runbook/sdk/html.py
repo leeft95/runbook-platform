@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 from html import escape
 
 import pandas as pd
 import plotly.io as pio
+from plotly.utils import PlotlyJSONEncoder
 from runbook.core import BlobStore
 from runbook.core.pdl.models import PDLManifest
 from runbook.core.table import TableStylePlan, render_table_html
+from runbook.core.table.models import TableLinkKind
 
 DEFAULT_GRID_CSS_REF = "styles/grid.css"
 DEFAULT_GRID_CSS = """.rb-page {
@@ -44,6 +48,14 @@ DEFAULT_GRID_CSS = """.rb-page {
   padding: 4px 6px;
 }
 """
+
+
+@dataclass(frozen=True)
+class RenderedHtmlReport:
+    """Rendered report HTML and any linked plot pages."""
+
+    main: str
+    linked_pages: dict[str, str]
 
 
 def _key(prefix: str, ref: str) -> str:
@@ -128,4 +140,104 @@ def render_html(store: BlobStore, manifest: PDLManifest, prefix: str) -> str:
         + f'</head><body><header><h1>{report_title}</h1><p>As of: {report_as_of}</p></header>{warning_markup}<main class="rb-page" style="--rb-columns: {columns};">'
         + "".join(blocks)
         + "</main></body></html>"
+    )
+
+
+def _plot_name(ref: str) -> str:
+    """Resolve a runtime plot reference to its semantic name."""
+    if ref.startswith("plots/"):
+        ref = ref[len("plots/") :]
+        if ref.endswith(".json"):
+            ref = ref[: -len(".json")]
+    return ref
+
+
+def _named_plot_jsons(plot_jsons: Mapping[str, object] | object) -> dict[str, object]:
+    """Normalize runtime plot payloads to semantic names."""
+    values = getattr(plot_jsons, "plot_jsons", plot_jsons)
+    if not isinstance(values, Mapping):
+        raise TypeError("render_html_bundle expects a mapping of named Plotly JSON payloads")
+    result: dict[str, object] = {}
+    for ref, payload in values.items():
+        name = _plot_name(str(ref))
+        if not name:
+            raise ValueError(f"plot payload has an empty semantic name: {ref!r}")
+        if name in result:
+            raise ValueError(f"duplicate plot payload semantic name: {name!r}")
+        result[name] = payload
+    return result
+
+
+def _linked_plot_targets(manifest: PDLManifest) -> tuple[set[str], set[str]]:
+    """Collect individual and aggregate plot destinations from table links."""
+    individual: set[str] = set()
+    aggregates: set[str] = set()
+    for block in manifest.page.blocks:
+        if block.type != "table":
+            continue
+        for link in block.links or ():
+            destination = link.destination
+            if destination.kind != TableLinkKind.plot:
+                continue
+            assert destination.value is not None
+            target = _plot_name(destination.value)
+            if link.area == "index_header" and target.endswith("-plots"):
+                aggregates.add(target)
+            else:
+                individual.add(target)
+    return individual, aggregates
+
+
+def _render_linked_plot_page(title: str, names: list[str], plot_jsons: Mapping[str, object]) -> str:
+    """Render one standalone plot document."""
+    include_plotlyjs: bool | str = "cdn"
+    plots: list[str] = []
+    for index, name in enumerate(names):
+        payload = plot_jsons[name]
+        plots.append(
+            pio.from_json(json.dumps(payload, cls=PlotlyJSONEncoder, sort_keys=True)).to_html(
+                include_plotlyjs=include_plotlyjs,
+                full_html=False,
+                div_id=f"plot-{index}",
+            )
+        )
+        include_plotlyjs = False
+    escaped_title = escape(title)
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'><title>"
+        + escaped_title
+        + "</title></head><body><h1>"
+        + escaped_title
+        + "</h1><main>"
+        + "".join(plots)
+        + "</main></body></html>"
+    )
+
+
+def render_html_bundle(
+    store: BlobStore,
+    manifest: PDLManifest,
+    prefix: str,
+    plot_jsons: Mapping[str, object] | object,
+) -> RenderedHtmlReport:
+    """Render the main report and linked plot documents."""
+    named_plot_jsons = _named_plot_jsons(plot_jsons)
+    individual, aggregates = _linked_plot_targets(manifest)
+    linked_pages: dict[str, str] = {}
+
+    for target in sorted(individual):
+        if target not in named_plot_jsons:
+            raise ValueError(f"plot link destination is missing from registered payloads: {target!r}")
+        linked_pages[target] = _render_linked_plot_page(target, [target], named_plot_jsons)
+
+    for target in sorted(aggregates):
+        table_slug = target[: -len("-plots")]
+        members = sorted(name for name in named_plot_jsons if name.startswith(f"{table_slug}-") and name != target)
+        if not members:
+            raise ValueError(f"aggregate plot link has no matching registered members: {target!r}")
+        linked_pages[target] = _render_linked_plot_page(target, members, named_plot_jsons)
+
+    return RenderedHtmlReport(
+        main=render_html(store, manifest, prefix),
+        linked_pages={name: linked_pages[name] for name in sorted(linked_pages)},
     )

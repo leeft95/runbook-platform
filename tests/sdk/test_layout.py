@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from plotly.offline import get_plotlyjs_version
 from runbook.core.data import DatasetFile
 from runbook.core.pdl.models import PDLManifest, PDLPage, PDLPageType, PDLSourceType, PDLStyle, PDLTextBlock
 from runbook.core.report_artifacts import ArtifactRegistry
@@ -536,5 +537,6 @@ def test_vol_report_native_dash_and_html_golden(tmp_path, pointer_registry) -> N
     assert "font-weight: 600" in html
     assert "background-color: #FFF3CD" in html
     assert "iframe" not in html.lower()
-    assert html.count("https://cdn.plot.ly/plotly-") == 1
+    plotly_cdn_url = f"https://cdn.plot.ly/plotly-{get_plotlyjs_version()}.min.js"
+    assert html.count(plotly_cdn_url) == 1
     assert app.server.test_client().get("/").status_code == 200

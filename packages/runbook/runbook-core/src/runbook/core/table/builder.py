@@ -638,7 +638,14 @@ def _link_anchor(display: str, destination: TableLinkDestination) -> str:
         assert destination.value is not None
         href = escape(destination.value, quote=True)
         return f'<a href="{href}" data-runbook-link-kind="url">{display}</a>'
-    return display
+    assert destination.value is not None
+    plot_name = destination.value
+    if plot_name.startswith("plots/"):
+        plot_name = plot_name[len("plots/") :]
+        if plot_name.endswith(".json"):
+            plot_name = plot_name[: -len(".json")]
+    href = escape(f"plots/{plot_name}.html", quote=True)
+    return f'<a href="{href}" data-runbook-link-kind="plot">{display}</a>'
 
 
 def _replace_index_header(html_output: str, index_name: Any, destination: TableLinkDestination | None) -> str:

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from functools import partial
 
 import pandas as pd
+from plotly.offline import get_plotlyjs_version
 from runbook.core.data import DatasetFile
 from runbook.data import open_blob_store
 from runbook.data.manifests import (
@@ -73,7 +74,8 @@ def test_report_execution_is_shared_and_cache_is_type_stable(tmp_path, pointer_r
     assert b'<link rel="stylesheet" href="styles/grid.css">' not in html
     assert b'class="rb-page"' in html
     assert b"grid-row: 1 / span 1; grid-column: 1 / span 1;" in html
-    assert html.count(b"https://cdn.plot.ly/plotly-") == 1
+    plotly_cdn_url = f"https://cdn.plot.ly/plotly-{get_plotlyjs_version()}.min.js".encode()
+    assert html.count(plotly_cdn_url) == 1
 
     changed = run(profile=profile.model_copy(update={"title": "Changed title"}))
     assert changed.artifact_id != cold.artifact_id

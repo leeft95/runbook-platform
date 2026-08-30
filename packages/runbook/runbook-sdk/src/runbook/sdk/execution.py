@@ -20,7 +20,7 @@ from runbook.core.pdl.models import PDLManifest, PDLSourceType, PDLStyle
 from runbook.core.utils.hashing import sha256_json
 from runbook.sdk.context import Ctx
 from runbook.sdk.discovery import discover_report_definition
-from runbook.sdk.html import DEFAULT_GRID_CSS, DEFAULT_GRID_CSS_REF, render_html
+from runbook.sdk.html import DEFAULT_GRID_CSS, DEFAULT_GRID_CSS_REF, render_html_bundle
 from runbook.sdk.layout import Report, compile_layout
 from runbook.sdk.live import LiveDataResolver
 from runbook.sdk.profiles import ReportProfile, resolve_report_path
@@ -240,7 +240,10 @@ def execute_report(
         )
     html_ref = f"{prefix}/report.html"
     logger.info("stage=4 render report={} prefix={}", profile.report_id, prefix)
-    store.put_immutable(html_ref, render_html(store, stage4_manifest, prefix).encode("utf-8"))
+    rendered_html = render_html_bundle(store, stage4_manifest, prefix, payloads.plot_jsons)
+    store.put_immutable(html_ref, rendered_html.main.encode("utf-8"))
+    for name, page in sorted(rendered_html.linked_pages.items()):
+        store.put_immutable(f"{prefix}/plots/{name}.html", page.encode("utf-8"))
     stage4_ref = f"{prefix}/manifest.stage4.json"
     store.put_immutable(
         stage4_ref,
