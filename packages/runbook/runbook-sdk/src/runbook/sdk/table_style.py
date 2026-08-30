@@ -20,6 +20,7 @@ from runbook.core.table.models import (
     TableColumnSizing,
     TableCondition,
     TableFormatSpec,
+    TableLink,
     TableRowRef,
     TableRowSizing,
     TableRule,
@@ -79,6 +80,7 @@ TableTargetInput: TypeAlias = TableTarget | Mapping[str, Any]
 TableConditionInput: TypeAlias = TableCondition | Mapping[str, Any]
 TableActionInput: TypeAlias = TableAction | Mapping[str, Any]
 TableRuleInput: TypeAlias = TableRule | Mapping[str, Any]
+TableLinkInput: TypeAlias = TableLink | Mapping[str, Any]
 
 
 def format_number(column: str, digits: int = 2, thousands: bool = False) -> TableFormatEntry:
@@ -363,6 +365,7 @@ def table_style(
     max_rows: int = 100,
     na_rep: str | None = None,
     show_index: bool = True,
+    links: Sequence[TableLinkInput] | None = None,
 ) -> dict[str, Any]:
     """Handle table style."""
     payload: dict[str, Any] = {
@@ -417,6 +420,11 @@ def table_style(
 
     if rules:
         payload["rules"] = [dict(r) for r in rules]
+
+    if links:
+        payload["links"] = [
+            item.model_dump(mode="python") if isinstance(item, TableLink) else dict(item) for item in links
+        ]
 
     return payload
 

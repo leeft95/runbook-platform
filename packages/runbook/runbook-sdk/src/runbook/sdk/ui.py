@@ -91,7 +91,9 @@ def manifest(
                 raise TypeError(f"PDL extension {namespace!r} must serialize to an object")
             serialized_extensions[namespace] = value
 
+    has_links = any(isinstance(block, PDLTableBlock) and block.links for block in page.blocks)
     return PDLManifest(
+        schema_version="pdl-core/0.2" if has_links else "pdl-core/0.1",
         title=resolved_title,
         snapshot_id=ctx.snapshot.snapshot_id,
         as_of=ctx.snapshot.as_of or ctx.snapshot.watermark,
@@ -171,6 +173,7 @@ def table(
         style_ref=ref.style_ref,
         html_ref=ref.html_ref,
         style_key=ref.style_key,
+        links=ref.links,
         row=row,
         col=col,
         row_span=row_span,

@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from runbook.core.data import DatasetFile
 from runbook.core.pdl.models import PDLManifest, PDLPage, PDLPageType, PDLSourceType, PDLStyle, PDLTextBlock
+from runbook.core.report_artifacts import ArtifactRegistry
 from runbook.core.table.models import TableArtifactRef
 from runbook.data import open_blob_store
 from runbook.data.manifests import build_manifest, publish_manifests, resolve_snapshot, write_dataframe
@@ -18,6 +19,7 @@ from runbook.sdk.extensions.dash.renderer import render_dash_page
 from runbook.sdk.html import render_html
 from runbook.sdk.layout import Report, compile_layout, grid, plot, report, section, table, text
 from runbook.sdk.preview_cli import compose_dash_app
+from runbook.sdk.table_style import table_style
 
 
 def _ctx(config: dict[str, object] | None = None) -> SimpleNamespace:
@@ -328,6 +330,30 @@ def test_table_and_plot_helpers_keep_artifact_semantics() -> None:
     assert blocks[0].data_ref == ref.data_ref
     assert blocks[1].type == "plot_ref"
     assert blocks[1].ref == "plots/demo.json"
+
+
+def test_table_artifact_style_links_flow_through_report_compilation() -> None:
+    registry = ArtifactRegistry(table_ref_resolver=lambda name: f"tables/{name}.parquet", table_writer=lambda *_: None)
+    ref = registry.table(
+        pd.DataFrame({"report_id": ["detail"]}),
+        name="summary",
+        style=table_style(
+            links=[
+                {
+                    "area": "cells",
+                    "field": "report_id",
+                    "destination": {"kind": "report", "value": "reports/detail"},
+                }
+            ]
+        ),
+    )
+    layout = Report("Linked")
+    layout.add(table(ref, name="summary"))
+
+    manifest = compile_layout(_ctx(), layout)
+
+    assert manifest.schema_version == "pdl-core/0.2"
+    assert manifest.page.blocks[0].links == ref.links
 
 
 def test_pdl_page_accepts_explicit_ultrawide_columns() -> None:

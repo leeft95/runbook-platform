@@ -45,6 +45,28 @@ def test_table_style_versions_default_to_02_and_preserve_01() -> None:
     assert 'data-style-schema="table-style/0.1"' in html
 
 
+def test_table_style_links_require_02_without_changing_legacy_no_link_payloads() -> None:
+    legacy = TableStylePlan.model_validate({"schema_version": "table-style/0.1"})
+    legacy_empty = TableStylePlan.model_validate({"schema_version": "table-style/0.1", "links": []})
+
+    assert "links" not in table_style_payload(legacy)
+    assert table_style_payload(legacy_empty) == table_style_payload(legacy)
+    assert table_style_hash(legacy_empty) == table_style_hash(legacy)
+    with pytest.raises(ValueError, match="table-style/0.1 does not support table links"):
+        TableStylePlan.model_validate(
+            {
+                "schema_version": "table-style/0.1",
+                "links": [
+                    {
+                        "area": "header",
+                        "field": "month",
+                        "destination": {"kind": "plot", "value": "plots/month"},
+                    }
+                ],
+            }
+        )
+
+
 def test_resolve_table_style_is_deterministic_and_renderer_neutral() -> None:
     df = pd.DataFrame({"value": [1.0, -1.0], "helper": [0.0, 0.0]}, index=["keep", "hide"])
     style = {

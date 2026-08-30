@@ -23,6 +23,46 @@ TableStyleSchemaVersion = Literal["table-style/0.1", "table-style/0.2"]
 NonEmptyRef = Annotated[str, StringConstraints(min_length=1)]
 
 
+class TableLinkKind(str, Enum):
+    report = "report"
+    plot = "plot"
+    url = "url"
+
+
+class TableLinkDestination(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: TableLinkKind
+    value: NonEmptyRef | None = Field(default=None, exclude_if=lambda value: value is None)
+    value_field: NonEmptyRef | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def validate_value(self) -> "TableLinkDestination":
+        if (self.value is None) == (self.value_field is None):
+            raise ValueError("link destination must set exactly one of 'value' or 'value_field'")
+        return self
+
+
+class TableLink(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    area: Literal["cells", "header", "index_header"]
+    field: NonEmptyRef | None = Field(default=None, exclude_if=lambda value: value is None)
+    destination: TableLinkDestination
+
+    @model_validator(mode="after")
+    def validate_area(self) -> "TableLink":
+        if self.area in {"cells", "header"} and self.field is None:
+            raise ValueError(f"link field is required for area='{self.area}'")
+        if self.area == "index_header" and self.field is not None:
+            raise ValueError("link field must be omitted for area='index_header'")
+        if self.destination.value_field is not None and self.area != "cells":
+            raise ValueError("dynamic link destinations are only valid for area='cells'")
+        if self.area == "cells" and self.destination.kind == TableLinkKind.plot:
+            raise ValueError("plot link destinations are not valid for area='cells'")
+        return self
+
+
 class TableArtifactRef(BaseModel):
     """Runtime-facing table artifact references used by PDL table blocks."""
 
@@ -32,6 +72,7 @@ class TableArtifactRef(BaseModel):
     style_ref: NonEmptyRef | None = None
     html_ref: NonEmptyRef | None = None
     style_key: NonEmptyRef | None = None
+    links: list[TableLink] | None = Field(default=None, exclude_if=lambda value: not value)
 
 
 class TargetScope(str, Enum):
@@ -420,6 +461,13 @@ class TableStylePlan(BaseModel):
     sizing: TableSizing = Field(default_factory=TableSizing)
     rules: list[TableRule] = Field(default_factory=list)
     options: TableStyleOptions = Field(default_factory=TableStyleOptions)
+    links: list[TableLink] | None = Field(default=None, exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def validate_links_version(self) -> "TableStylePlan":
+        if self.schema_version == "table-style/0.1" and self.links:
+            raise ValueError("table-style/0.1 does not support table links")
+        return self
 
 
 TableCondition.model_rebuild()
@@ -468,6 +516,9 @@ __all__ = [
     "RowRefMode",
     "StyleInput",
     "TableArtifactRef",
+    "TableLink",
+    "TableLinkDestination",
+    "TableLinkKind",
     "TableAction",
     "TableColumnRHS",
     "TableColumnSizing",

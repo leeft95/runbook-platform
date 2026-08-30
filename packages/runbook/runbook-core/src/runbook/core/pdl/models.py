@@ -1,9 +1,10 @@
-"""Pydantic models for the runbook PDL core manifest (`pdl-core/0.1`).
+"""Pydantic models for the runbook PDL core manifests (`pdl-core/0.1` and `pdl-core/0.2`).
 
 These models are the typed Python representation of the manifest-first JSON
 contract used by Stage 3 (manifest build) and Stage 4 (render/publish). They
-describe report structure and artifact references only; they do not contain any
-execution, data access, or runtime orchestration logic.
+describe report structure, artifact references, and renderer-neutral table
+metadata; they do not contain any execution, data access, or runtime
+orchestration logic.
 """
 
 from __future__ import annotations
@@ -13,10 +14,13 @@ from enum import Enum
 from typing import Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
-from runbook.core.table.models import TableArtifactRef
+from runbook.core.table.models import TableArtifactRef, TableLink, TableLinkDestination, TableLinkKind
 from typing_extensions import Annotated
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
+PDLLinkKind = TableLinkKind
+PDLLinkDestination = TableLinkDestination
+PDLTableLink = TableLink
 BlockNameStr = Annotated[
     str,
     StringConstraints(pattern=r"^[a-zA-Z0-9_\-\.]+$", min_length=1),
@@ -219,7 +223,7 @@ class PDLArtifacts(BaseModel):
 class PDLManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["pdl-core/0.1"] = "pdl-core/0.1"
+    schema_version: Literal["pdl-core/0.1", "pdl-core/0.2"] = "pdl-core/0.1"
     title: NonEmptyStr
     snapshot_id: NonEmptyStr
     as_of: datetime
@@ -231,6 +235,13 @@ class PDLManifest(BaseModel):
     # describes what extension this manifest can be used for,
     # e.g. plotly dash with a specific component/styling system.
     extensions: dict[str, dict[str, Any]] | None = None
+
+    @model_validator(mode="after")
+    def validate_link_schema_version(self) -> "PDLManifest":
+        has_links = any(isinstance(block, PDLTableBlock) and block.links for block in self.page.blocks)
+        if has_links and self.schema_version == "pdl-core/0.1":
+            raise ValueError("pdl-core/0.1 does not support linked table blocks; use pdl-core/0.2")
+        return self
 
     @field_validator("warnings", mode="before")
     @classmethod

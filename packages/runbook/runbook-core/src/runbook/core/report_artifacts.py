@@ -9,6 +9,7 @@ import pandas as pd
 from runbook.core.table import (
     StyleInput,
     TableArtifactRef,
+    TableLink,
     render_table_html,
     table_style_hash,
     table_style_payload,
@@ -119,6 +120,7 @@ class ArtifactRegistry:
             style_ref=style_ref,
             html_ref=html_ref,
             style_key=resolved_style_key,
+            links=[TableLink.model_validate(link) for link in payload.get("links", [])] or None,
         )
 
     def payloads(self) -> RuntimeArtifactPayloads:

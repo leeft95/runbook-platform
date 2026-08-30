@@ -103,6 +103,25 @@ def test_sdk_table_style_hash_and_payload_are_deterministic() -> None:
     assert table_style_hash(style_a) == table_style_hash(style_b)
 
 
+def test_sdk_table_style_preserves_typed_links_in_the_versioned_payload() -> None:
+    style = table_style(
+        links=[
+            {
+                "area": "header",
+                "field": "month",
+                "destination": {"kind": "plot", "value": "plots/month"},
+            }
+        ]
+    )
+
+    payload = table_style_payload(style)
+
+    assert payload["schema_version"] == "table-style/0.2"
+    assert payload["links"] == [
+        {"area": "header", "field": "month", "destination": {"kind": "plot", "value": "plots/month"}}
+    ]
+
+
 def test_sdk_render_table_html_applies_rule() -> None:
     df = pd.DataFrame({"returns": [0.1, -0.2]}, index=["a", "b"])
     style = table_style(

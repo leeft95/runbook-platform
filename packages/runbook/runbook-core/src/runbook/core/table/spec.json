@@ -388,6 +388,90 @@
           "title": "TableGlobalStyle",
           "type": "object"
         },
+        "TableLink": {
+          "additionalProperties": false,
+          "properties": {
+            "area": {
+              "enum": [
+                "cells",
+                "header",
+                "index_header"
+              ],
+              "title": "Area",
+              "type": "string"
+            },
+            "field": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Field"
+            },
+            "destination": {
+              "$ref": "#/$defs/TableLinkDestination"
+            }
+          },
+          "required": [
+            "area",
+            "destination"
+          ],
+          "title": "TableLink",
+          "type": "object"
+        },
+        "TableLinkDestination": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "$ref": "#/$defs/TableLinkKind"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Value"
+            },
+            "value_field": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Value Field"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "title": "TableLinkDestination",
+          "type": "object"
+        },
+        "TableLinkKind": {
+          "enum": [
+            "report",
+            "plot",
+            "url"
+          ],
+          "title": "TableLinkKind",
+          "type": "string"
+        },
         "TableLiteralRHS": {
           "additionalProperties": false,
           "properties": {
@@ -727,12 +811,113 @@
         },
         "options": {
           "$ref": "#/$defs/TableStyleOptions"
+        },
+        "links": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/TableLink"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Links"
         }
       },
       "title": "TableStylePlan",
       "type": "object"
     },
     "table_artifact_ref": {
+      "$defs": {
+        "TableLink": {
+          "additionalProperties": false,
+          "properties": {
+            "area": {
+              "enum": [
+                "cells",
+                "header",
+                "index_header"
+              ],
+              "title": "Area",
+              "type": "string"
+            },
+            "field": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Field"
+            },
+            "destination": {
+              "$ref": "#/$defs/TableLinkDestination"
+            }
+          },
+          "required": [
+            "area",
+            "destination"
+          ],
+          "title": "TableLink",
+          "type": "object"
+        },
+        "TableLinkDestination": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "$ref": "#/$defs/TableLinkKind"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Value"
+            },
+            "value_field": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Value Field"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "title": "TableLinkDestination",
+          "type": "object"
+        },
+        "TableLinkKind": {
+          "enum": [
+            "report",
+            "plot",
+            "url"
+          ],
+          "title": "TableLinkKind",
+          "type": "string"
+        }
+      },
       "additionalProperties": false,
       "description": "Runtime-facing table artifact references used by PDL table blocks.",
       "properties": {
@@ -779,6 +964,21 @@
           ],
           "default": null,
           "title": "Style Key"
+        },
+        "links": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/TableLink"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Links"
         }
       },
       "required": [

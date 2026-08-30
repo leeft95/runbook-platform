@@ -1,0 +1,438 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://runbook.dev/schemas/pdl-core-0.2.json",
+  "title": "Runbook PDL Core Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "title", "snapshot_id", "as_of", "page"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["pdl-core/0.1", "pdl-core/0.2"],
+      "default": "pdl-core/0.1"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "snapshot_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "as_of": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "style": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["css_ref", "source_type", "source_key"],
+          "properties": {
+            "css_ref": { "type": "string", "minLength": 1 },
+            "source_type": {
+              "type": "string",
+              "enum": ["manual", "default", "theme"]
+            },
+            "source_key": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page_type", "blocks"],
+      "properties": {
+        "page_type": {
+          "type": "string",
+          "enum": ["grid", "flex_grid", "custom"]
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "blocks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/block" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "page_type": { "const": "grid" }
+            }
+          },
+          "then": {
+            "required": ["rows", "columns"]
+          },
+          "else": {
+            "if": {
+              "properties": {
+                "page_type": { "const": "flex_grid" }
+              }
+            },
+            "then": {
+              "required": ["rows", "columns"]
+            },
+            "else": {
+              "not": {
+                "anyOf": [
+                  { "required": ["rows"] },
+                  { "required": ["columns"] }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "artifacts": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "plots": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            "tables": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            "files": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "extensions": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        { "type": "null" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema_version": { "const": "pdl-core/0.1" }
+        }
+      },
+      "then": {
+        "properties": {
+          "page": {
+            "properties": {
+              "blocks": {
+                "not": {
+                  "contains": {
+                    "required": ["links"],
+                    "properties": {
+                      "links": { "type": "array", "minItems": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "blockBase": {
+      "type": "object",
+      "required": ["type", "name", "row", "col"],
+      "properties": {
+        "type": { "type": "string" },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-\\.]+$"
+        },
+        "title": {
+          "type": ["string", "null"]
+        },
+        "row": { "type": "integer", "minimum": 1 },
+        "col": { "type": "integer", "minimum": 1 },
+        "row_span": { "type": "integer", "minimum": 1, "default": 1 },
+        "col_span": { "type": "integer", "minimum": 1, "default": 1 },
+        "extensions": {
+          "type": ["object", "null"],
+          "additionalProperties": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "tableBlock": {
+      "allOf": [
+        { "$ref": "#/$defs/blockBase" },
+        {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "required": ["type", "data_ref"],
+          "properties": {
+            "type": { "const": "table" },
+            "data_ref": { "type": "string", "minLength": 1 },
+            "style_ref": {
+              "anyOf": [
+                { "type": "string", "minLength": 1 },
+                { "type": "null" }
+              ],
+              "default": null
+            },
+            "html_ref": {
+              "anyOf": [
+                { "type": "string", "minLength": 1 },
+                { "type": "null" }
+              ],
+              "default": null
+            },
+            "style_key": {
+              "anyOf": [
+                { "type": "string", "minLength": 1 },
+                { "type": "null" }
+              ],
+              "default": null
+            },
+            "links": {
+              "anyOf": [
+                {
+                  "items": { "$ref": "#/$defs/TableLink" },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Links"
+            },
+            "columns": {
+              "type": ["array", "null"],
+              "items": { "$ref": "#/$defs/column" },
+              "uniqueItems": true,
+              "x-runbook-unique-by": "field"
+            }
+          }
+        }
+      ]
+    },
+    "TableLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["area", "destination"],
+      "properties": {
+        "area": {
+          "type": "string",
+          "enum": ["cells", "header", "index_header"]
+        },
+        "field": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "default": null
+        },
+        "destination": { "$ref": "#/$defs/TableLinkDestination" }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "area": { "const": "cells" },
+            "field": { "type": "string", "minLength": 1 },
+            "destination": {
+              "not": { "properties": { "kind": { "const": "plot" } } }
+            }
+          },
+          "required": ["field"]
+        },
+        {
+          "properties": {
+            "area": { "const": "header" },
+            "field": { "type": "string", "minLength": 1 },
+            "destination": { "required": ["value"] }
+          },
+          "required": ["field"]
+        },
+        {
+          "properties": {
+            "area": { "const": "index_header" },
+            "destination": { "required": ["value"] }
+          },
+          "not": { "required": ["field"] }
+        }
+      ]
+    },
+    "TableLinkDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/TableLinkKind"
+        },
+        "value": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "default": null
+        },
+        "value_field": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "default": null
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["value"],
+          "properties": { "value": { "type": "string", "minLength": 1 } },
+          "not": { "required": ["value_field"] }
+        },
+        {
+          "required": ["value_field"],
+          "properties": { "value_field": { "type": "string", "minLength": 1 } },
+          "not": { "required": ["value"] }
+        }
+      ]
+    },
+    "TableLinkKind": {
+      "type": "string",
+      "enum": ["report", "plot", "url"]
+    },
+    "plotRefBlock": {
+      "allOf": [
+        { "$ref": "#/$defs/blockBase" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "ref"],
+          "properties": {
+            "type": { "const": "plot_ref" },
+            "ref": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "textBlock": {
+      "allOf": [
+        { "$ref": "#/$defs/blockBase" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "text"],
+          "properties": {
+            "type": { "const": "text" },
+            "text": { "type": "string" },
+            "format": { "type": "string", "enum": ["plain", "markdown"] }
+          }
+        }
+      ]
+    },
+    "column": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string", "minLength": 1 },
+        "label": { "type": ["string", "null"], "minLength": 1 },
+        "role": {
+          "type": ["string", "null"],
+          "enum": ["dimension", "measure", "time", "identifier", null]
+        },
+        "aggregation": {
+          "type": ["string", "null"],
+          "enum": ["sum", "avg", "min", "max", "count", "first", "last", null]
+        },
+        "format": {
+          "oneOf": [
+            { "$ref": "#/$defs/numberFormat" },
+            { "$ref": "#/$defs/currencyFormat" },
+            { "$ref": "#/$defs/percentFormat" },
+            { "$ref": "#/$defs/dateFormat" },
+            { "$ref": "#/$defs/datetimeFormat" }
+          ]
+        },
+        "hidden": { "type": "boolean", "default": false }
+      }
+    },
+    "numberFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "number" },
+        "decimals": { "type": ["integer", "null"], "minimum": 0, "maximum": 12 }
+      }
+    },
+    "currencyFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "currency"],
+      "properties": {
+        "kind": { "const": "currency" },
+        "currency": { "type": "string", "minLength": 1 },
+        "decimals": { "type": ["integer", "null"], "minimum": 0, "maximum": 12 }
+      }
+    },
+    "percentFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "percent" },
+        "decimals": { "type": ["integer", "null"], "minimum": 0, "maximum": 12 }
+      }
+    },
+    "dateFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "date" }
+      }
+    },
+    "datetimeFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "datetime" }
+      }
+    },
+    "block": {
+      "oneOf": [
+        { "$ref": "#/$defs/tableBlock" },
+        { "$ref": "#/$defs/plotRefBlock" },
+        { "$ref": "#/$defs/textBlock" }
+      ]
+    }
+  }
+}

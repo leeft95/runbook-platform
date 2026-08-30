@@ -206,7 +206,7 @@ def _lower_heading(heading: HeadingLayout, *, name: str, row: int, columns: int)
 
 
 def compile_layout(ctx: Any, report: Report | ReportLayout) -> Any:
-    """Compile a Report into a validated pdl-core/0.1 manifest."""
+    """Compile a Report into a validated pdl-core manifest."""
     layout = _layout(report)
     grids = _surviving_grid(layout)
     for grid in grids:

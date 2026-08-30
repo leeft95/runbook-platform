@@ -197,7 +197,7 @@ def execute_report(
     ):
         raise ValueError("report code mutated execution config or context hash")
     if not isinstance(result, PDLManifest):
-        raise TypeError("report page must return a pdl-core/0.1 PDLManifest")
+        raise TypeError("report page must return a pdl-core/0.1 or pdl-core/0.2 PDLManifest")
     # Snapshot notices are authoritative: report code cannot hide an immutable
     # warning or add a misleading authored replacement.
     manifest = result.model_copy(
