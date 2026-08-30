@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import re
 import typing as tp
+import unicodedata
 
 from ..models import (
     ConditionOp,
     TableAction,
     TableColumnRHS,
     TableCondition,
+    TableLink,
+    TableLinkDestination,
+    TableLinkKind,
     TableLiteralRHS,
     TableRule,
     TableTarget,
@@ -15,6 +20,77 @@ from ..models import (
 )
 
 ColumnRef = int | str
+
+
+def _slugify_link_part(value: object) -> str:
+    """Normalize a link name component to a stable lowercase hyphen slug."""
+    normalized = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "-", normalized.lower()).strip("-")
+
+
+def _build_plot_link_metadata(
+    table_name: object,
+    plot_columns: tp.Sequence[tuple[str, str]],
+    rendered_columns: tp.Sequence[str],
+    *,
+    column_plot_links: bool | list[str],
+    all_plots_link: bool,
+) -> tuple[list[str], list[TableLink], str | None]:
+    """Build deterministic plot names and semantic table links."""
+    table_slug = _slugify_link_part(table_name)
+    if not table_slug:
+        raise ValueError("table/header name must contain a slug when plot links are requested")
+
+    plot_names: list[str] = []
+    plot_columns_by_name: dict[str, str] = {}
+    seen_names: set[str] = set()
+    for column, plot_type in plot_columns:
+        column_name = str(column)
+        column_slug = _slugify_link_part(column_name)
+        if not column_slug:
+            raise ValueError(f"Column '{column_name}' cannot be normalized for a plot link")
+        plot_type_slug = _slugify_link_part(plot_type)
+        name = f"{table_slug}-{column_slug}-{plot_type_slug}"
+        if name in seen_names:
+            raise ValueError(f"Duplicate generated plot name: {name}")
+        seen_names.add(name)
+        plot_names.append(name)
+        plot_columns_by_name[column_name] = name
+
+    rendered = {str(column) for column in rendered_columns}
+    eligible = [column for column, _ in plot_columns if str(column) in rendered]
+    if column_plot_links is True:
+        selected = set(eligible)
+    elif isinstance(column_plot_links, list):
+        selected = set()
+        known = set(plot_columns_by_name)
+        for column in column_plot_links:
+            if not isinstance(column, str) or column not in known:
+                raise ValueError(f"Column '{column}' is unknown or has no generated plot")
+            if column not in rendered:
+                raise ValueError(f"Column '{column}' cannot be linked as a rendered header")
+            selected.add(column)
+    else:
+        selected = set()
+
+    links = [
+        TableLink(
+            area="header",
+            field=column,
+            destination=TableLinkDestination(kind=TableLinkKind.plot, value=plot_columns_by_name[column]),
+        )
+        for column in eligible
+        if column in selected
+    ]
+    all_plots_name = f"{table_slug}-plots" if all_plots_link else None
+    if all_plots_name is not None:
+        links.append(
+            TableLink(
+                area="index_header",
+                destination=TableLinkDestination(kind=TableLinkKind.plot, value=all_plots_name),
+            )
+        )
+    return plot_names, links, all_plots_name
 
 
 def _resolve_column_position(columns: tp.Sequence[str], ref: ColumnRef) -> int | None:

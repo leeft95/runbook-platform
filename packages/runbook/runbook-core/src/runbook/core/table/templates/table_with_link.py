@@ -13,6 +13,7 @@ from ..models import (
     TableFormatNumber,
     TableFormatSpec,
     TableGlobalStyle,
+    TableLink,
     TableRule,
     TableSizing,
     TableStyleFormat,
@@ -21,7 +22,7 @@ from ..models import (
     TableTarget,
     TargetScope,
 )
-from .common import color_negative_red, highlight_zscore
+from .common import _build_plot_link_metadata, color_negative_red, highlight_zscore
 
 
 def _aligned_moving_average(series: pd.Series, window: int, kind: MovingAvgModes | str) -> pd.Series:
@@ -193,6 +194,7 @@ def _build_general_style(
     title_column_width: int,
     data_column_width: int,
     na_rep: str | None,
+    links: list[TableLink] | None = None,
 ) -> dict[str, tp.Any]:
     """Build general style."""
     first_col = str(ret_df.columns[0])
@@ -263,6 +265,7 @@ def _build_general_style(
         sizing=TableSizing(columns=sizing_cols),
         rules=rules,
         options=options,
+        links=links,
     ).model_dump(mode="python", exclude_none=True)
 
 
@@ -280,6 +283,8 @@ def general_table_with_link(
     data_column_width: int = 60,
     fill_na: str | None = None,
     na_rep: str | None = "-",
+    column_plot_links: bool | list[str] = False,
+    all_plots_link: bool = False,
 ) -> dict[str, dict[str, tp.Any]]:
     """Build a daily table with linked plots using legacy mixed-row highlight semantics.
 
@@ -300,6 +305,9 @@ def general_table_with_link(
     if change_zscore_window < 2:
         raise ValueError("change_zscore_window must be >= 2")
 
+    link_requested = bool(column_plot_links or all_plots_link)
+    if link_requested and header is not None and not str(header).strip():
+        raise ValueError("table/header name must not be blank when plot links are requested")
     header_label = header or "table"
     _ = footer
 
@@ -338,21 +346,35 @@ def general_table_with_link(
         change_zscore_window=change_zscore_window,
         header_label=header_label,
     )
-    table_style = _build_general_style(
-        ret_df,
-        header_label=header_label,
-        helper_columns=helper_columns,
-        title_column_width=title_column_width,
-        data_column_width=data_column_width,
-        na_rep=na_rep,
-    )
-    return {
-        header_label: {
-            "data": ret_df,
-            "style": table_style,
-            "plots": plots,
-        }
+    links: list[TableLink] | None = None
+    plot_names: list[str] | None = None
+    all_plots_name: str | None = None
+    if link_requested:
+        plot_names, links, all_plots_name = _build_plot_link_metadata(
+            header_label,
+            [(str(col), chart_modes[str(col)]) for col in levels_df.columns],
+            [str(col) for col in ret_df.columns],
+            column_plot_links=column_plot_links,
+            all_plots_link=all_plots_link,
+        )
+    payload: dict[str, tp.Any] = {
+        "data": ret_df,
+        "style": _build_general_style(
+            ret_df,
+            header_label=header_label,
+            helper_columns=helper_columns,
+            title_column_width=title_column_width,
+            data_column_width=data_column_width,
+            na_rep=na_rep,
+            links=links,
+        ),
+        "plots": plots,
     }
+    if plot_names is not None:
+        payload["plot_names"] = plot_names
+        if all_plots_name is not None:
+            payload["all_plots_name"] = all_plots_name
+    return {header_label: payload}
 
 
 __all__ = ["general_table_with_link"]

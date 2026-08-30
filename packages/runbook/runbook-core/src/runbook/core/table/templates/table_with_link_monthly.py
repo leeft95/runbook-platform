@@ -17,6 +17,7 @@ from ..models import (
     TableFormatNumber,
     TableFormatSpec,
     TableGlobalStyle,
+    TableLink,
     TableRule,
     TableSizing,
     TableStyleFormat,
@@ -25,7 +26,7 @@ from ..models import (
     TableTarget,
     TargetScope,
 )
-from .common import color_negative_red, highlight_zscore
+from .common import _build_plot_link_metadata, color_negative_red, highlight_zscore
 
 
 def _month_end(ts: pd.Timestamp) -> pd.Timestamp:
@@ -318,6 +319,7 @@ def _build_monthly_style(
     ret_df: pd.DataFrame,
     *,
     na_rep: str | None,
+    links: list[TableLink] | None = None,
 ) -> dict[str, tp.Any]:
     """Build monthly style."""
     first_col = str(ret_df.columns[0])
@@ -376,6 +378,7 @@ def _build_monthly_style(
         sizing=TableSizing(columns=sizing_cols),
         rules=rules,
         options=options,
+        links=links,
     ).model_dump(mode="python", exclude_none=True)
 
 
@@ -392,6 +395,8 @@ def table_with_linked_plots_monthly(
     benchmark_quater: tp.Any = None,
     fill_na: str | None = None,
     na_rep: str | None = "-",
+    column_plot_links: bool | list[str] = False,
+    all_plots_link: bool = False,
 ) -> dict[str, dict[str, tp.Any]]:
     """Build the predefined monthly summary table with linked seasonal plots.
 
@@ -400,6 +405,10 @@ def table_with_linked_plots_monthly(
     seasonal plot per selected input series. Auxiliary ``_mean``/``_std``
     columns are retained for rule evaluation and hidden at render time.
     """
+    link_requested = bool(column_plot_links or all_plots_link)
+    if link_requested and (header is None or not str(header).strip()):
+        raise ValueError("table/header name must not be blank when plot links are requested")
+
     seasonal_plots = _seasonal_plots_for_columns(
         raw_df,
         moving_average_window=moving_averge_window,
@@ -428,15 +437,29 @@ def table_with_linked_plots_monthly(
 
     ret_df = table_df.reset_index()
     ret_df.columns = [str(col) for col in ret_df.columns]
-    table_style = _build_monthly_style(ret_df, na_rep=na_rep)
-
-    return {
-        header: {
-            "data": ret_df,
-            "style": table_style,
-            "plots": seasonal_plots,
-        }
+    links: list[TableLink] | None = None
+    plot_names: list[str] | None = None
+    all_plots_name: str | None = None
+    if link_requested:
+        plot_type = "seasonal-mva" if moving_averge_window is not None else "seasonal"
+        plot_names, links, all_plots_name = _build_plot_link_metadata(
+            header,
+            [(str(col), plot_type) for col in raw_df.columns],
+            [str(col) for col in ret_df.columns],
+            column_plot_links=column_plot_links,
+            all_plots_link=all_plots_link,
+        )
+    payload: dict[str, tp.Any] = {
+        "data": ret_df,
+        "style": _build_monthly_style(ret_df, na_rep=na_rep, links=links),
+        "plots": seasonal_plots,
     }
+    if plot_names is not None:
+        payload["plot_names"] = plot_names
+        if all_plots_name is not None:
+            payload["all_plots_name"] = all_plots_name
+
+    return {header: payload}
 
 
 __all__ = ["table_with_linked_plots_monthly"]
