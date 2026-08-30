@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from html import escape
 
 import pandas as pd
@@ -79,7 +80,15 @@ def render_html(store: BlobStore, manifest: PDLManifest, prefix: str) -> str:
             raise ValueError(f"unsupported PDL block type: {block.type!r}")
         position = f"grid-row: {block.row} / span {block.row_span}; grid-column: {block.col} / span {block.col_span};"
         blocks.append(f'<section class="rb-block" style="{position}">{title}{body}</section>')
-    css_link = f'<link rel="stylesheet" href="{escape(manifest.style.css_ref, quote=True)}">' if manifest.style else ""
+    css = ""
+    if manifest.style:
+        css = re.sub(
+            r"</style",
+            r"<\/style",
+            store.get(_key(prefix, manifest.style.css_ref)).decode("utf-8"),
+            flags=re.IGNORECASE,
+        )
+        css = f"<style>{css}</style>"
     columns = page.columns or 1
     warnings = "".join(f"<li>{escape(warning)}</li>" for warning in manifest.warnings)
     warning_markup = (
@@ -90,12 +99,14 @@ def render_html(store: BlobStore, manifest: PDLManifest, prefix: str) -> str:
         if warnings
         else ""
     )
+    report_title = escape(manifest.title)
+    report_as_of = escape(manifest.as_of.isoformat())
     return (
         "<!doctype html><html><head><meta charset='utf-8'><title>"
-        + escape(manifest.title)
+        + report_title
         + "</title>"
-        + css_link
-        + f'</head><body>{warning_markup}<main class="rb-page" style="--rb-columns: {columns};">'
+        + css
+        + f'</head><body><header><h1>{report_title}</h1><p>As of: {report_as_of}</p></header>{warning_markup}<main class="rb-page" style="--rb-columns: {columns};">'
         + "".join(blocks)
         + "</main></body></html>"
     )

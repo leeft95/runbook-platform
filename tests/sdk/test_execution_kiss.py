@@ -68,7 +68,9 @@ def test_report_execution_is_shared_and_cache_is_type_stable(tmp_path, pointer_r
     assert b".rb-page" in store.get(f"{cold.prefix}/styles/grid.css")
     html = store.get(cold.html_ref)
     assert b"<!doctype html>" in html
-    assert b'<link rel="stylesheet" href="styles/grid.css">' in html
+    assert b"<style>" in html
+    assert b".rb-page" in html
+    assert b'<link rel="stylesheet" href="styles/grid.css">' not in html
     assert b'class="rb-page"' in html
     assert b"grid-row: 1 / span 1; grid-column: 1 / span 1;" in html
     assert html.count(b"https://cdn.plot.ly/plotly-") == 1

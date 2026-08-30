@@ -90,7 +90,9 @@ def test_compose_report_page_applies_renderer_extension(tmp_path, monkeypatch) -
 
     layout = page.layout()
     assert getattr(layout, "id", None) == "preview-preview"
-    assert layout.children.children[0].children == "Composed preview"
+    header = layout.children.children[0]
+    assert header.children[0].children == "Composed preview"
+    assert header.children[1].children == "As of: 2024-01-01T00:00:00+00:00"
 
 
 def test_sqlite_provider_parameterizes_and_captures_safe_provenance() -> None:

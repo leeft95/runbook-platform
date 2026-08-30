@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 from runbook.core.data import DatasetFile
-from runbook.core.pdl.models import PDLManifest, PDLPage, PDLPageType, PDLTextBlock
+from runbook.core.pdl.models import PDLManifest, PDLPage, PDLPageType, PDLSourceType, PDLStyle, PDLTextBlock
 from runbook.core.table.models import TableArtifactRef
 from runbook.data import open_blob_store
 from runbook.data.manifests import build_manifest, publish_manifests, resolve_snapshot, write_dataframe
@@ -253,12 +253,17 @@ def test_heading_compiles_as_title_only_text_block() -> None:
 
 
 def test_static_html_accepts_compiled_layout() -> None:
-    layout = Report("HTML")
+    layout = Report("<HTML &>")
     layout.add(text("hello", title="Greeting"))
     manifest = compile_layout(_ctx(), layout)
     html = render_html(SimpleNamespace(), manifest, "reports/layout")
     assert "Greeting" in html
     assert "hello" in html
+    assert "<title>&lt;HTML &amp;&gt;</title>" in html
+    assert html.count("<h1>&lt;HTML &amp;&gt;</h1>") == 1
+    assert "<h1><HTML &></h1>" not in html
+    assert "<p>As of: 2026-01-01T00:00:00+00:00</p>" in html
+    assert html.index("<h1>") < html.index("<p>As of:") < html.index('<main class="rb-page"')
 
 
 def test_static_html_omits_heading_body_but_preserves_empty_text_body() -> None:
@@ -269,6 +274,27 @@ def test_static_html_omits_heading_body_but_preserves_empty_text_body() -> None:
     html = render_html(SimpleNamespace(), compile_layout(_ctx(), layout), "reports/layout")
     assert "<h2>Summary</h2>" in html
     assert html.count("<pre></pre>") == 1
+
+
+def test_static_html_escapes_style_closing_sequence(tmp_path) -> None:
+    store = open_blob_store(f"file:{tmp_path}")
+    store.put("reports/layout/styles/grid.css", b'.example { content: "</StYle><script>"; }')
+    layout = Report("HTML")
+    layout.add(text("hello"))
+    manifest = compile_layout(_ctx(), layout).model_copy(
+        update={
+            "style": PDLStyle(
+                css_ref="styles/grid.css",
+                source_type=PDLSourceType.manual,
+                source_key="test",
+            )
+        }
+    )
+
+    html = render_html(store, manifest, "reports/layout")
+
+    assert html.count("</style>") == 1
+    assert '<style>.example { content: "<\\/style><script>"; }</style>' in html
 
 
 def test_large_loop_composition_is_coordinates_free() -> None:

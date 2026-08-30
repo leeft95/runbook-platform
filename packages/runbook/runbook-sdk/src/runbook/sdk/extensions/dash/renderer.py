@@ -55,7 +55,7 @@ def render_dash_page(
         columns = manifest.page.columns or 1
         content = html.Div(
             [
-                html.H1(manifest.title),
+                html.Header([html.H1(manifest.title), html.P(f"As of: {manifest.as_of.isoformat()}")]),
                 _warning_component(manifest),
                 html.Div(
                     components,

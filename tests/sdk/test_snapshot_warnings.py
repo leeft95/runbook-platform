@@ -78,7 +78,12 @@ def test_snapshot_warnings_override_report_manifest_and_escape_html(tmp_path, po
     assert b"report-authored warning" not in html
     assert b"&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;" in html
     assert b"<script>alert('x')</script>" not in html
-    assert store.get(result.html_ref).index(b"rb-warnings") < store.get(result.html_ref).index(b"rb-page")
+    assert (
+        html.index(b"<h1>Authored warning</h1>")
+        < html.index(b"<p>As of: 2026-01-01T00:00:00+00:00</p>")
+        < html.index(b'<aside class="rb-warnings"')
+        < html.index(b'<main class="rb-page"')
+    )
 
 
 def test_dash_snapshot_warnings_are_outside_grid_without_changing_block_ids() -> None:
@@ -98,6 +103,10 @@ def test_dash_snapshot_warnings_are_outside_grid_without_changing_block_ids() ->
     page = render_dash_page(manifest, definition, SimpleNamespace(), namespace="warning-page")
     layout = page.layout()
     warning, grid = layout.children[1], layout.children[2]
+    header = layout.children[0]
+    assert header.children[0].children == "Dash warning"
+    assert header.children[1].children == "As of: 2026-01-01T00:00:00+00:00"
+    assert layout.children.index(header) < layout.children.index(warning) < layout.children.index(grid)
     assert warning.role == "alert"
     assert warning not in grid.children
     block = grid.children[0]
