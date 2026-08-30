@@ -8,6 +8,7 @@ import pandas as pd
 import plotly.io as pio
 from runbook.core import BlobStore
 from runbook.core.pdl.models import PDLManifest
+from runbook.core.table import TableStylePlan, render_table_html
 
 DEFAULT_GRID_CSS_REF = "styles/grid.css"
 DEFAULT_GRID_CSS = """.rb-page {
@@ -67,7 +68,25 @@ def render_html(store: BlobStore, manifest: PDLManifest, prefix: str) -> str:
                 import io
 
                 frame = pd.read_parquet(io.BytesIO(store.get(data_ref)))
-                body = frame.to_html(index=True, border=0, classes="runbook-table")
+                style_plan = (
+                    TableStylePlan.model_validate(store.get_json(_key(prefix, block.style_ref)))
+                    if block.style_ref
+                    else None
+                )
+                if block.links or (style_plan is not None and style_plan.links):
+                    plan = style_plan or TableStylePlan()
+                    by_target = {(link.area, link.field): link for link in plan.links or ()}
+                    for link in block.links or ():
+                        by_target[(link.area, link.field)] = link
+                    style_payload = plan.model_dump(mode="python", exclude_none=True)
+                    style_payload["schema_version"] = "table-style/0.2"
+                    style_payload["links"] = [
+                        link.model_dump(mode="python", exclude_none=True) for link in by_target.values()
+                    ]
+                    plan = TableStylePlan.model_validate(style_payload)
+                    body = render_table_html(frame, plan, table_class="runbook-table")
+                else:
+                    body = frame.to_html(index=True, border=0, classes="runbook-table")
         elif block.type == "plot_ref":
             payload = json.loads(store.get(_key(prefix, block.ref)).decode("utf-8"))
             body = pio.from_json(json.dumps(payload, sort_keys=True)).to_html(

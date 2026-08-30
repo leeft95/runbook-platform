@@ -3,12 +3,16 @@ from __future__ import annotations
 import re
 
 import pandas as pd
+import pytest
 from runbook.core.table.builder import normalize_table_style
 from runbook.sdk.table_style import (
     action,
     condition,
     format_percent,
     legacy_zscore_band_rules,
+    link_column,
+    link_header,
+    link_index_header,
     render_table_html,
     rhs_literal,
     rhs_zscore,
@@ -120,6 +124,35 @@ def test_sdk_table_style_preserves_typed_links_in_the_versioned_payload() -> Non
     assert payload["links"] == [
         {"area": "header", "field": "month", "destination": {"kind": "plot", "value": "plots/month"}}
     ]
+
+
+def test_sdk_link_helpers_build_body_and_header_declarations() -> None:
+    assert link_column("label", report_id="detail/x") == {
+        "area": "cells",
+        "field": "label",
+        "destination": {"kind": "report", "value": "detail/x"},
+    }
+    assert link_column("label", report_id_from="_detail")["destination"] == {
+        "kind": "report",
+        "value_field": "_detail",
+    }
+    assert link_column("label", url="https://example.test")["destination"] == {
+        "kind": "url",
+        "value": "https://example.test",
+    }
+    assert link_column("label", url_from="_url")["destination"] == {
+        "kind": "url",
+        "value_field": "_url",
+    }
+    assert link_header("label", report_id="summary")["area"] == "header"
+    assert link_index_header(url="https://example.test/all")["area"] == "index_header"
+
+
+def test_sdk_link_helpers_require_one_destination() -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        link_column("label")
+    with pytest.raises(ValueError, match="exactly one"):
+        link_column("label", report_id="detail", url="https://example.test")
 
 
 def test_sdk_render_table_html_applies_rule() -> None:

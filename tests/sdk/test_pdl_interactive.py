@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -35,6 +36,7 @@ from runbook.sdk.extensions.dash import (
     validate_dash_manifest,
 )
 from runbook.sdk.extensions.dash.renderer import _build_native_table, _convert_output
+from runbook.sdk.table_style import link_column, link_header, link_index_header
 
 
 def test_interaction_discovery_preserves_calc_and_page() -> None:
@@ -523,3 +525,60 @@ def test_native_null_values_match_html_with_and_without_na_rep(na_rep, expected_
     expected = [*expected_nulls, ""]
     assert native_values == expected
     assert all(f">{value}<" in html for value in expected)
+
+
+def test_native_table_renders_report_url_and_header_links_without_html_parsing() -> None:
+    frame = pd.DataFrame(
+        {
+            "label": ["US", "Europe", "Missing"],
+            "report_id": ["us/inventories", None, pd.NA],
+            "url": ["https://example.test/us", "https://example.test/eu", None],
+        },
+        index=pd.Index(["a", "b", "c"], name="Region"),
+    )
+    block = PDLTableBlock(
+        name="linked",
+        data_ref="linked.parquet",
+        row=1,
+        col=1,
+        links=[
+            link_column("label", report_id_from="report_id"),
+            link_column("report_id", url_from="url"),
+            link_header("label", report_id="summary/x"),
+            link_index_header(url="https://example.test/all"),
+        ],
+    )
+
+    table = _build_native_table(frame, block, "linked", SimpleNamespace())
+    headers = table.children[0].children.children
+    rows = table.children[1].children
+
+    assert headers[0].children.__class__.__name__ == "A"
+    assert headers[0].children.href == "https://example.test/all"
+    assert headers[1].children.__class__.__name__ == "Link"
+    assert headers[1].children.href == "/report/summary/x"
+    assert rows[0].children[1].children.__class__.__name__ == "Link"
+    assert rows[0].children[1].children.href == "/report/us/inventories"
+    assert rows[1].children[1].children.__class__.__name__ == "str"
+    assert rows[0].children[2].children.__class__.__name__ == "A"
+    assert rows[0].children[2].children.href == "https://example.test/us"
+
+
+def test_native_and_html_linked_unformatted_numeric_values_match() -> None:
+    frame = pd.DataFrame({"value": [1.23456789], "report_id": ["detail"]})
+    link = link_column("value", report_id_from="report_id")
+    block = PDLTableBlock(
+        name="linked",
+        data_ref="linked.parquet",
+        row=1,
+        col=1,
+        links=[link],
+    )
+
+    native = _build_native_table(frame, block, "linked", SimpleNamespace())
+    native_text = native.children[1].children[0].children[1].children.children
+    html = render_table_html(frame, {"links": [link]})
+    html_match = re.search(r"<a\b[^>]*>([^<]*)</a>", html)
+
+    assert html_match is not None
+    assert native_text == html_match.group(1) == "1.234568"

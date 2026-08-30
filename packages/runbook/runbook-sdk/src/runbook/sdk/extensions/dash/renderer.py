@@ -6,12 +6,19 @@ import io
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import pyarrow as pa
 from runbook.core.pdl.models import PDLColumn, PDLColumnRole, PDLManifest, PDLPlotRefBlock, PDLTableBlock, PDLTextBlock
-from runbook.core.table import TableFormatDate, TableStylePlan, format_table_value, resolve_table_style
+from runbook.core.table import (
+    TableFormatDate,
+    TableLinkDestination,
+    TableLinkKind,
+    TableStylePlan,
+    format_table_value,
+    resolve_table_style,
+)
 from runbook.sdk.discovery import ReportDefinition
 from runbook.sdk.extensions.dash.ids import DashIds
 from runbook.sdk.extensions.dash.models import (
@@ -349,11 +356,17 @@ def _build_native_table(frame: pd.DataFrame, block: PDLTableBlock, component_id:
 
     header_cells: list[Any] = []
     if resolved.show_index:
-        header_cells.append(html.Th("", style=dict(header_base)))
+        index_header: Any = "" if frame.index.name is None else str(frame.index.name)
+        if resolved.index_header_link is not None:
+            index_header = _dash_link(index_header, resolved.index_header_link)
+        header_cells.append(html.Th(index_header, style=dict(header_base)))
     for field in fields:
         style = dict(header_base)
         _apply_width(style, resolved.column_width_px.get(field))
-        header_cells.append(html.Th(by_field[field].label or field, style=style))
+        header = by_field[field].label or field
+        if field in resolved.header_links:
+            header = _dash_link(header, resolved.header_links[field])
+        header_cells.append(html.Th(header, style=style))
 
     body_rows: list[Any] = []
     for row_pos, (index_value, row) in enumerate(
@@ -376,6 +389,9 @@ def _build_native_table(frame: pd.DataFrame, block: PDLTableBlock, component_id:
             _apply_width(cell_style, row_style)
             cell_style.update(_dash_style(resolved.cell_css.get((row_pos, field), {})))
             value = _display_value(values[field], by_field[field], resolved)
+            destination = resolved.cell_links.get((row_pos, field))
+            if destination is not None:
+                value = _dash_link(value, destination)
             row_cells.append(html.Td(value, style=cell_style))
         body_rows.append(html.Tr(row_cells))
 
@@ -389,10 +405,44 @@ def _build_native_table(frame: pd.DataFrame, block: PDLTableBlock, component_id:
 def _read_table_style(ctx: Any, block: PDLTableBlock) -> TableStylePlan:
     """Read one persisted style plan, or use the resolver defaults."""
     if block.style_ref:
-        return TableStylePlan.model_validate(_read_json(ctx, block.style_ref))
-    if block.style_key:
-        return TableStylePlan(style_key=block.style_key)
-    return TableStylePlan()
+        plan = TableStylePlan.model_validate(_read_json(ctx, block.style_ref))
+    elif block.style_key:
+        plan = TableStylePlan(style_key=block.style_key)
+    else:
+        plan = TableStylePlan()
+    if not block.links:
+        return plan
+
+    # Artifact refs may carry links separately from a persisted style. The
+    # block declaration wins for the same target while preserving style links.
+    by_target = {(link.area, link.field): link for link in plan.links or ()}
+    for link in block.links:
+        by_target[(link.area, link.field)] = link
+    links = list(by_target.values())
+    payload = plan.model_dump(mode="python", exclude_none=True)
+    payload["schema_version"] = "table-style/0.2"
+    payload["links"] = [link.model_dump(mode="python", exclude_none=True) for link in links]
+    return TableStylePlan.model_validate(payload)
+
+
+def _dash_link(display: Any, destination: TableLinkDestination) -> Any:
+    """Build one native Dash link from resolved table semantics."""
+    from dash import dcc, html
+
+    if destination.kind == TableLinkKind.report:
+        assert destination.value is not None
+        return dcc.Link(
+            display,
+            href=f"/report/{destination.value}",
+        )
+    if destination.kind == TableLinkKind.url:
+        assert destination.value is not None
+        return cast(Any, html.A)(
+            display,
+            href=destination.value,
+            **{"data-runbook-link-kind": "url"},
+        )
+    return display
 
 
 def _apply_width(style: dict[str, Any], width: int | None) -> None:
@@ -434,6 +484,8 @@ def _display_value(value: Any, semantic: PDLColumn, resolved: Any) -> Any:
                 thousands=resolved.thousands,
             )
         )
+    if semantic.format is None and resolved.links:
+        return _display_scalar(format_table_value(value, na_rep=resolved.na_rep, default=True))
     return _format_pdl_value(value, semantic.format)
 
 

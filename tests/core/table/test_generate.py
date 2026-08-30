@@ -10,6 +10,7 @@ from runbook.core.table import (
     TableFormatNumber,
     TableFormatPercent,
     TableFormatString,
+    TableLink,
     TableStylePlan,
     format_table_value,
     normalize_table_style,
@@ -99,6 +100,153 @@ def test_resolve_table_style_is_deterministic_and_renderer_neutral() -> None:
     assert resolved.row_width_px == {0: 80}
     assert resolved.formats["value"].kind == "number"
     assert resolved.cell_css[(1, "value")]["color"] == "red"
+
+
+def test_resolve_table_style_resolves_static_and_dynamic_report_url_links() -> None:
+    df = pd.DataFrame(
+        {
+            "report_label": ["<US>", "Europe", "Missing"],
+            "url_label": ["Research", "Europe", "Missing"],
+            "report": ["us/inventories", None, pd.NA],
+            "url": ["https://example.test/us", "https://example.test/eu", None],
+        },
+        index=pd.Index(["a", "b", "c"], name="<Region>"),
+    )
+    style = TableStylePlan(
+        links=[
+            TableLink(
+                area="cells",
+                field="report_label",
+                destination={"kind": "report", "value_field": "report"},
+            ),
+            TableLink(
+                area="cells",
+                field="url_label",
+                destination={"kind": "url", "value_field": "url"},
+            ),
+            TableLink(area="header", field="report_label", destination={"kind": "report", "value": "summary/x"}),
+            TableLink(area="index_header", destination={"kind": "url", "value": "https://example.test/all"}),
+        ],
+    )
+
+    resolved = resolve_table_style(df, style)
+
+    assert resolved.cell_links[(0, "report_label")].kind.value == "report"
+    assert resolved.cell_links[(0, "report_label")].value == "us/inventories"
+    assert resolved.cell_links[(0, "url_label")].kind.value == "url"
+    assert resolved.cell_links[(0, "url_label")].value == "https://example.test/us"
+    assert (1, "report_label") not in resolved.cell_links
+    assert (2, "url_label") not in resolved.cell_links
+    assert resolved.header_links["report_label"].value == "summary/x"
+    assert resolved.index_header_link is not None
+
+
+def test_render_table_html_renders_escaped_semantic_links_and_hides_dynamic_helpers() -> None:
+    df = pd.DataFrame(
+        {
+            "report_label": ["<US>", "Europe", "Missing"],
+            "url_label": ["Research", "Europe", "Missing"],
+            "report": ["us/inventories", None, pd.NA],
+            "url": ['https://example.test/us?q="x"', "https://example.test/eu", None],
+        },
+        index=pd.Index(["a", "b", "c"], name="<Region>"),
+    )
+    style = TableStylePlan(
+        links=[
+            TableLink(area="cells", field="report_label", destination={"kind": "report", "value_field": "report"}),
+            TableLink(area="cells", field="url_label", destination={"kind": "url", "value_field": "url"}),
+            TableLink(area="header", field="report_label", destination={"kind": "report", "value": "summary/x"}),
+            TableLink(area="index_header", destination={"kind": "url", "value": "https://example.test/all"}),
+        ],
+        options={"hidden_columns": ["report", "url"]},
+    )
+
+    html = render_table_html(df, style)
+
+    assert 'href="/report/us/inventories"' in html
+    assert 'href="https://example.test/us?q=&quot;x&quot;"' in html
+    assert 'data-runbook-link-kind="url"' in html
+    assert 'href="/report/summary/x"' in html
+    assert 'data-runbook-report-id="summary/x"' in html
+    assert "&lt;US&gt;" in html
+    assert "<script" not in html.lower()
+    assert 'class="col_heading' in html
+    assert ">report<" not in html
+    assert ">url<" not in html
+
+
+def test_linked_html_keeps_typed_numeric_header_formatting() -> None:
+    df = pd.DataFrame({"value": [1.23456789]})
+
+    html = render_table_html(
+        df,
+        TableStylePlan(
+            links=[TableLink(area="header", field="value", destination={"kind": "report", "value": "summary"})]
+        ),
+    )
+
+    assert ">1.234568<" in html
+    assert 'href="/report/summary"' in html
+
+
+def test_linked_html_keeps_typed_numeric_cell_formatting() -> None:
+    df = pd.DataFrame({"value": [1.23456789], "report": ["detail"]})
+
+    html = render_table_html(
+        df,
+        TableStylePlan(
+            links=[TableLink(area="cells", field="value", destination={"kind": "report", "value_field": "report"})]
+        ),
+    )
+
+    assert 'data-runbook-report-id="detail"' in html
+    assert ">1.234568</a>" in html
+
+
+def test_mixed_linked_and_unlinked_numeric_cells_keep_style_formatting() -> None:
+    df = pd.DataFrame({"linked": [1.23456789], "plain": [9.87654321]})
+    style = TableStylePlan(
+        format={"precision": 2},
+        links=[TableLink(area="cells", field="linked", destination={"kind": "report", "value": "detail"})],
+    )
+
+    html = render_table_html(df, style)
+
+    assert ">1.23</a>" in html
+    assert ">9.88<" in html
+
+
+@pytest.mark.parametrize(
+    "style",
+    [
+        TableStylePlan(
+            links=[TableLink(area="cells", field="label", destination={"kind": "url", "value": "javascript:bad"})]
+        ),
+        TableStylePlan(
+            links=[
+                TableLink(
+                    area="cells",
+                    field="label",
+                    destination={"kind": "url", "value_field": "missing_url"},
+                )
+            ]
+        ),
+        TableStylePlan(
+            links=[
+                TableLink(
+                    area="cells",
+                    field="missing_label",
+                    destination={"kind": "report", "value": "detail"},
+                )
+            ]
+        ),
+    ],
+)
+def test_table_links_reject_unsafe_urls_and_missing_fields(style: TableStylePlan) -> None:
+    df = pd.DataFrame({"label": ["US"]})
+
+    with pytest.raises(ValueError):
+        resolve_table_style(df, style)
 
 
 def _extract_css_blocks(html: str) -> list[tuple[list[str], dict[str, str]]]:

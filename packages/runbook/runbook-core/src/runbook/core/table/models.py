@@ -492,6 +492,10 @@ class ResolvedTableStyle:
     global_style: TableGlobalStyle
     show_index: bool
     max_rows: int
+    links: tuple[TableLink, ...]
+    cell_links: dict[tuple[int, str], TableLinkDestination]
+    header_links: dict[str, TableLinkDestination]
+    index_header_link: TableLinkDestination | None
 
     @property
     def format(self) -> TableStyleFormat:

@@ -117,6 +117,78 @@ def format_date(column: str, pattern: str) -> TableFormatEntry:
     }
 
 
+def _link_destination(
+    *,
+    report_id: str | None = None,
+    report_id_from: str | None = None,
+    url: str | None = None,
+    url_from: str | None = None,
+) -> dict[str, str]:
+    """Build one typed report or URL destination."""
+    choices = [
+        ("report", "value", report_id),
+        ("report", "value_field", report_id_from),
+        ("url", "value", url),
+        ("url", "value_field", url_from),
+    ]
+    selected = [(kind, key, value) for kind, key, value in choices if value is not None]
+    if len(selected) != 1:
+        raise ValueError("provide exactly one of report_id, report_id_from, url, or url_from")
+    kind, key, value = selected[0]
+    assert value is not None
+    return {"kind": kind, key: value}
+
+
+def link_column(
+    column: str,
+    *,
+    report_id: str | None = None,
+    report_id_from: str | None = None,
+    url: str | None = None,
+    url_from: str | None = None,
+) -> dict[str, Any]:
+    """Link body cells in one column to reports or safe URLs."""
+    return {
+        "area": "cells",
+        "field": column,
+        "destination": _link_destination(
+            report_id=report_id,
+            report_id_from=report_id_from,
+            url=url,
+            url_from=url_from,
+        ),
+    }
+
+
+def link_header(
+    column: str,
+    *,
+    report_id: str | None = None,
+    url: str | None = None,
+) -> dict[str, Any]:
+    """Link one column header to a report or safe URL."""
+    return {
+        "area": "header",
+        "field": column,
+        "destination": _link_destination(report_id=report_id, url=url),
+    }
+
+
+link_column_header = link_header
+
+
+def link_index_header(
+    *,
+    report_id: str | None = None,
+    url: str | None = None,
+) -> dict[str, Any]:
+    """Link the index/table header to a report or safe URL."""
+    return {
+        "area": "index_header",
+        "destination": _link_destination(report_id=report_id, url=url),
+    }
+
+
 def column_width(label: str, width_px: int) -> ColumnSizingEntry:
     """Handle column width."""
     return {
@@ -476,6 +548,10 @@ __all__ = [
     "format_date",
     "format_number",
     "format_percent",
+    "link_column",
+    "link_column_header",
+    "link_header",
+    "link_index_header",
     "legacy_zscore_band_rules",
     "render_table_html",
     "highlight_z_rules",

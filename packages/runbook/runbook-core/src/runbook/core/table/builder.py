@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from html import escape
-from numbers import Number
+from numbers import Integral, Number, Real
 from typing import Any, Callable, cast
 
 import pandas as pd
@@ -22,6 +23,9 @@ from runbook.core.table.models import (
     TableFormatPercent,
     TableFormatSpec,
     TableFormatString,
+    TableLink,
+    TableLinkDestination,
+    TableLinkKind,
     TableLiteralRHS,
     TableRowRef,
     TableRowRHS,
@@ -422,6 +426,77 @@ def _resolve_style_maps_for_frames(
     )
 
 
+def _validate_url(value: str) -> str:
+    """Validate a link URL accepted by both table renderers."""
+    from urllib.parse import urlsplit
+
+    if value != value.strip() or any(ord(char) < 0x20 for char in value):
+        raise ValueError(f"table URL contains whitespace or control characters: {value!r}")
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"table URL must use an http or https scheme: {value!r}")
+    return value
+
+
+def _resolved_destination(destination: TableLinkDestination, value: Any = None) -> TableLinkDestination | None:
+    """Resolve one static or dynamic destination to a concrete destination."""
+    if destination.value_field is not None:
+        if _is_null(value):
+            return None
+        resolved_value = str(value)
+    else:
+        assert destination.value is not None
+        resolved_value = destination.value
+
+    if destination.kind == TableLinkKind.url:
+        _validate_url(resolved_value)
+    return TableLinkDestination(kind=destination.kind, value=resolved_value)
+
+
+def _resolve_links(
+    visible_df: pd.DataFrame,
+    links: Sequence[TableLink] | None,
+) -> tuple[
+    tuple[TableLink, ...],
+    dict[tuple[int, str], TableLinkDestination],
+    dict[str, TableLinkDestination],
+    TableLinkDestination | None,
+]:
+    """Resolve table link declarations against a concrete dataframe."""
+    normalized_links = tuple(links or ())
+    column_lookup = _column_lookup(visible_df)
+    cell_links: dict[tuple[int, str], TableLinkDestination] = {}
+    header_links: dict[str, TableLinkDestination] = {}
+    index_header_link: TableLinkDestination | None = None
+
+    for link in normalized_links:
+        field = link.field
+        if field is not None and field not in column_lookup:
+            raise ValueError(f"link field label not found: {field!r}")
+        destination_field = link.destination.value_field
+        if destination_field is not None and destination_field not in column_lookup:
+            raise ValueError(f"link destination field label not found: {destination_field!r}")
+
+        if link.area == "cells":
+            assert field is not None
+            for row_pos in range(len(visible_df.index)):
+                destination_value = (
+                    visible_df.iat[row_pos, column_lookup[destination_field]] if destination_field is not None else None
+                )
+                resolved = _resolved_destination(link.destination, destination_value)
+                if resolved is not None:
+                    cell_links[(row_pos, field)] = resolved
+        elif link.area == "header":
+            assert field is not None
+            resolved = _resolved_destination(link.destination)
+            if resolved is not None:
+                header_links[field] = resolved
+        else:
+            index_header_link = _resolved_destination(link.destination)
+
+    return normalized_links, cell_links, header_links, index_header_link
+
+
 def resolve_table_style(
     df: pd.DataFrame,
     style: StyleInput | None = None,
@@ -442,6 +517,7 @@ def resolve_table_style(
         raise ValueError("style_df must align to visible df rows")
 
     maps = _resolve_style_maps_for_frames(visible_df, plan, style_df=visible_style_df)
+    links, cell_links, header_links, index_header_link = _resolve_links(visible_df, plan.links)
     visible_labels = tuple(str(col) for col in visible_df.columns)
     hidden_columns = frozenset(col for col in plan.options.hidden_columns if col in visible_df.columns)
     hidden_rows = frozenset(
@@ -465,6 +541,10 @@ def resolve_table_style(
         global_style=plan.options.global_style,
         show_index=plan.options.show_index,
         max_rows=plan.options.max_rows,
+        links=links,
+        cell_links=cell_links,
+        header_links=header_links,
+        index_header_link=index_header_link,
     )
 
 
@@ -497,6 +577,7 @@ def format_table_value(
     na_rep: str | None = None,
     precision: int | None = None,
     thousands: str | None = None,
+    default: bool = False,
 ) -> Any:
     """Format one scalar without binding the implementation to a renderer."""
     if _is_null(value):
@@ -535,12 +616,86 @@ def format_table_value(
         formatted = f"{num:,.{digits}f}" if thousands else f"{num:.{digits}f}"
         return formatted.replace(",", thousands) if thousands and thousands != "," else formatted
 
+    if default and isinstance(value, Real) and not isinstance(value, Integral):
+        return f"{value:.6f}"
+
     return value
 
 
 def _formatter_from_spec(spec: TableFormatSpec) -> Callable[[Any], Any]:
     """Return a renderer-neutral table scalar formatter for pandas Styler."""
     return lambda value: format_table_value(value, spec)
+
+
+def _link_anchor(display: str, destination: TableLinkDestination) -> str:
+    """Build one escaped semantic table anchor."""
+    if destination.kind == TableLinkKind.report:
+        assert destination.value is not None
+        report_id = escape(destination.value, quote=True)
+        href = escape(f"/report/{destination.value}", quote=True)
+        return f'<a href="{href}" data-runbook-link-kind="report" data-runbook-report-id="{report_id}">{display}</a>'
+    if destination.kind == TableLinkKind.url:
+        assert destination.value is not None
+        href = escape(destination.value, quote=True)
+        return f'<a href="{href}" data-runbook-link-kind="url">{display}</a>'
+    return display
+
+
+def _replace_index_header(html_output: str, index_name: Any, destination: TableLinkDestination | None) -> str:
+    """Safely render the optional index header link in pandas Styler output."""
+    display = escape(str(index_name), quote=True) if index_name is not None else "&nbsp;"
+    if destination is not None:
+        display = _link_anchor(display, destination)
+    if index_name is not None:
+        pattern = r'(<th\b[^>]*class="[^"]*\bindex_name\b[^"]*"[^>]*>).*?(</th>)'
+    else:
+        pattern = r'(<th\b[^>]*class="[^"]*\bblank\b[^"]*"[^>]*>).*?(</th>)'
+    return re.sub(
+        pattern,
+        lambda match: f"{match.group(1)}{display}{match.group(2)}",
+        html_output,
+        count=1,
+        flags=re.DOTALL,
+    )
+
+
+def _inject_link_anchors(
+    html_output: str,
+    table_uuid: str,
+    visible_df: pd.DataFrame,
+    resolved: ResolvedTableStyle,
+) -> str:
+    """Wrap escaped Styler cell and header contents without changing dataframe dtypes."""
+    column_lookup = _column_lookup(visible_df)
+    table_id = f"T_{table_uuid}"
+
+    for (row_pos, field), destination in resolved.cell_links.items():
+        col_pos = column_lookup.get(field)
+        if col_pos is None:
+            continue
+        pattern = rf'(<td\b[^>]*\bid="{re.escape(table_id)}_row{row_pos}_col{col_pos}"[^>]*>)(.*?)(</td>)'
+        html_output = re.sub(
+            pattern,
+            lambda match: f"{match.group(1)}{_link_anchor(match.group(2), destination)}{match.group(3)}",
+            html_output,
+            count=1,
+            flags=re.DOTALL,
+        )
+
+    for field, destination in resolved.header_links.items():
+        col_pos = column_lookup.get(field)
+        if col_pos is None:
+            continue
+        pattern = rf'(<th\b[^>]*\bid="{re.escape(table_id)}_level0_col{col_pos}"[^>]*>)(.*?)(</th>)'
+        html_output = re.sub(
+            pattern,
+            lambda match: f"{match.group(1)}{_link_anchor(match.group(2), destination)}{match.group(3)}",
+            html_output,
+            count=1,
+            flags=re.DOTALL,
+        )
+
+    return html_output
 
 
 def _deterministic_styler_uuid(df: pd.DataFrame, plan: TableStylePlan, table_class: str) -> str:
@@ -655,16 +810,29 @@ def render_table_html(
 
     table_attrs = f'class="{escape(table_class)}" data-style-schema="{escape(resolved.schema_version)}"'
 
+    table_uuid = _deterministic_styler_uuid(visible_df, plan, table_class)
     styler = cast(Any, visible_df.style)
-    styler = styler.set_uuid(_deterministic_styler_uuid(visible_df, plan, table_class))
+    styler = styler.set_uuid(table_uuid)
     styler = styler.set_table_attributes(table_attrs)
     styler = styler.set_table_styles(cast(Any, table_styles), overwrite=False)
     styler = styler.apply(lambda _: css_frame, axis=None)
+    if resolved.links:
+        styler = styler.format_index(
+            lambda value: str(value),
+            axis="index",
+            escape="html",
+        )
+        styler = styler.format_index(
+            lambda value: str(value),
+            axis="columns",
+            escape="html",
+        )
     styler = styler.format(
         formatter=cast(Any, formatter_map) if formatter_map else None,
         na_rep=resolved.na_rep,
         precision=resolved.precision,
         thousands=resolved.thousands,
+        escape="html" if resolved.links else None,
     )
 
     if not resolved.show_index:
@@ -679,7 +847,12 @@ def render_table_html(
         hidden_row_index = visible_df.index.take(hidden_row_positions)
         styler = styler.hide(subset=hidden_row_index, axis="index")
 
-    return styler.to_html()
+    rendered = styler.to_html()
+    if resolved.links:
+        rendered = _inject_link_anchors(rendered, table_uuid, visible_df, resolved)
+    if resolved.links and resolved.show_index:
+        rendered = _replace_index_header(rendered, visible_df.index.name, resolved.index_header_link)
+    return rendered
 
 
 __all__ = [
