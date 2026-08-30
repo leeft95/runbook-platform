@@ -168,3 +168,46 @@ def test_missing_aggregate_group_fails(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="no matching registered members"):
         render_html_bundle(store, manifest, "reports/report", {"plots/other-line.json": _plot_payload("other")})
+
+
+def test_style_ref_only_html_tables_keep_persisted_style(tmp_path) -> None:
+    store = BlobStore(f"file:{tmp_path}")
+    frame = pd.DataFrame({"value": [1]})
+    parquet = io.BytesIO()
+    frame.to_parquet(parquet, index=False)
+    store.put("reports/report/table.parquet", parquet.getvalue())
+    store.put_json(
+        "reports/report/styles/table.json",
+        {
+            "rules": [
+                {
+                    "id": "highlight",
+                    "target": {"scope": "columns", "labels": ["value"]},
+                    "action": {"background_color": "#fee2e2"},
+                }
+            ]
+        },
+    )
+    manifest = PDLManifest(
+        title="Style-only table",
+        snapshot_id="snapshot",
+        as_of="2026-01-01T00:00:00Z",
+        page=PDLPage(
+            page_type=PDLPageType.grid,
+            rows=1,
+            columns=1,
+            blocks=[
+                PDLTableBlock(
+                    name="table",
+                    data_ref="table.parquet",
+                    style_ref="styles/table.json",
+                    row=1,
+                    col=1,
+                )
+            ],
+        ),
+    )
+
+    html = render_html(store, manifest, "reports/report")
+
+    assert "#fee2e2" in html

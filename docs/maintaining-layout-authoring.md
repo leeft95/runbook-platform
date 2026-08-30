@@ -32,6 +32,12 @@ renderer
    static output, and `runbook.sdk.extensions.dash.renderer` handles the
    optional interactive page.
 
+The two renderers consume the same PDL table/link semantics. Keep ordinary
+tables on the native static Dash path; AG Grid is selected only when an
+interaction explicitly owns a table output. Dash route resolution belongs to
+the host, not layout compilation, and this reporting path must not grow an
+iframe, `srcDoc`, or `postMessage` bridge.
+
 The authoring contract is intentionally flat: nested grids are rejected,
 high-level layouts default to `max_columns = 12`, and LCM normalization is
 never silently rounded. Keep these rules aligned with

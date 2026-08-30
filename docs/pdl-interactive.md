@@ -11,6 +11,12 @@ snapshot -> Python report -> PDL -> HTML (always valid)
                            \-> Dash page (optional enhancement)
 ```
 
+The default Dash representation of a PDL table is a native static Dash table,
+which is the peer of the HTML table renderer. AG Grid is reserved for an
+explicit interactive-table declaration (as in `reports/pnl_explorer.py`), not
+silently selected for every table. The normal reporting path has no iframe,
+`srcDoc`, or HTML-injection bridge.
+
 PDL says what the report means; the Dash renderer says how controls and
 callbacks are presented. Report code does not need Dash callback context,
 component IDs, or callback decorators.
@@ -69,6 +75,11 @@ See `reports/pnl_explorer.py` for a complete static-first example using
 `dashboard(...)`, `multi_select(...)`, `select(...)`, `date_range(...)`, and an
 interaction that updates summary, chart, and table blocks.
 
+Table cell and header links are also semantic PDL metadata. Use the table link
+helpers and generated plot names; do not author raw `<a>` tags in DataFrames.
+HTML emits linked plot documents, while Dash resolves the same logical report
+and plot destinations through the host-owned route resolver.
+
 ## Static fallback and live data
 
 HTML ignores an unrecognised extension namespace but still renders the report's
@@ -106,6 +117,11 @@ page = render_dash_page(
 app.layout = page.layout()
 page.register_callbacks(app)
 ```
+
+For plot destinations, the host can route `/plot/<name>` to
+`page.plot_layout(name)` and route report destinations to its own report page
+registry. This keeps navigation outside canonical PDL and lets multiple
+namespaced pages share one Dash application.
 
 Namespaces keep IDs distinct when a host mounts more than one report. The
 development CLI can serve the same page:

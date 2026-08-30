@@ -11,7 +11,8 @@ how these components are installed.
 ```text
 source -> raw artifact -> curated dataset -> current pointer
                                       -> snapshot -> report code -> PDL
-                                                               -> HTML / Dash
+                                                               -> HTML table / plot pages
+                                                               -> native Dash page / routes
 ```
 
 ## Package boundaries
@@ -65,8 +66,12 @@ never advance production pointers.
 Layout state is an SDK concern. Renderers receive compiled PDL, never layout
 objects. The static HTML renderer is the compatibility baseline; the Dash
 renderer consumes the same manifest and returns a host-embeddable namespaced
-page. Optional live providers are injected at runtime and are not serialized
-into profiles or PDL.
+page. Ordinary tables are static HTML or native static Dash; AG Grid is an
+explicit interactive opt-in. Semantic table links and deterministic generated
+plot names are shared by both renderers. The report host owns Dash routes and
+authentication. Optional live providers are injected at runtime and are not
+serialized into profiles or PDL. The normal reporting path has no iframe,
+`srcDoc`, or `postMessage` bridge.
 
 ## Guardrails
 

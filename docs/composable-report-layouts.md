@@ -9,6 +9,11 @@ places finished text, table, and plot artifacts side by side:
 Python artifacts -> Report / Section / Grid -> PDL -> HTML or Dash
 ```
 
+Layout placement is renderer-neutral: ordinary tables remain HTML tables or
+native static Dash tables, and semantic cell/header links remain intact. A
+report host owns Dash navigation; AG Grid is an explicit interactive-table
+choice rather than a layout default.
+
 ```python
 from runbook.sdk.layout import Report
 

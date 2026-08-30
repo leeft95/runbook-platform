@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, cast
 from uuid import uuid4
 
 import dash_ag_grid as dag
@@ -420,7 +420,7 @@ def _editor_modal(prefix: str) -> html.Div:
                     html.Div(
                         [
                             html.H3(id=f"{prefix}-editor-title", style={"margin": 0}),
-                            html.Button(
+                            cast(Any, html.Button)(
                                 "×",
                                 id=f"{prefix}-editor-close",
                                 n_clicks=0,

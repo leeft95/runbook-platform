@@ -80,6 +80,12 @@ intentionally omitted.
 For analyst-facing client, Snapshot, and workspace examples, see [Research
 with the SDK in Jupyter](sdk-and-notebooks.md).
 
+Table links are part of the renderer-neutral table contract. Use
+`runbook.sdk.table_style.link_column`, `link_header`, and `link_index_header`
+to declare report, URL, or generated-plot destinations; links are not raw HTML
+stored in DataFrames. HTML publishes linked plot pages, while a host-owned
+Dash route resolver handles the same logical destinations.
+
 ```{eval-rst}
 .. automodule:: runbook.core.data
    :members:

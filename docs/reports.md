@@ -118,6 +118,38 @@ already available. See [Interactive reports](pdl-interactive.md) for controls
 and [Dash renderer extensions](dash-renderer-extensions.md) for trusted host
 customisation.
 
+## Semantic table links
+
+Table links are renderer-neutral metadata. Keep report IDs and URLs in table
+columns and declare the destination with the public link helpers; never put
+raw `<a>` tags in a DataFrame:
+
+```python
+from runbook.sdk.table_style import link_column
+
+style = {
+    "links": [
+        link_column("price", report_id_from="detail_report"),
+        link_column("source", url_from="source_url"),
+    ]
+}
+table_ref = ctx.artifact.table(frame, name="prices", style=style)
+```
+
+The same semantic link becomes an HTML anchor or a native Dash link. Plot-link
+templates derive deterministic names from the table header, column, and plot
+mode. Column headers can point to individual generated plot pages and the
+index/header link can point to an aggregate page containing all table plots.
+The HTML bundle publishes these pages automatically. In Dash, the report host
+owns `/report/...` and `/plot/...` navigation and may provide a route resolver.
+
+The checked-in [`reports/linked_table_report.py`](https://github.com/leeft95/runbook-platform/blob/main/reports/linked_table_report.py)
+is the small golden example covering body report links, external URLs,
+individual/aggregate plot links, standalone HTML pages, and native Dash
+navigation. `reports/pnl_explorer.py` remains the explicit AG Grid example;
+ordinary tables stay native static Dash tables. The checked-in profile is
+`linked_table_demo` over `demo_daily_prices`.
+
 ## Reports cookbook
 
 These recipes show how the public helpers compose in a report. The focused

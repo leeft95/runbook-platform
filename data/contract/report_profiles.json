@@ -24,5 +24,11 @@
     "enabled": true,
     "datasets": {"pnl": "demo_pnl_explorer"},
     "extensions": {"modes": {"dash": {"enabled": true}}}
+  },
+  "linked_table_demo": {
+    "report_id": "linked_table_report",
+    "title": "Linked Table Golden",
+    "enabled": true,
+    "datasets": {"prices": "demo_daily_prices"}
   }
 }

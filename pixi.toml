@@ -2,7 +2,7 @@
 name = "runbook-platform"
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64", "win-64"]
-version = "0.3.1"
+version = "0.3.2"
 
 [dependencies]
 python = "3.11.*"
@@ -55,6 +55,6 @@ lint = "ruff check ."
 format-check = "ruff format --check ."
 docs = "sphinx-build -W --keep-going -b html docs docs/_build/html"
 docs-serve = { cmd = "python -m http.server 8765 --bind 127.0.0.1 --directory docs/_build/html", depends-on = ["docs"] }
-typecheck = "mypy packages tests --python-version 3.11 --ignore-missing-imports --namespace-packages --explicit-package-bases"
+typecheck = "mypy packages/runbook/runbook-core/src packages/runbook/runbook-data/src packages/runbook/runbook-sdk/src packages/runbook/runbook-services/src packages/runbook/runbook-worker/src tests --python-version 3.11 --ignore-missing-imports --namespace-packages --explicit-package-bases"
 preview = "runbook-preview"
 tick = "runbook-services tick"

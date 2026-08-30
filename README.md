@@ -7,6 +7,13 @@ reproducible static and interactive reports. Analysts write normal Python for
 calculations, tables, and plots; Runbook pins the data used and can render the
 same report as HTML or Dash.
 
+The v0.3.2 presentation model has one report definition and two peer
+renderers: ordinary tables become static HTML tables or native static Dash
+tables, while AG Grid is used only when a report explicitly opts into an
+interactive table. Links are semantic table metadata, and generated plot
+destinations have deterministic standalone HTML pages. Report hosts own Dash
+routes; the normal reporting flow does not use an iframe.
+
 The shortest path is:
 
 ```text
@@ -19,7 +26,8 @@ Start with the [analyst guide](docs/getting-started.md), then see the
 Platform owners should use the
 [deployment guide](docs/deployment.md).
 
-Worked [report recipes](docs/reports.md#reports-cookbook) and [ingestion
+Worked [report recipes](docs/reports.md#reports-cookbook), including the
+[linked-table golden report](docs/reports.md#semantic-table-links), and [ingestion
 recipes](docs/source-adapters-and-curation.md#write-an-ingester-the-sourceadapter-contract)
 are linked from the analyst journey.
 

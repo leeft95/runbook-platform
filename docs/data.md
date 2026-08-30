@@ -125,7 +125,7 @@ Historical capability is an explicit adapter decision checked before
 acquisition. An unsupported adapter can enter the queue and then fail clearly
 in the worker. The checked-in `local_file` adapter is not historical-capable;
 successful historical smoke tests require a private/external compatible
-adapter. The v0.3.1 request supports only the inclusive date range, not
+adapter. The v0.3.2 release supports only the inclusive date range, not
 temporary arbitrary parameter overrides. See [Operations](operations.md) and
 [API](api.md).
 

@@ -8,6 +8,12 @@ trusted-Python presentation seam. Pass one object to `render_dash_page` (or to
 without copying report execution, validation, or callback code. A report should
 already work as static HTML; see [Interactive reports](pdl-interactive.md).
 
+The renderer's default table is native static Dash. AG Grid is selected only
+for an explicitly interactive table output. Semantic report, URL, and plot
+links are resolved by the public renderer and the host's route resolver; an
+extension should not rewrite links or introduce an iframe, `srcDoc`, or
+`postMessage` bridge.
+
 This is deliberately separate from `OperationsBrand`: branding customises the
 control-plane Operations UI, while a `DashRendererExtension` customises report
 presentation. Deployment wiring for both seams is in [Deployment](deployment.md).

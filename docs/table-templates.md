@@ -13,6 +13,11 @@ table template     -> transforms data, builds style rules, may build plots
 layout             -> decides where the finished artifacts appear
 ```
 
+For v0.3.2, an ordinary report table renders as an HTML table in the HTML
+renderer and as a native static Dash table in the Dash renderer. AG Grid is an
+explicit opt-in for interactive table output; it is not the default table
+representation.
+
 The flagship template, `table_with_linked_plots_monthly`, creates a monthly
 summary and one seasonal chart for each input column. It returns a mapping of
 the requested header to a payload with:
@@ -78,6 +83,8 @@ table_with_linked_plots_monthly(
     benchmark_quater=None,
     fill_na=None,
     na_rep="-",
+    column_plot_links=True,
+    all_plots_link=True,
 )
 ```
 
@@ -85,6 +92,29 @@ The spellings `moving_averge_window` and `benchmark_quater` are the current
 public parameter names. Use keyword arguments so the code remains readable.
 The template returns a serializable style payload; `ctx.artifact.table` turns
 it into the immutable table data/style/HTML artifacts consumed by renderers.
+
+### Semantic links and plot pages
+
+Never put raw `<a>` markup in a DataFrame. Declare links in the table style
+plan with semantic destinations instead:
+
+```python
+from runbook.sdk.table_style import link_column
+
+style = {
+    "links": [
+        link_column("price", report_id_from="detail_report"),
+        link_column("source", url_from="source_url"),
+    ]
+}
+```
+
+`general_table_with_link` and `table_with_linked_plots_monthly` can derive
+stable plot names. `column_plot_links=True` links rendered column headers to
+individual pages; `all_plots_link=True` links the index header to the
+deterministic aggregate page. The HTML execution bundle publishes those
+linked pages under `plots/<name>.html`, and the Dash renderer exposes the same
+logical names to the host's route resolver.
 
 ## Style helpers
 

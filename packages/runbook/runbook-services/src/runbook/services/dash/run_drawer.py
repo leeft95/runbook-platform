@@ -868,6 +868,7 @@ def register(dash_app: Any, sessions: Any, data_store: str) -> None:
         if row is None:
             return _closed_content()
 
+        log_values: tuple[Any, Any, Any]
         if _is_automatic_poll(ctx.triggered_id):
             log_values = (no_update, no_update, no_update)
         else:

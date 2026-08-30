@@ -92,7 +92,7 @@ def render_html(store: BlobStore, manifest: PDLManifest, prefix: str) -> str:
                     if block.style_ref
                     else None
                 )
-                if block.links or (style_plan is not None and style_plan.links):
+                if style_plan is not None or block.links:
                     plan = style_plan or TableStylePlan()
                     by_target = {(link.area, link.field): link for link in plan.links or ()}
                     for link in block.links or ():
