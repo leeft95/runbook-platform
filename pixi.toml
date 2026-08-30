@@ -37,6 +37,7 @@ wheel = "*"
 sphinx = ">=8,<9"
 myst-parser = ">=4,<5"
 furo = ">=2024.8"
+sphinxcontrib-mermaid = ">=0.9,<1"
 
 [pypi-dependencies]
 dash-mantine-components = ">=2,<3"

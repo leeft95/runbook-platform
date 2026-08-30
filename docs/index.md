@@ -67,6 +67,13 @@ api
 contributing
 ```
 
+```{toctree}
+:maxdepth: 2
+:caption: Platform Modification Guide
+
+platform-guide/index
+```
+
 ## The platform model
 
 ```text

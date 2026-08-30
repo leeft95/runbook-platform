@@ -20,6 +20,7 @@ except metadata.PackageNotFoundError:
 
 extensions = [
     "myst_parser",
+    "sphinxcontrib.mermaid",
     "sphinx.ext.autodoc",
     "sphinx.ext.githubpages",
     "sphinx.ext.napoleon",
