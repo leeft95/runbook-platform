@@ -33,6 +33,7 @@ from runbook.core.table.models import (
     TableTarget,
     TableZScoreRHS,
     TargetScope,
+    validate_link_url,
 )
 from runbook.core.utils import canonical_json, sha256_hexdigest
 
@@ -426,18 +427,6 @@ def _resolve_style_maps_for_frames(
     )
 
 
-def _validate_url(value: str) -> str:
-    """Validate a link URL accepted by both table renderers."""
-    from urllib.parse import urlsplit
-
-    if value != value.strip() or any(ord(char) < 0x20 for char in value):
-        raise ValueError(f"table URL contains whitespace or control characters: {value!r}")
-    parsed = urlsplit(value)
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
-        raise ValueError(f"table URL must use an http or https scheme: {value!r}")
-    return value
-
-
 def _resolved_destination(destination: TableLinkDestination, value: Any = None) -> TableLinkDestination | None:
     """Resolve one static or dynamic destination to a concrete destination."""
     if destination.value_field is not None:
@@ -449,7 +438,7 @@ def _resolved_destination(destination: TableLinkDestination, value: Any = None) 
         resolved_value = destination.value
 
     if destination.kind == TableLinkKind.url:
-        _validate_url(resolved_value)
+        validate_link_url(resolved_value)
     return TableLinkDestination(kind=destination.kind, value=resolved_value)
 
 
@@ -627,8 +616,8 @@ def _formatter_from_spec(spec: TableFormatSpec) -> Callable[[Any], Any]:
     return lambda value: format_table_value(value, spec)
 
 
-def _link_anchor(display: str, destination: TableLinkDestination) -> str:
-    """Build one escaped semantic table anchor."""
+def link_anchor(display: str, destination: TableLinkDestination) -> str:
+    """Build one semantic anchor from already-escaped display HTML."""
     if destination.kind == TableLinkKind.report:
         assert destination.value is not None
         report_id = escape(destination.value, quote=True)
@@ -652,7 +641,7 @@ def _replace_index_header(html_output: str, index_name: Any, destination: TableL
     """Safely render the optional index header link in pandas Styler output."""
     display = escape(str(index_name), quote=True) if index_name is not None else "&nbsp;"
     if destination is not None:
-        display = _link_anchor(display, destination)
+        display = link_anchor(display, destination)
     if index_name is not None:
         pattern = r'(<th\b[^>]*class="[^"]*\bindex_name\b[^"]*"[^>]*>).*?(</th>)'
     else:
@@ -683,7 +672,7 @@ def _inject_link_anchors(
         pattern = rf'(<td\b[^>]*\bid="{re.escape(table_id)}_row{row_pos}_col{col_pos}"[^>]*>)(.*?)(</td>)'
         html_output = re.sub(
             pattern,
-            lambda match: f"{match.group(1)}{_link_anchor(match.group(2), destination)}{match.group(3)}",
+            lambda match: f"{match.group(1)}{link_anchor(match.group(2), destination)}{match.group(3)}",
             html_output,
             count=1,
             flags=re.DOTALL,
@@ -696,7 +685,7 @@ def _inject_link_anchors(
         pattern = rf'(<th\b[^>]*\bid="{re.escape(table_id)}_level0_col{col_pos}"[^>]*>)(.*?)(</th>)'
         html_output = re.sub(
             pattern,
-            lambda match: f"{match.group(1)}{_link_anchor(match.group(2), destination)}{match.group(3)}",
+            lambda match: f"{match.group(1)}{link_anchor(match.group(2), destination)}{match.group(3)}",
             html_output,
             count=1,
             flags=re.DOTALL,

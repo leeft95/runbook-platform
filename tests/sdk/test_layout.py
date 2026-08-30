@@ -499,9 +499,18 @@ def test_vol_report_native_dash_and_html_golden(tmp_path, pointer_registry) -> N
         reports_root="reports",
         code_version="golden",
     )
+    stage3 = store.get_json(result.stage3_ref)
+    assert stage3["schema_version"] == "pdl-core/0.2"
+    example_link = next(block for block in stage3["page"]["blocks"] if block["name"] == "example-link")
+    assert example_link["type"] == "link"
+    assert example_link["destination"] == {"kind": "url", "value": "https://example.com"}
     layout = page.layout()
     report_grid = layout.children[2]
     sections = {section.id: section for section in report_grid.children}
+    normal_sections = {
+        section.id: section for section in report_grid.children if section.__class__.__name__ == "Section"
+    }
+    assert len(normal_sections) == 4
     returns_section = sections[page.ids.block("returns_table") + "-container"]
     returns_plot_section = sections[page.ids.block("returns_plot") + "-container"]
     vol_section = sections[page.ids.block("vol_table") + "-container"]
@@ -528,11 +537,26 @@ def test_vol_report_native_dash_and_html_golden(tmp_path, pointer_registry) -> N
     assert vol_rows[2].children[2].style["backgroundColor"] == "#FFF3CD"
     assert all(
         child.__class__.__name__ not in {"AgGrid", "Iframe"}
-        for section in sections.values()
+        for section in normal_sections.values()
         for child in section.children
     )
+    link_container = sections[page.ids.block("example-link") + "-container"]
+    assert link_container.style == {"gridRow": "3 / span 1", "gridColumn": "1 / span 2"}
+    assert link_container.children.__class__.__name__ == "A"
+    assert link_container.children.href == "https://example.com"
     html = store.get(result.html_ref).decode()
-    assert all(value in html for value in ("Returns", "Volatility", "-20.00%", ">-<"))
+    assert all(
+        value in html
+        for value in (
+            "Returns",
+            "Volatility",
+            "-20.00%",
+            ">-<",
+            "rb-link-block",
+            "Visit example.com →",
+            'href="https://example.com"',
+        )
+    )
     assert "color: #B00020" in html
     assert "font-weight: 600" in html
     assert "background-color: #FFF3CD" in html

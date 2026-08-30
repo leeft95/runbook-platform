@@ -155,10 +155,20 @@
               "blocks": {
                 "not": {
                   "contains": {
-                    "required": ["links"],
-                    "properties": {
-                      "links": { "type": "array", "minItems": 1 }
-                    }
+                    "anyOf": [
+                      {
+                        "required": ["links"],
+                        "properties": {
+                          "links": { "type": "array", "minItems": 1 }
+                        }
+                      },
+                      {
+                        "required": ["type"],
+                        "properties": {
+                          "type": { "const": "link" }
+                        }
+                      }
+                    ]
                   }
                 }
               }
@@ -356,6 +366,46 @@
         }
       ]
     },
+    "linkBlock": {
+      "allOf": [
+        { "$ref": "#/$defs/blockBase" },
+        {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "required": ["type", "label", "destination"],
+          "properties": {
+            "type": { "const": "link" },
+            "label": { "type": "string", "minLength": 1 },
+            "destination": {
+              "allOf": [
+                { "$ref": "#/$defs/TableLinkDestination" },
+                {
+                  "required": ["value"],
+                  "not": { "required": ["value_field"] }
+                },
+                {
+                  "if": {
+                    "required": ["kind"],
+                    "properties": {
+                      "kind": { "const": "url" }
+                    }
+                  },
+                  "then": {
+                    "required": ["value"],
+                    "properties": {
+                      "value": {
+                        "type": "string",
+                        "pattern": "^[hH][tT][tT][pP][sS]?://[^/?#\\s\\u0000-\\u001F\\u007F][^\\s\\u0000-\\u001F\\u007F]*$"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
     "column": {
       "type": "object",
       "additionalProperties": false,
@@ -431,7 +481,8 @@
       "oneOf": [
         { "$ref": "#/$defs/tableBlock" },
         { "$ref": "#/$defs/plotRefBlock" },
-        { "$ref": "#/$defs/textBlock" }
+        { "$ref": "#/$defs/textBlock" },
+        { "$ref": "#/$defs/linkBlock" }
       ]
     }
   }

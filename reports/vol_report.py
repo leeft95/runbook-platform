@@ -1,6 +1,6 @@
 import pandas as pd
 from runbook.sdk import plot_line, report, required_aliases
-from runbook.sdk.layout import Report
+from runbook.sdk.layout import Link, Report
 from runbook.sdk.table_style import (
     action,
     condition,
@@ -116,4 +116,5 @@ def page(ctx):
         report_grid.plot(returns_plot_ref, name="returns_plot", title="Returns Plot")
         report_grid.table(vol_ref, name="vol_table", title="Volatility")
         report_grid.plot(vol_plot_ref, name="vol_plot", title="Volatility Plot")
+    layout.add(Link("Visit example.com →", url="https://example.com", name="example-link"))
     return layout

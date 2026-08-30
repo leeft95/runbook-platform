@@ -10,8 +10,8 @@ import pandas as pd
 import plotly.io as pio
 from plotly.utils import PlotlyJSONEncoder
 from runbook.core import BlobStore
-from runbook.core.pdl.models import PDLManifest
-from runbook.core.table import TableStylePlan, render_table_html
+from runbook.core.pdl.models import PDLLinkBlock, PDLManifest, PDLTableBlock
+from runbook.core.table import TableStylePlan, link_anchor, render_table_html
 from runbook.core.table.models import TableLinkKind
 
 DEFAULT_GRID_CSS_REF = "styles/grid.css"
@@ -26,6 +26,11 @@ DEFAULT_GRID_CSS = """.rb-page {
   border-radius: 8px;
   padding: 8px;
   background: #fff;
+}
+
+.rb-link-block {
+  padding: 2px 0;
+  background: transparent;
 }
 
 .rb-warnings {
@@ -72,6 +77,8 @@ def render_html(store: BlobStore, manifest: PDLManifest, prefix: str) -> str:
         title = f"<h2>{escape(block.title)}</h2>" if block.title else ""
         if block.type == "text":
             body = "" if block.text == "" and block.title else f"<pre>{escape(block.text)}</pre>"
+        elif block.type == "link":
+            body = link_anchor(escape(block.label), block.destination)
         elif block.type == "table":
             if block.html_ref:
                 body = store.get(_key(prefix, block.html_ref)).decode("utf-8")
@@ -110,7 +117,10 @@ def render_html(store: BlobStore, manifest: PDLManifest, prefix: str) -> str:
         else:
             raise ValueError(f"unsupported PDL block type: {block.type!r}")
         position = f"grid-row: {block.row} / span {block.row_span}; grid-column: {block.col} / span {block.col_span};"
-        blocks.append(f'<section class="rb-block" style="{position}">{title}{body}</section>')
+        if isinstance(block, PDLLinkBlock):
+            blocks.append(f'<div class="rb-link-block" style="{position}">{title}{body}</div>')
+        else:
+            blocks.append(f'<section class="rb-block" style="{position}">{title}{body}</section>')
     css = ""
     if manifest.style:
         css = re.sub(
@@ -169,11 +179,18 @@ def _named_plot_jsons(plot_jsons: Mapping[str, object] | object) -> dict[str, ob
 
 
 def _linked_plot_targets(manifest: PDLManifest) -> tuple[set[str], set[str]]:
-    """Collect individual and aggregate plot destinations from table links."""
+    """Collect individual and aggregate plot destinations from report links."""
     individual: set[str] = set()
     aggregates: set[str] = set()
     for block in manifest.page.blocks:
-        if block.type != "table":
+        if isinstance(block, PDLLinkBlock):
+            destination = block.destination
+            if destination.kind == TableLinkKind.plot:
+                assert destination.value is not None
+                target = _plot_name(destination.value)
+                (aggregates if target.endswith("-plots") else individual).add(target)
+            continue
+        if not isinstance(block, PDLTableBlock):
             continue
         for link in block.links or ():
             destination = link.destination

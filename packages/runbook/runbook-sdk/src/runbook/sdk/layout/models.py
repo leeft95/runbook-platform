@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias
 
-from runbook.core.pdl.models import PDLColumn
+from runbook.core.pdl.models import PDLColumn, PDLLinkDestination
 from runbook.core.table.models import TableArtifactRef
 
-BlockKind = Literal["table", "plot", "text"]
+BlockKind = Literal["table", "plot", "text", "link"]
 
 
 @dataclass
@@ -16,13 +16,14 @@ class LayoutBlock:
     """A renderer-neutral block draft awaiting placement."""
 
     kind: BlockKind
-    value: TableArtifactRef | str
+    value: TableArtifactRef | PDLLinkDestination | str
     name: str | None = None
     title: str | None = None
     col_span: int = 1
     row_span: int = 1
     columns: list[PDLColumn] | None = None
     extensions: dict[str, dict[str, Any]] | None = None
+    label: str | None = None
     generated_name: bool = field(default=False, repr=False)
 
 

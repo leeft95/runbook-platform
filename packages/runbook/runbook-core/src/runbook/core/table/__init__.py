@@ -1,5 +1,6 @@
 from runbook.core.table.builder import (
     format_table_value,
+    link_anchor,
     normalize_table_style,
     render_table_html,
     resolve_table_style,
@@ -44,6 +45,7 @@ from runbook.core.table.models import (
     TableZScoreRHS,
     TargetScope,
     parse_python_format_string,
+    validate_link_url,
 )
 from runbook.core.table.templates import table_with_link_monthly
 from runbook.core.table.templates.common import (
@@ -68,6 +70,7 @@ __all__ = [
     "ConditionOp",
     "FormatKind",
     "format_table_value",
+    "link_anchor",
     "RHSKind",
     "RowRefMode",
     "StyleInput",
@@ -100,6 +103,7 @@ __all__ = [
     "TableTarget",
     "TableZScoreRHS",
     "TargetScope",
+    "validate_link_url",
     "band_compare_rules",
     "color_negative_red",
     "column_compare_rules",

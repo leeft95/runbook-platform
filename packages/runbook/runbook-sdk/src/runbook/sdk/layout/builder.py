@@ -6,7 +6,7 @@ import re
 from dataclasses import replace
 from typing import Any, Iterable
 
-from runbook.core.pdl.models import PDLColumn
+from runbook.core.pdl.models import PDLColumn, PDLLinkDestination, PDLLinkKind
 from runbook.core.table.models import TableArtifactRef
 
 from .models import GridLayout, HeadingLayout, LayoutBlock, LayoutNode, ReportLayout, SectionLayout
@@ -129,6 +129,39 @@ def text(
     return LayoutBlock(
         kind="text",
         value=resolved,
+        name=_name(name),
+        title=title,
+        col_span=_span(col_span, kind="col_span"),
+        row_span=_span(row_span, kind="row_span"),
+        extensions=dict(extensions) if extensions is not None else None,
+    )
+
+
+def Link(
+    label: str,
+    *,
+    report: str | None = None,
+    plot: str | None = None,
+    url: str | None = None,
+    name: str | None = None,
+    title: str | None = None,
+    col_span: int = 1,
+    row_span: int = 1,
+    extensions: dict[str, dict[str, Any]] | None = None,
+) -> LayoutBlock:
+    """Create a standalone link block draft."""
+    if not isinstance(label, str) or not label:
+        raise ValueError("Link label must be a non-empty string")
+    targets = ((report, PDLLinkKind.report), (plot, PDLLinkKind.plot), (url, PDLLinkKind.url))
+    selected = [(value, kind) for value, kind in targets if value is not None]
+    if len(selected) != 1:
+        raise ValueError("Link(...) requires exactly one of report=, plot=, or url=")
+    value, kind = selected[0]
+    destination = PDLLinkDestination(kind=kind, value=value)
+    return LayoutBlock(
+        kind="link",
+        value=destination,
+        label=label,
         name=_name(name),
         title=title,
         col_span=_span(col_span, kind="col_span"),
@@ -376,7 +409,7 @@ class Grid:
         if not isinstance(block, LayoutBlock):
             if isinstance(block, (Grid, GridLayout)):
                 raise ValueError(f"Grid '{self._label}' does not support nested grids")
-            raise TypeError("Grid.add(...) expects a table, plot, or text block")
+            raise TypeError("Grid.add(...) expects a table, plot, text, or link block")
         if col_span is not None or row_span is not None:
             block = replace(
                 block,
@@ -415,6 +448,10 @@ class Grid:
         """Create and append a text block."""
         return self.add(text(value, **kwargs))
 
+    def link(self, label: str, **kwargs: Any) -> LayoutBlock:
+        """Create and append a standalone link block."""
+        return self.add(Link(label, **kwargs))
+
 
 def _heading_text(value: str) -> str:
     """Validate and normalize heading text."""
@@ -446,4 +483,4 @@ def grid(blocks: Iterable[object] | None = None, *, columns: int = 1, name: str 
     return Grid(blocks, columns=columns, name=name)
 
 
-__all__ = ["Grid", "Report", "Section", "grid", "plot", "report", "section", "table", "text"]
+__all__ = ["Grid", "Link", "Report", "Section", "grid", "plot", "report", "section", "table", "text"]

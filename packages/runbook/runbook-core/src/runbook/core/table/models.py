@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
@@ -21,6 +22,16 @@ from typing_extensions import Annotated
 TABLE_STYLE_SCHEMA_VERSION: Literal["table-style/0.2"] = "table-style/0.2"
 TableStyleSchemaVersion = Literal["table-style/0.1", "table-style/0.2"]
 NonEmptyRef = Annotated[str, StringConstraints(min_length=1)]
+
+
+def validate_link_url(value: str) -> str:
+    """Validate a link URL accepted by table and standalone link renderers."""
+    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        raise ValueError(f"table URL contains whitespace or control characters: {value!r}")
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"table URL must use an http or https scheme: {value!r}")
+    return value
 
 
 class TableLinkKind(str, Enum):

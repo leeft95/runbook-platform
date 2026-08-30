@@ -11,16 +11,22 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal, Union
+from typing import Any, Literal, TypeAlias, Union
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
-from runbook.core.table.models import TableArtifactRef, TableLink, TableLinkDestination, TableLinkKind
+from runbook.core.table.models import (
+    TableArtifactRef,
+    TableLink,
+    TableLinkDestination,
+    TableLinkKind,
+    validate_link_url,
+)
 from typing_extensions import Annotated
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
-PDLLinkKind = TableLinkKind
-PDLLinkDestination = TableLinkDestination
-PDLTableLink = TableLink
+PDLLinkKind: TypeAlias = TableLinkKind
+PDLLinkDestination: TypeAlias = TableLinkDestination
+PDLTableLink: TypeAlias = TableLink
 BlockNameStr = Annotated[
     str,
     StringConstraints(pattern=r"^[a-zA-Z0-9_\-\.]+$", min_length=1),
@@ -174,7 +180,22 @@ class PDLTextBlock(PDLBlockBase):
     format: PDLTextFormat | None = None
 
 
-PDLBlock = Union[PDLTableBlock, PDLPlotRefBlock, PDLTextBlock]
+class PDLLinkBlock(PDLBlockBase):
+    type: Literal["link"] = "link"
+    label: NonEmptyStr
+    destination: PDLLinkDestination
+
+    @model_validator(mode="after")
+    def validate_static_destination(self) -> "PDLLinkBlock":
+        if self.destination.value_field is not None:
+            raise ValueError("standalone link destinations must use a static 'value'")
+        if self.destination.kind == PDLLinkKind.url:
+            assert self.destination.value is not None
+            validate_link_url(self.destination.value)
+        return self
+
+
+PDLBlock = Union[PDLTableBlock, PDLPlotRefBlock, PDLTextBlock, PDLLinkBlock]
 
 
 class PDLPage(BaseModel):
@@ -238,7 +259,10 @@ class PDLManifest(BaseModel):
 
     @model_validator(mode="after")
     def validate_link_schema_version(self) -> "PDLManifest":
-        has_links = any(isinstance(block, PDLTableBlock) and block.links for block in self.page.blocks)
+        has_links = any(
+            (isinstance(block, PDLTableBlock) and block.links) or isinstance(block, PDLLinkBlock)
+            for block in self.page.blocks
+        )
         if has_links and self.schema_version == "pdl-core/0.1":
             raise ValueError("pdl-core/0.1 does not support linked table blocks; use pdl-core/0.2")
         return self

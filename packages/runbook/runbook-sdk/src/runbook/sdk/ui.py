@@ -13,6 +13,8 @@ from runbook.core.pdl.models import (
     PDLCurrencyFormat,
     PDLDateFormat,
     PDLDateTimeFormat,
+    PDLLinkBlock,
+    PDLLinkDestination,
     PDLManifest,
     PDLNumberFormat,
     PDLPage,
@@ -91,7 +93,9 @@ def manifest(
                 raise TypeError(f"PDL extension {namespace!r} must serialize to an object")
             serialized_extensions[namespace] = value
 
-    has_links = any(isinstance(block, PDLTableBlock) and block.links for block in page.blocks)
+    has_links = any(
+        (isinstance(block, PDLTableBlock) and block.links) or isinstance(block, PDLLinkBlock) for block in page.blocks
+    )
     return PDLManifest(
         schema_version="pdl-core/0.2" if has_links else "pdl-core/0.1",
         title=resolved_title,
@@ -147,6 +151,34 @@ def text(
         row_span=row_span,
         col_span=col_span,
         format=format,
+        extensions=extensions,
+    )
+
+
+def link(
+    *,
+    name: str,
+    label: str,
+    destination: PDLLinkDestination,
+    row: int,
+    col: int,
+    title: str | None = None,
+    row_span: int = 1,
+    col_span: int = 1,
+    extensions: dict[str, dict[str, Any]] | None = None,
+) -> PDLLinkBlock:
+    """Create a positioned standalone link block."""
+    if not isinstance(destination, PDLLinkDestination):
+        raise TypeError(f"link(..., destination=...) expects PDLLinkDestination, got {type(destination)!r}")
+    return PDLLinkBlock(
+        name=name,
+        title=title,
+        label=label,
+        destination=destination,
+        row=row,
+        col=col,
+        row_span=row_span,
+        col_span=col_span,
         extensions=extensions,
     )
 

@@ -11,7 +11,15 @@ from urllib.parse import quote
 
 import pandas as pd
 import pyarrow as pa
-from runbook.core.pdl.models import PDLColumn, PDLColumnRole, PDLManifest, PDLPlotRefBlock, PDLTableBlock, PDLTextBlock
+from runbook.core.pdl.models import (
+    PDLColumn,
+    PDLColumnRole,
+    PDLLinkBlock,
+    PDLManifest,
+    PDLPlotRefBlock,
+    PDLTableBlock,
+    PDLTextBlock,
+)
 from runbook.core.table import (
     TableFormatDate,
     TableLinkDestination,
@@ -151,8 +159,10 @@ def _build_components(
     )
     control_block = next(
         (block for block in manifest.page.blocks if isinstance(block, PDLTableBlock)),
-        next(iter(manifest.page.blocks), None),
+        next((block for block in manifest.page.blocks if not isinstance(block, PDLLinkBlock)), None),
     )
+    if controls and control_block is None:
+        raise ValueError("Dash controls require a non-link content block")
     components: list[Any] = []
     for block in manifest.page.blocks:
         title = html.H2(block.title) if block.title else None
@@ -167,7 +177,9 @@ def _build_components(
                     else html.Pre(block.text, id=ids.block(block.name))
                 )
         elif isinstance(block, PDLPlotRefBlock):
-            body = dcc.Graph(id=ids.block(block.name), figure=_read_json(ctx, block.ref))
+            body = _plot_component(ctx, block.ref, component_id=ids.block(block.name))
+        elif isinstance(block, PDLLinkBlock):
+            body = _dash_link(block.label, block.destination, route_resolver, ctx, plot_refs)
         elif isinstance(block, PDLTableBlock):
             frame = _read_table(ctx, block.data_ref)
             if block.name in interactive_tables:
@@ -206,6 +218,16 @@ def _build_components(
                 title=title,
                 namespace=ids.namespace,
             )
+        if isinstance(block, PDLLinkBlock):
+            block_content = body if wrapped is None else wrapped
+            components.append(
+                html.Div(
+                    block_content,
+                    id=ids.block(block.name) + "-container",
+                    style=position,
+                )
+            )
+            continue
         block_content = _wrap_default_block(title, body) if wrapped is None else wrapped
         block_children: Any = block_content if wrapped is None else [block_content]
         components.append(

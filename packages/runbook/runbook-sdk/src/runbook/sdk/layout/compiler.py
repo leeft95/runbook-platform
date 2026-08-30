@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from itertools import count
 from typing import Any
 
-from runbook.core.pdl.models import PDLBlock
+from runbook.core.pdl.models import PDLBlock, PDLLinkDestination
 from runbook.sdk import ui
 
 from .builder import Report
@@ -181,6 +181,20 @@ def _lower_block(
         return ui.plot(
             name=name,
             ref=block.value,
+            row=row,
+            col=col,
+            title=block.title,
+            row_span=row_span,
+            col_span=col_span,
+            extensions=block.extensions,
+        )
+    if block.kind == "link":
+        if block.label is None or not isinstance(block.value, PDLLinkDestination):
+            raise TypeError("link layout blocks require a label and static destination")
+        return ui.link(
+            name=name,
+            label=block.label,
+            destination=block.value,
             row=row,
             col=col,
             title=block.title,

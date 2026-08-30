@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 from dash import Dash, dcc, html
-from runbook.core.pdl.models import PDLManifest, PDLPage, PDLPageType, PDLTextBlock
+from runbook.core.pdl.models import PDLLinkBlock, PDLManifest, PDLPage, PDLPageType, PDLTextBlock
 from runbook.sdk.discovery import ReportDefinition
 from runbook.sdk.extensions.dash import (
     DashPage,
@@ -55,6 +55,34 @@ def _heading_manifest(*, controls: bool = False) -> PDLManifest:
         extensions={"dash": dashboard(controls=[select("book", options=["A", "B"])]).model_dump(mode="json")}
         if controls
         else None,
+    )
+
+
+def _link_controls_manifest(*, link_only: bool = False) -> PDLManifest:
+    blocks = [
+        PDLLinkBlock(
+            name="details",
+            title="Details",
+            label="Open details",
+            destination={"kind": "report", "value": "details"},
+            row=1 if link_only else 2,
+            col=1,
+        )
+    ]
+    if not link_only:
+        blocks.insert(0, PDLTextBlock(name="summary", title="Summary", text="initial", row=1, col=1))
+    return PDLManifest(
+        schema_version="pdl-core/0.2",
+        title="Link controls",
+        snapshot_id="s",
+        as_of="2024-01-01T00:00:00Z",
+        page=PDLPage(
+            page_type=PDLPageType.grid,
+            rows=len(blocks),
+            columns=1,
+            blocks=blocks,
+        ),
+        extensions={"dash": dashboard(controls=[select("book", options=["A", "B"])]).model_dump(mode="json")},
     )
 
 
@@ -147,6 +175,38 @@ def test_heading_block_has_no_dash_body_and_extension_receives_none() -> None:
     assert control_renderer.control_calls[0][1] == control_page.ids.control("book")
     assert control_body.children[0].children[1].id == control_page.ids.control("book")
     assert control_body.children[1] is None
+
+
+def test_controls_attach_to_non_link_block_in_mixed_link_page() -> None:
+    manifest = _link_controls_manifest()
+
+    page = render_dash_page(
+        manifest,
+        ReportDefinition([], {}, lambda _: manifest, {}),
+        SimpleNamespace(),
+        namespace="link-controls",
+    )
+    report_grid = page.layout().children[2]
+    normal, link = report_grid.children
+
+    assert isinstance(normal, html.Section)
+    control_body = normal.children[1]
+    assert control_body.children[0].children[1].__class__.__name__ == "Dropdown"
+    assert isinstance(link, html.Div)
+    assert isinstance(link.children, dcc.Link)
+    assert link.children.children == "Open details"
+
+
+def test_controls_reject_link_only_page() -> None:
+    manifest = _link_controls_manifest(link_only=True)
+
+    with pytest.raises(ValueError, match="Dash controls require a non-link content block"):
+        render_dash_page(
+            manifest,
+            ReportDefinition([], {}, lambda _: manifest, {}),
+            SimpleNamespace(),
+            namespace="link-only-controls",
+        )
 
 
 def test_renderer_extension_hooks_preserve_public_ids_and_body() -> None:
