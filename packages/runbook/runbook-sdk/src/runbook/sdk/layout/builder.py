@@ -9,7 +9,16 @@ from typing import Any, Iterable
 from runbook.core.pdl.models import PDLColumn, PDLLinkDestination, PDLLinkKind
 from runbook.core.table.models import TableArtifactRef
 
-from .models import GridLayout, HeadingLayout, LayoutBlock, LayoutNode, ReportLayout, SectionLayout
+from .models import (
+    GridLayout,
+    HeadingLayout,
+    LayoutBlock,
+    LayoutNode,
+    ReportLayout,
+    RowLayout,
+    SectionLayout,
+    StackLayout,
+)
 
 _NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+$")
 
@@ -43,7 +52,7 @@ def _rebase_generated(node: LayoutBlock | HeadingLayout, old: str, new: str) -> 
 
 
 def _layout_counts(children: Iterable[object]) -> tuple[int, int, int]:
-    """Count sections, grids, and blocks recursively for compact repr output."""
+    """Count sections, grids, rows, stacks, and blocks for compact repr output."""
     sections = grids = blocks = 0
     for child in children:
         if isinstance(child, SectionLayout):
@@ -57,9 +66,42 @@ def _layout_counts(children: Iterable[object]) -> tuple[int, int, int]:
         elif isinstance(child, GridLayout):
             grids += 1
             blocks += len(child.blocks)
+        elif isinstance(child, RowLayout):
+            blocks += sum(len(item.children) if isinstance(item, StackLayout) else 1 for item in child.children)
+        elif isinstance(child, StackLayout):
+            blocks += len(child.children)
         elif isinstance(child, (LayoutBlock, HeadingLayout)):
             blocks += 1
     return sections, grids, blocks
+
+
+def _rebase_children(node: RowLayout | StackLayout, old: str, new: str) -> None:
+    """Rebase generated names throughout one authoring-only composition."""
+    node.owner_label = new
+    if isinstance(node, StackLayout):
+        for block in node.children:
+            _rebase_generated(block, old, new)
+        return
+    for index, child in enumerate(node.children, 1):
+        if isinstance(child, StackLayout):
+            child_old = child.owner_label or old
+            child_new = f"{new}-stack-{index:03d}"
+            for block in child.children:
+                _rebase_generated(block, child_old, child_new)
+            child.owner_label = child_new
+        else:
+            _rebase_generated(child, old, new)
+
+
+def _layout_kind(value: object) -> str:
+    """Return the public name for one nested authoring container."""
+    if isinstance(value, (Grid, GridLayout)):
+        return "Grid"
+    if isinstance(value, (Row, RowLayout)):
+        return "Row"
+    if isinstance(value, (Stack, StackLayout)):
+        return "Stack"
+    return type(value).__name__
 
 
 def table(
@@ -189,6 +231,8 @@ class Report:
         self._block_counter = 0
         self._section_counter = 0
         self._grid_counter = 0
+        self._row_counter = 0
+        self._stack_counter = 0
         if children is not None:
             self.extend(children)
         if sections is not None:
@@ -218,8 +262,16 @@ class Report:
             self._grid_counter += 1
             child._set_label(f"{self._label}-grid-{self._grid_counter:03d}")
             child = child._layout
-        if not isinstance(child, (SectionLayout, GridLayout, LayoutBlock, HeadingLayout)):
-            raise TypeError("Report.add(...) expects a Section, Grid, block, or heading")
+        elif isinstance(child, Row):
+            self._row_counter += 1
+            child._set_label(f"{self._label}-row-{self._row_counter:03d}")
+            child = child._layout
+        elif isinstance(child, Stack):
+            self._stack_counter += 1
+            child._set_label(f"{self._label}-stack-{self._stack_counter:03d}")
+            child = child._layout
+        if not isinstance(child, (SectionLayout, GridLayout, RowLayout, StackLayout, LayoutBlock, HeadingLayout)):
+            raise TypeError("Report.add(...) expects a Section, Grid, Row, Stack, block, or heading")
         if isinstance(child, LayoutBlock):
             self._block_counter += 1
             if child.name is None:
@@ -264,6 +316,25 @@ class Report:
         self.children.append(child._layout)
         return child
 
+    def row(self, blocks: Iterable[object] | None = None, *, columns: int = 1, name: str | None = None) -> "Row":
+        """Create and append an explicit horizontal composition."""
+        self._row_counter += 1
+        child = Row(
+            blocks,
+            columns=columns,
+            name=name,
+            _label=f"{self._label}-row-{self._row_counter:03d}",
+        )
+        self.children.append(child._layout)
+        return child
+
+    def stack(self, blocks: Iterable[object] | None = None, *, name: str | None = None) -> "Stack":
+        """Create and append an explicit vertical composition."""
+        self._stack_counter += 1
+        child = Stack(blocks, name=name, _label=f"{self._label}-stack-{self._stack_counter:03d}")
+        self.children.append(child._layout)
+        return child
+
 
 class Section:
     """An ordered report section containing blocks, headings, and grids."""
@@ -277,6 +348,8 @@ class Section:
         self._label = _label or _slug(title or "section")
         self._block_counter = 0
         self._grid_counter = 0
+        self._row_counter = 0
+        self._stack_counter = 0
         if children is not None:
             self.extend(children)
 
@@ -286,7 +359,7 @@ class Section:
         return self._layout.title
 
     @property
-    def children(self) -> list[GridLayout | LayoutBlock | HeadingLayout]:
+    def children(self) -> list[GridLayout | RowLayout | StackLayout | LayoutBlock | HeadingLayout]:
         """Return ordered section child dataclasses."""
         return self._layout.children
 
@@ -301,6 +374,8 @@ class Section:
         old_label = self._label
         self._label = label
         grid_index = 0
+        row_index = 0
+        stack_index = 0
         for child in self.children:
             if isinstance(child, GridLayout):
                 grid_index += 1
@@ -309,6 +384,16 @@ class Section:
                 for block in child.blocks:
                     _rebase_generated(block, old_grid_label, new_grid_label)
                 child.owner_label = new_grid_label
+            elif isinstance(child, RowLayout):
+                row_index += 1
+                old_row_label = child.owner_label or old_label
+                new_row_label = f"{label}-row-{row_index:03d}"
+                _rebase_children(child, old_row_label, new_row_label)
+            elif isinstance(child, StackLayout):
+                stack_index += 1
+                old_stack_label = child.owner_label or old_label
+                new_stack_label = f"{label}-stack-{stack_index:03d}"
+                _rebase_children(child, old_stack_label, new_stack_label)
             elif isinstance(child, (LayoutBlock, HeadingLayout)):
                 _rebase_generated(child, old_label, label)
 
@@ -318,8 +403,16 @@ class Section:
             self._grid_counter += 1
             child._set_label(f"{self._label}-grid-{self._grid_counter:03d}")
             child = child._layout
-        if not isinstance(child, (GridLayout, LayoutBlock, HeadingLayout)):
-            raise TypeError("Section.add(...) expects a Grid, block, or heading")
+        elif isinstance(child, Row):
+            self._row_counter += 1
+            child._set_label(f"{self._label}-row-{self._row_counter:03d}")
+            child = child._layout
+        elif isinstance(child, Stack):
+            self._stack_counter += 1
+            child._set_label(f"{self._label}-stack-{self._stack_counter:03d}")
+            child = child._layout
+        if not isinstance(child, (GridLayout, RowLayout, StackLayout, LayoutBlock, HeadingLayout)):
+            raise TypeError("Section.add(...) expects a Grid, Row, Stack, block, or heading")
         if isinstance(child, LayoutBlock):
             self._block_counter += 1
             if child.name is None:
@@ -356,6 +449,250 @@ class Section:
         )
         self.children.append(child._layout)
         return child
+
+    def row(self, blocks: Iterable[object] | None = None, *, columns: int = 1, name: str | None = None) -> "Row":
+        """Create and append an explicit horizontal composition."""
+        self._row_counter += 1
+        child = Row(
+            blocks,
+            columns=columns,
+            name=name,
+            _label=f"{self._label}-row-{self._row_counter:03d}",
+        )
+        self.children.append(child._layout)
+        return child
+
+    def stack(self, blocks: Iterable[object] | None = None, *, name: str | None = None) -> "Stack":
+        """Create and append an explicit vertical composition."""
+        self._stack_counter += 1
+        child = Stack(blocks, name=name, _label=f"{self._label}-stack-{self._stack_counter:03d}")
+        self.children.append(child._layout)
+        return child
+
+
+class Stack:
+    """An explicit vertical composition containing only content blocks."""
+
+    def __init__(
+        self,
+        blocks: Iterable[object] | None = None,
+        *,
+        name: str | None = None,
+        _label: str | None = None,
+    ) -> None:
+        self._label = _label or _slug(name or "stack")
+        self._layout = StackLayout(name=_name(name, kind="stack"), owner_label=self._label)
+        self._block_counter = 0
+        if blocks is not None:
+            self.extend(blocks)
+
+    @property
+    def children(self) -> list[LayoutBlock]:
+        """Return the ordered blocks in this stack."""
+        return self._layout.children
+
+    def __enter__(self) -> "Stack":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def __repr__(self) -> str:
+        return f"Stack(blocks={len(self.children)})"
+
+    def _set_label(self, label: str) -> None:
+        """Rebase generated block names when a stack gains an owner."""
+        old_label = self._label
+        self._label = label
+        self._layout.owner_label = label
+        for block in self.children:
+            _rebase_generated(block, old_label, label)
+
+    def add(
+        self,
+        block: LayoutBlock,
+        *,
+        col_span: int | None = None,
+        row_span: int | None = None,
+    ) -> LayoutBlock:
+        """Append one block to this vertical composition."""
+        if not isinstance(block, LayoutBlock):
+            if isinstance(block, (Grid, Row, Stack, GridLayout, RowLayout, StackLayout)):
+                raise ValueError(f"Stack '{self._label}' does not support nested {_layout_kind(block)}")
+            raise TypeError("Stack.add(...) expects a table, plot, text, or link block")
+        if col_span is not None or row_span is not None:
+            block = replace(
+                block,
+                col_span=block.col_span if col_span is None else _span(col_span, kind="col_span"),
+                row_span=block.row_span if row_span is None else _span(row_span, kind="row_span"),
+            )
+        if isinstance(block.col_span, bool) or not isinstance(block.col_span, int) or block.col_span < 1:
+            raise ValueError(
+                f"Stack '{self._label}' block {block.name or '<unnamed>'!r} "
+                f"col_span={block.col_span!r}; expected a positive integer"
+            )
+        if block.col_span != 1:
+            raise ValueError(
+                f"Stack '{self._label}' block {block.name or '<unnamed>'!r} requested "
+                f"col_span={block.col_span}; Stack children occupy the stack's full width"
+            )
+        if isinstance(block.row_span, bool) or not isinstance(block.row_span, int) or block.row_span < 1:
+            raise ValueError(f"Stack '{self._label}' block {block.name or '<unnamed>'!r} row_span must be >= 1")
+        self._block_counter += 1
+        if block.name is None:
+            block.name = f"{self._label}-{block.kind}-{self._block_counter:03d}"
+            block.generated_name = True
+        self.children.append(block)
+        return block
+
+    def extend(self, blocks: Iterable[object]) -> "Stack":
+        """Append blocks from any iterable."""
+        for block in blocks:
+            self.add(block)  # type: ignore[arg-type]
+        return self
+
+    def table(self, ref: TableArtifactRef, **kwargs: Any) -> LayoutBlock:
+        """Create and append a table block."""
+        return self.add(table(ref, **kwargs))
+
+    def plot(self, ref: str, **kwargs: Any) -> LayoutBlock:
+        """Create and append a plot block."""
+        return self.add(plot(ref, **kwargs))
+
+    def text(self, value: str | None = None, **kwargs: Any) -> LayoutBlock:
+        """Create and append a text block."""
+        return self.add(text(value, **kwargs))
+
+    def link(self, label: str, **kwargs: Any) -> LayoutBlock:
+        """Create and append a standalone link block."""
+        return self.add(Link(label, **kwargs))
+
+
+class Row:
+    """An explicit horizontal composition of blocks and vertical stacks."""
+
+    def __init__(
+        self,
+        children: Iterable[object] | None = None,
+        *,
+        columns: int = 1,
+        name: str | None = None,
+        _label: str | None = None,
+    ) -> None:
+        self.columns = _span(columns, kind="Row columns")
+        self._label = _label or _slug(name or "row")
+        self._layout = RowLayout(
+            columns=self.columns,
+            name=_name(name, kind="row"),
+            owner_label=self._label,
+        )
+        self._block_counter = 0
+        if children is not None:
+            self.extend(children)
+
+    @property
+    def children(self) -> list[LayoutBlock | StackLayout]:
+        """Return ordered logical row slots."""
+        return self._layout.children
+
+    def __enter__(self) -> "Row":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def __repr__(self) -> str:
+        return f"Row(columns={self.columns}, children={len(self.children)})"
+
+    def _set_label(self, label: str) -> None:
+        """Rebase generated names throughout a row when it gains an owner."""
+        old_label = self._label
+        self._label = label
+        self._layout.owner_label = label
+        for index, child in enumerate(self.children, 1):
+            if isinstance(child, StackLayout):
+                old_stack_label = child.owner_label or old_label
+                new_stack_label = f"{label}-stack-{index:03d}"
+                for block in child.children:
+                    _rebase_generated(block, old_stack_label, new_stack_label)
+                child.owner_label = new_stack_label
+            else:
+                _rebase_generated(child, old_label, label)
+
+    def add(
+        self,
+        child: LayoutBlock | "Stack",
+        *,
+        col_span: int | None = None,
+        row_span: int | None = None,
+    ) -> LayoutBlock | "Stack":
+        """Append one block or stack to the next logical row slot."""
+        if len(self.children) >= self.columns:
+            raise ValueError(f"Row '{self._label}' has columns={self.columns}; too many children")
+        if isinstance(child, Stack):
+            if col_span is not None or row_span is not None:
+                raise ValueError(f"Row '{self._label}' stack does not accept block spans")
+            child._set_label(f"{self._label}-stack-{len(self.children) + 1:03d}")
+            self.children.append(child._layout)
+            return child
+        if not isinstance(child, LayoutBlock):
+            if isinstance(child, (Grid, Row, GridLayout, RowLayout, StackLayout)):
+                raise ValueError(f"Row '{self._label}' does not support nested {type(child).__name__}")
+            raise TypeError("Row.add(...) expects a table, plot, text, link block, or Stack")
+        if col_span is not None or row_span is not None:
+            child = replace(
+                child,
+                col_span=child.col_span if col_span is None else _span(col_span, kind="col_span"),
+                row_span=child.row_span if row_span is None else _span(row_span, kind="row_span"),
+            )
+        if isinstance(child.col_span, bool) or not isinstance(child.col_span, int) or child.col_span < 1:
+            raise ValueError(
+                f"Row '{self._label}' block {child.name or '<unnamed>'!r} "
+                f"col_span={child.col_span!r}; expected a positive integer"
+            )
+        if child.col_span != 1:
+            raise ValueError(
+                f"Row '{self._label}' block {child.name or '<unnamed>'!r} requested "
+                f"col_span={child.col_span}; Row children occupy one logical slot"
+            )
+        if isinstance(child.row_span, bool) or not isinstance(child.row_span, int) or child.row_span < 1:
+            raise ValueError(f"Row '{self._label}' block {child.name or '<unnamed>'!r} row_span must be >= 1")
+        self._block_counter += 1
+        if child.name is None:
+            child.name = f"{self._label}-{child.kind}-{self._block_counter:03d}"
+            child.generated_name = True
+        self.children.append(child)
+        return child
+
+    def extend(self, children: Iterable[object]) -> "Row":
+        """Append blocks and stacks from any iterable."""
+        for child in children:
+            self.add(child)  # type: ignore[arg-type]
+        return self
+
+    def stack(self, blocks: Iterable[object] | None = None, *, name: str | None = None) -> Stack:
+        """Create and append a vertical stack in the next row slot."""
+        if len(self.children) >= self.columns:
+            raise ValueError(f"Row '{self._label}' has columns={self.columns}; too many children")
+        child = Stack(blocks, name=name, _label=f"{self._label}-stack-{len(self.children) + 1:03d}")
+        self.children.append(child._layout)
+        return child
+
+    def table(self, ref: TableArtifactRef, **kwargs: Any) -> LayoutBlock:
+        """Create and append a table block."""
+        return self.add(table(ref, **kwargs))  # type: ignore[return-value]
+
+    def plot(self, ref: str, **kwargs: Any) -> LayoutBlock:
+        """Create and append a plot block."""
+        return self.add(plot(ref, **kwargs))  # type: ignore[return-value]
+
+    def text(self, value: str | None = None, **kwargs: Any) -> LayoutBlock:
+        """Create and append a text block."""
+        return self.add(text(value, **kwargs))  # type: ignore[return-value]
+
+    def link(self, label: str, **kwargs: Any) -> LayoutBlock:
+        """Create and append a standalone link block."""
+        return self.add(Link(label, **kwargs))  # type: ignore[return-value]
 
 
 class Grid:
@@ -409,6 +746,8 @@ class Grid:
         if not isinstance(block, LayoutBlock):
             if isinstance(block, (Grid, GridLayout)):
                 raise ValueError(f"Grid '{self._label}' does not support nested grids")
+            if isinstance(block, (Row, Stack, RowLayout, StackLayout)):
+                raise ValueError(f"Grid '{self._label}' does not support nested {type(block).__name__}")
             raise TypeError("Grid.add(...) expects a table, plot, text, or link block")
         if col_span is not None or row_span is not None:
             block = replace(
@@ -483,4 +822,34 @@ def grid(blocks: Iterable[object] | None = None, *, columns: int = 1, name: str 
     return Grid(blocks, columns=columns, name=name)
 
 
-__all__ = ["Grid", "Link", "Report", "Section", "grid", "plot", "report", "section", "table", "text"]
+def row(
+    children: Iterable[object] | None = None,
+    *,
+    columns: int = 1,
+    name: str | None = None,
+) -> Row:
+    """Build a row using the functional/list authoring style."""
+    return Row(children, columns=columns, name=name)
+
+
+def stack(children: Iterable[object] | None = None, *, name: str | None = None) -> Stack:
+    """Build a stack using the functional/list authoring style."""
+    return Stack(children, name=name)
+
+
+__all__ = [
+    "Grid",
+    "Link",
+    "Report",
+    "Row",
+    "Section",
+    "Stack",
+    "grid",
+    "plot",
+    "report",
+    "row",
+    "section",
+    "stack",
+    "table",
+    "text",
+]

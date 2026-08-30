@@ -59,7 +59,7 @@ pin latest pointers and persist a warning when they bypass that barrier.
 Stage 1 checks/acquires raw bytes. Stage 2 reparses persisted bytes into
 deterministic curated frames and commits a pointer only after all immutable
 outputs are ready. Stage 3 resolves a snapshot and caches named calculations.
-Stage 4 compiles `Report`/`Section`/`Grid` to PDL and renders it. Historical
+Stage 4 compiles `Report`/`Section`/`Grid`/`Row`/`Stack` to flat PDL and renders it. Historical
 source runs use the ordinary queue but produce separate immutable outputs and
 never advance production pointers.
 

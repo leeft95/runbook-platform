@@ -111,10 +111,12 @@ def page(ctx):
     vol_plot_ref = ctx.artifact.plot(fig_vol, name="vol")
 
     layout = Report(ctx.config.get("title", "Range Vol (PoC)"))
-    with layout.grid(columns=2) as report_grid:
-        report_grid.table(returns_ref, name="returns_table", title="Returns")
-        report_grid.plot(returns_plot_ref, name="returns_plot", title="Returns Plot")
-        report_grid.table(vol_ref, name="vol_table", title="Volatility")
-        report_grid.plot(vol_plot_ref, name="vol_plot", title="Volatility Plot")
-    layout.add(Link("Visit example.com →", url="https://example.com", name="example-link"))
+    with layout.row(columns=2) as returns_row:
+        with returns_row.stack() as returns_stack:
+            returns_stack.table(returns_ref, name="returns_table", title="Returns")
+            returns_stack.add(Link("Visit example.com →", url="https://example.com", name="example-link"))
+        returns_row.plot(returns_plot_ref, name="returns_plot", title="Returns Plot")
+    with layout.row(columns=2) as vol_row:
+        vol_row.table(vol_ref, name="vol_table", title="Volatility")
+        vol_row.plot(vol_plot_ref, name="vol_plot", title="Volatility Plot")
     return layout

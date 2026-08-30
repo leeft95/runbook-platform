@@ -47,11 +47,30 @@ class GridLayout:
 
 
 @dataclass
+class StackLayout:
+    """The ordered block storage for one explicit vertical composition."""
+
+    children: list[LayoutBlock] = field(default_factory=list)
+    name: str | None = None
+    owner_label: str | None = field(default=None, repr=False)
+
+
+@dataclass
+class RowLayout:
+    """The ordered slot storage for one explicit horizontal composition."""
+
+    columns: int
+    children: list[LayoutBlock | StackLayout] = field(default_factory=list)
+    name: str | None = None
+    owner_label: str | None = field(default=None, repr=False)
+
+
+@dataclass
 class SectionLayout:
     """The ordered children storage for one titled report section."""
 
     title: str | None
-    children: list[GridLayout | LayoutBlock | HeadingLayout] = field(default_factory=list)
+    children: list[GridLayout | RowLayout | StackLayout | LayoutBlock | HeadingLayout] = field(default_factory=list)
 
 
 @dataclass
@@ -59,7 +78,9 @@ class ReportLayout:
     """The ordered top-level storage for a report."""
 
     title: str
-    children: list[SectionLayout | GridLayout | LayoutBlock | HeadingLayout] = field(default_factory=list)
+    children: list[SectionLayout | GridLayout | RowLayout | StackLayout | LayoutBlock | HeadingLayout] = field(
+        default_factory=list
+    )
 
 
-LayoutNode: TypeAlias = SectionLayout | GridLayout | LayoutBlock | HeadingLayout
+LayoutNode: TypeAlias = SectionLayout | GridLayout | RowLayout | StackLayout | LayoutBlock | HeadingLayout

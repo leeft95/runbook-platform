@@ -2,11 +2,11 @@
 
 For report authors
 
-`Report` is the whole page, `Section` is a named part of the page, and `Grid`
-places finished text, table, and plot artifacts side by side:
+`Report` is the whole page, `Section` is a named part of the page, and `Grid`,
+`Row`, and `Stack` compose finished text, table, plot, and link artifacts:
 
 ```text
-Python artifacts -> Report / Section / Grid -> PDL -> HTML or Dash
+Python artifacts -> Report / Section / Grid / Row / Stack -> PDL -> HTML or Dash
 ```
 
 Layout placement is renderer-neutral: ordinary tables remain HTML tables or
@@ -15,7 +15,7 @@ report host owns Dash navigation; AG Grid is an explicit interactive-table
 choice rather than a layout default.
 
 ```python
-from runbook.sdk.layout import Report
+from runbook.sdk.layout import Link, Report, Row
 
 
 def build(ctx):
@@ -30,9 +30,48 @@ def build(ctx):
     return layout
 ```
 
-You normally do not calculate row or column coordinates. `Grid` places blocks
-first-fit from left to right and then top to bottom. `col_span` and `row_span`
-let a block occupy more than one track:
+You normally do not calculate row or column coordinates. `Grid` places peer
+blocks first-fit from left to right and then top to bottom. Use `Row` when the
+side-by-side relationship matters, and `Stack` when blocks belong together
+vertically:
+
+```text
+Peers?                              -> Grid
+Side-by-side relationship matters? -> Row
+Multiple pieces belong together?   -> Stack
+```
+
+```python
+with layout.grid(columns=2) as grid:
+    grid.table(table_ref)
+    grid.plot(plot_ref)
+
+with layout.row(columns=2) as row:
+    row.table(table_ref)
+    row.plot(plot_ref)
+
+with layout.stack() as stack:
+    stack.table(table_ref)
+    stack.text("Notes")
+```
+
+`Stack` can occupy one `Row` slot. This is useful when a table and optional
+detail link belong beside a plot:
+
+```python
+with layout.row(columns=2) as row:
+    with row.stack() as left:
+        left.table(returns_ref, name="returns_table", title="Returns")
+        if detail_report:
+            left.add(Link("View details ->", report=detail_report))
+    row.plot(returns_plot_ref, name="returns_plot", title="Returns Plot")
+```
+
+`Row` children use one declared slot each; a direct block stretches to the
+row's physical height when another slot contains a taller stack. `col_span`
+remains a Grid feature; existing `row_span` is supported in Rows and Stacks.
+
+For Grid-only spans, use:
 
 ```python
 with layout.grid(columns=12) as grid:
@@ -40,10 +79,10 @@ with layout.grid(columns=12) as grid:
     grid.text("Commentary", col_span=4)
 ```
 
-`Report` and `Section` also support `add`, `extend`, and `heading`; `Grid`
-supports `add`, `extend`, `table`, `plot`, and `text`. Functional
-`report(...)`, `section(...)`, and `grid(...)` helpers accept lists, tuples,
-and generators when context managers are inconvenient.
+`Report` and `Section` also support `add`, `extend`, and `heading`; `Grid`,
+`Row`, and `Stack` support `add`, `extend`, and their block helpers. Functional
+`report(...)`, `section(...)`, `grid(...)`, `row(...)`, and `stack(...)` helpers
+accept lists, tuples, and generators when context managers are inconvenient.
 
 ## Grid rules
 
@@ -59,9 +98,10 @@ and generators when context managers are inconvenient.
   stable for insertion order, and duplicate names fail clearly.
 
 Blocks added directly to a `Report` or `Section` are full width. Use a `Grid`
-when horizontal placement or spans are needed. Layout objects do not read
-data, serialize figures, or import Dash; compilation happens after the report
-returns.
+when automatic peer placement or horizontal spans are needed. Layout objects
+do not read data, serialize figures, or import Dash; compilation happens after
+the report returns. Layout composition lowers to flat PDL coordinates, so
+renderers do not need to know about Row or Stack.
 
 ## Functional composition
 
@@ -71,6 +111,62 @@ from runbook.sdk.layout import grid, report, section, table
 blocks = [table(ctx.artifact.table(make_table(item), name=f"item-{item}"), title=item) for item in items]
 return report("Inventory", sections=[section("Items", grid(blocks, columns=2))])
 ```
+
+## Ordinary Python composition
+
+> Runbook composition uses normal Python. Use functions, loops, and conditionals to build reusable report structures instead of introducing another templating or layout DSL.
+
+Populate a Stack with a loop:
+
+```python
+with layout.stack() as stack:
+    for spec in report_specs:
+        stack.table(spec.table_ref, name=spec.table_name, title=spec.title)
+        stack.plot(spec.plot_ref, name=spec.plot_name, title=f"{spec.title} Plot")
+```
+
+Generate repeated Rows with a loop:
+
+```python
+for spec in report_specs:
+    with layout.row(columns=2) as row:
+        row.table(spec.table_ref, name=spec.table_name, title=spec.title)
+        row.plot(spec.plot_ref, name=spec.plot_name, title=f"{spec.title} Plot")
+```
+
+A helper can return a composable Row or Stack:
+
+```python
+def build_market_row(spec):
+    row = Row(columns=2)
+    with row.stack() as left:
+        left.table(spec.table_ref, name=spec.table_name, title=spec.title)
+        if spec.detail_report:
+            left.add(Link("View details ->", report=spec.detail_report))
+    row.plot(spec.plot_ref, name=spec.plot_name, title=f"{spec.title} Plot")
+    return row
+
+
+for spec in report_specs:
+    layout.add(build_market_row(spec))
+```
+
+Or a helper can populate a supplied Stack/Row:
+
+```python
+def add_market_summary(stack, spec):
+    stack.table(spec.table_ref, name=spec.table_name, title=spec.title)
+    if spec.detail_report:
+        stack.add(Link("View details ->", report=spec.detail_report))
+
+
+with layout.stack() as stack:
+    for spec in report_specs:
+        add_market_summary(stack, spec)
+```
+
+Both styles are ordinary Python; use whichever keeps the report definition
+easiest to read.
 
 Use this API before dropping to the lower-level PDL constructors. The advanced
 escape hatch is documented in [Reports](reports.md).

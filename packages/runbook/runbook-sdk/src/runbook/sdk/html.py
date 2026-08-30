@@ -28,11 +28,6 @@ DEFAULT_GRID_CSS = """.rb-page {
   background: #fff;
 }
 
-.rb-link-block {
-  padding: 2px 0;
-  background: transparent;
-}
-
 .rb-warnings {
   border: 2px solid #b45309;
   border-radius: 8px;
@@ -117,10 +112,7 @@ def render_html(store: BlobStore, manifest: PDLManifest, prefix: str) -> str:
         else:
             raise ValueError(f"unsupported PDL block type: {block.type!r}")
         position = f"grid-row: {block.row} / span {block.row_span}; grid-column: {block.col} / span {block.col_span};"
-        if isinstance(block, PDLLinkBlock):
-            blocks.append(f'<div class="rb-link-block" style="{position}">{title}{body}</div>')
-        else:
-            blocks.append(f'<section class="rb-block" style="{position}">{title}{body}</section>')
+        blocks.append(f'<section class="rb-block" style="{position}">{title}{body}</section>')
     css = ""
     if manifest.style:
         css = re.sub(

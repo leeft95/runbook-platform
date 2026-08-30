@@ -216,16 +216,6 @@ def _build_components(
                 title=title,
                 namespace=ids.namespace,
             )
-        if isinstance(block, PDLLinkBlock):
-            block_content = body if wrapped is None else wrapped
-            components.append(
-                html.Div(
-                    block_content,
-                    id=ids.block(block.name) + "-container",
-                    style=position,
-                )
-            )
-            continue
         block_content = _wrap_default_block(title, body) if wrapped is None else wrapped
         block_children: Any = block_content if wrapped is None else [block_content]
         components.append(

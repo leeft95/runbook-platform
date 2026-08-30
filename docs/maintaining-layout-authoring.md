@@ -7,7 +7,7 @@ The layout path is deliberately small and one-way:
 ```text
 Report.add()
   ↓
-Grid.blocks
+Grid / Row / Stack children
   ↓
 compile_layout()
   ↓
@@ -21,11 +21,12 @@ renderer
 ## Where things live
 
 1. Layout state is stored in plain dataclasses owned by `Report`, `Section`,
-   and `Grid`; there is no global or thread-local current builder.
+   `Grid`, `Row`, and `Stack`; there is no global or thread-local current
+   builder.
 2. First-fit auto-placement is `_place_grid` in
    `runbook.sdk.layout.compiler`.
 3. PDL row and column coordinates are generated in `compile_layout`, after
-   local grids are scaled to the page-wide LCM column count.
+   local Grid and Row widths are scaled to the page-wide LCM column count.
 4. PDL validation happens in the existing `pdl-core` Pydantic models when the
    page and manifest are constructed. Stage 4 validates the reloaded JSON too.
 5. Rendering starts after compilation: `runbook.sdk.html.render_html` handles
@@ -38,9 +39,10 @@ interaction explicitly owns a table output. Dash route resolution belongs to
 the host, not layout compilation, and this reporting path must not grow an
 iframe, `srcDoc`, or `postMessage` bridge.
 
-The authoring contract is intentionally flat: nested grids are rejected,
-high-level layouts default to `max_columns = 12`, and LCM normalization is
-never silently rounded. Keep these rules aligned with
+The authoring contract is intentionally constrained: Grid remains flat, Row
+accepts direct blocks or Stack slots, Stack accepts direct blocks, and other
+layout nesting is rejected. High-level layouts default to `max_columns = 12`,
+and LCM normalization is never silently rounded. Keep these rules aligned with
 [Composable report layouts](composable-report-layouts.md).
 
 ## Adding a layout feature safely

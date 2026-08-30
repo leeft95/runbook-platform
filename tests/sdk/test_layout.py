@@ -18,7 +18,7 @@ from runbook.sdk.discovery import ReportDefinition, discover_report_definition
 from runbook.sdk.execution import load_report_module
 from runbook.sdk.extensions.dash.renderer import render_dash_page
 from runbook.sdk.html import render_html
-from runbook.sdk.layout import Report, compile_layout, grid, plot, report, section, table, text
+from runbook.sdk.layout import Link, Report, Row, Stack, compile_layout, grid, plot, report, section, table, text
 from runbook.sdk.preview_cli import compose_dash_app
 from runbook.sdk.table_style import table_style
 
@@ -45,6 +45,142 @@ def test_two_column_flow_and_handles() -> None:
     assert [block.row for block in manifest.page.blocks] == [1, 1, 2]
     assert [block.col for block in manifest.page.blocks] == [1, 2, 1]
     assert third.name.endswith("text-003")
+
+
+def test_row_places_direct_blocks_in_declared_slots() -> None:
+    layout = Report("Row")
+    with layout.row(columns=2) as row:
+        row.text("left", name="left")
+        row.text("right", name="right")
+
+    blocks = compile_layout(_ctx(), layout).page.blocks
+    assert [(block.text, block.row, block.col, block.row_span, block.col_span) for block in blocks] == [
+        ("left", 1, 1, 1, 1),
+        ("right", 1, 2, 1, 1),
+    ]
+
+
+def test_row_stack_stretches_direct_sibling_and_flattens_to_pdl() -> None:
+    layout = Report("Composed")
+    with layout.row(columns=2) as row:
+        with row.stack() as left:
+            left.text("table", name="table")
+            left.add(Link("Details", url="https://example.test", name="details"))
+        row.text("plot", name="plot")
+
+    blocks = compile_layout(_ctx(), layout).page.blocks
+    assert [(block.name, block.row, block.col, block.row_span, block.col_span) for block in blocks] == [
+        ("table", 1, 1, 1, 1),
+        ("details", 2, 1, 1, 1),
+        ("plot", 1, 2, 2, 1),
+    ]
+
+
+def test_uneven_stacks_and_subsequent_rows_advance_by_physical_height() -> None:
+    layout = Report("Uneven")
+    with layout.row(columns=2) as row:
+        with row.stack() as first:
+            first.text("a")
+            first.text("b")
+            first.text("c")
+        with row.stack() as second:
+            second.text("d")
+            second.text("e")
+    with layout.row(columns=2) as following:
+        following.text("next")
+
+    blocks = compile_layout(_ctx(), layout).page.blocks
+    assert [(block.text, block.row, block.col) for block in blocks] == [
+        ("a", 1, 1),
+        ("b", 2, 1),
+        ("c", 3, 1),
+        ("d", 1, 2),
+        ("e", 2, 2),
+        ("next", 4, 1),
+    ]
+
+
+def test_top_level_and_section_stacks_use_full_normalized_width() -> None:
+    layout = Report("Stacks")
+    with layout.stack() as top:
+        top.text("top")
+        top.text("next")
+    with layout.section("Details") as details:
+        with details.stack() as nested:
+            nested.text("section")
+
+    manifest = compile_layout(_ctx(), layout)
+    assert manifest.page.columns == 1
+    assert [(block.text, block.row, block.col, block.col_span) for block in manifest.page.blocks if block.text] == [
+        ("top", 1, 1, 1),
+        ("next", 2, 1, 1),
+        ("section", 4, 1, 1),
+    ]
+
+
+def test_rows_participate_in_lcm_and_preserve_max_columns() -> None:
+    layout = Report("Wide")
+    layout.row(columns=4).text("row")
+    with layout.grid(columns=3) as grid:
+        grid.text("grid")
+
+    assert compile_layout(_ctx({"layout": {"max_columns": 12}}), layout).page.columns == 12
+    with pytest.raises(ValueError, match="columns=12.*max_columns=6"):
+        compile_layout(_ctx({"layout": {"max_columns": 6}}), layout)
+
+
+def test_row_stack_names_rebase_and_explicit_names_win() -> None:
+    explicit = text("nested", name="fixed")
+    detached = Row([text("generated"), Stack([explicit])], columns=2)
+    layout = Report("Named")
+    layout.add(detached)
+    blocks = compile_layout(_ctx(), layout).page.blocks
+    assert blocks[0].name == "named-row-001-text-001"
+    assert blocks[1].name == "fixed"
+    assert explicit.name == "fixed"
+
+
+def test_row_and_stack_reject_invalid_nesting_and_empty_or_wide_children() -> None:
+    with pytest.raises(ValueError, match="Row columns"):
+        Row(columns=0)
+    with pytest.raises(ValueError, match="too many children"):
+        Row([text("a"), text("b")], columns=1)
+    with pytest.raises(ValueError, match="Row.*col_span=2"):
+        Row(columns=1).add(text("wide", col_span=2))
+    with pytest.raises(ValueError, match="Stack.*col_span=2"):
+        Stack().add(text("wide", col_span=2))
+    with pytest.raises(ValueError, match="cannot be empty"):
+        compile_layout(_ctx(), Report("Empty stack", children=[Stack()]))
+    with pytest.raises(ValueError, match="nested Row"):
+        Row(columns=1).add(Row(columns=1))
+    with pytest.raises(ValueError, match="nested Row"):
+        Stack().add(Row(columns=1))
+    with pytest.raises(ValueError, match="nested Grid"):
+        Row(columns=1).add(grid(columns=1))
+
+
+def test_forbidden_container_nesting_and_section_row_flattening() -> None:
+    with pytest.raises(ValueError, match="nested Stack"):
+        Stack().add(Stack())
+    with pytest.raises(ValueError, match="nested Grid"):
+        Stack().add(grid(columns=1))
+    with pytest.raises(ValueError, match="nested Row"):
+        grid(columns=1).add(Row(columns=1))
+    with pytest.raises(ValueError, match="nested Stack"):
+        grid(columns=1).add(Stack())
+
+    layout = Report("Section row")
+    with layout.section("Details") as details:
+        with details.row(columns=2) as row:
+            row.text("left", name="left")
+            row.text("right", name="right")
+
+    blocks = compile_layout(_ctx(), layout).page.blocks
+    assert [(block.text, block.row, block.col, block.col_span) for block in blocks] == [
+        ("", 1, 1, 2),
+        ("left", 2, 1, 1),
+        ("right", 2, 2, 1),
+    ]
 
 
 def test_three_column_and_mixed_spans() -> None:
@@ -510,15 +646,15 @@ def test_vol_report_native_dash_and_html_golden(tmp_path, pointer_registry) -> N
     normal_sections = {
         section.id: section for section in report_grid.children if section.__class__.__name__ == "Section"
     }
-    assert len(normal_sections) == 4
+    assert len(normal_sections) == 5
     returns_section = sections[page.ids.block("returns_table") + "-container"]
     returns_plot_section = sections[page.ids.block("returns_plot") + "-container"]
     vol_section = sections[page.ids.block("vol_table") + "-container"]
     vol_plot_section = sections[page.ids.block("vol_plot") + "-container"]
     assert returns_section.style == {"gridRow": "1 / span 1", "gridColumn": "1 / span 1"}
-    assert returns_plot_section.style == {"gridRow": "1 / span 1", "gridColumn": "2 / span 1"}
-    assert vol_section.style == {"gridRow": "2 / span 1", "gridColumn": "1 / span 1"}
-    assert vol_plot_section.style == {"gridRow": "2 / span 1", "gridColumn": "2 / span 1"}
+    assert returns_plot_section.style == {"gridRow": "1 / span 2", "gridColumn": "2 / span 1"}
+    assert vol_section.style == {"gridRow": "3 / span 1", "gridColumn": "1 / span 1"}
+    assert vol_plot_section.style == {"gridRow": "3 / span 1", "gridColumn": "2 / span 1"}
     assert returns_section.children[0].children == "Returns"
     assert vol_section.children[0].children == "Volatility"
     returns_table = returns_section.children[1]
@@ -541,9 +677,9 @@ def test_vol_report_native_dash_and_html_golden(tmp_path, pointer_registry) -> N
         for child in section.children
     )
     link_container = sections[page.ids.block("example-link") + "-container"]
-    assert link_container.style == {"gridRow": "3 / span 1", "gridColumn": "1 / span 2"}
-    assert link_container.children.__class__.__name__ == "A"
-    assert link_container.children.href == "https://example.com"
+    assert link_container.style == {"gridRow": "2 / span 1", "gridColumn": "1 / span 1"}
+    assert link_container.children[0].__class__.__name__ == "A"
+    assert link_container.children[0].href == "https://example.com"
     html = store.get(result.html_ref).decode()
     assert all(
         value in html
@@ -552,7 +688,6 @@ def test_vol_report_native_dash_and_html_golden(tmp_path, pointer_registry) -> N
             "Volatility",
             "-20.00%",
             ">-<",
-            "rb-link-block",
             "Visit example.com →",
             'href="https://example.com"',
         )

@@ -144,18 +144,15 @@ def test_html_renders_safe_standalone_link_labels(tmp_path) -> None:
         in rendered
     )
     assert (
-        '<div class="rb-link-block" style="grid-row: 2 / span 1; grid-column: 1 / span 1;"><h2>Details</h2>' in rendered
+        '<section class="rb-block" style="grid-row: 2 / span 1; grid-column: 1 / span 1;"><h2>Details</h2>' in rendered
     )
-    assert rendered.count('class="rb-link-block"') == 3
-    assert rendered.count('class="rb-block"') == 1
+    assert 'class="rb-link-block"' not in rendered
+    assert rendered.count('class="rb-block"') == 4
     assert "&lt;Report &amp; more&gt;" in rendered
     assert 'href="/report/child"' in rendered
     assert 'href="plots/seasonal.html"' in rendered
     assert 'href="https://example.test"' in rendered
-    assert ".rb-link-block {" in DEFAULT_GRID_CSS
-    assert "padding: 2px 0;" in DEFAULT_GRID_CSS
-    assert "background: transparent;" in DEFAULT_GRID_CSS
-    assert ".rb-link-block {\n  border" not in DEFAULT_GRID_CSS
+    assert ".rb-link-block {" not in DEFAULT_GRID_CSS
 
 
 def test_html_bundle_publishes_standalone_aggregate_plot_link(tmp_path) -> None:
@@ -188,11 +185,14 @@ def test_dash_renders_standalone_links_using_existing_navigation(tmp_path) -> No
 
     page = render_dash_page(manifest, definition, ctx, namespace="standalone-links")
     blocks = page.layout().children[2].children
-    report_link, plot_link, url_link = [block.children for block in blocks]
+    report_link, plot_link, url_link = blocks
 
-    assert isinstance(report_link, dcc.Link) and getattr(report_link, "href") == "/report/child/a%20b"
-    assert isinstance(plot_link, dcc.Link) and getattr(plot_link, "href") == "/plot/seasonal"
-    assert isinstance(url_link, html.A) and getattr(url_link, "href") == "https://example.test"
+    assert isinstance(report_link, html.Section) and isinstance(report_link.children[0], dcc.Link)
+    assert getattr(report_link.children[0], "href") == "/report/child/a%20b"
+    assert isinstance(plot_link, html.Section) and isinstance(plot_link.children[0], dcc.Link)
+    assert getattr(plot_link.children[0], "href") == "/plot/seasonal"
+    assert isinstance(url_link, html.Section) and isinstance(url_link.children[0], html.A)
+    assert getattr(url_link.children[0], "href") == "https://example.test"
     assert [block.id for block in blocks] == [
         page.ids.block("report") + "-container",
         page.ids.block("plot") + "-container",
@@ -239,12 +239,13 @@ def test_dash_mixed_blocks_keep_normal_section_and_lightweight_link_container() 
     assert isinstance(normal, html.Section)
     assert normal.children[0].children == "Summary"
     assert normal.children[1].children == "body"
-    assert isinstance(link, html.Div)
+    assert isinstance(link, html.Section)
     assert getattr(link, "id") == page.ids.block("details") + "-container"
     assert getattr(link, "style") == {"gridRow": "2 / span 1", "gridColumn": "1 / span 1"}
-    assert isinstance(link.children, dcc.Link)
-    assert link.children.children == "Open details"
-    assert getattr(link.children, "href") == "/report/details"
+    assert isinstance(link.children[0], html.H2)
+    assert isinstance(link.children[1], dcc.Link)
+    assert link.children[1].children == "Open details"
+    assert getattr(link.children[1], "href") == "/report/details"
 
 
 def test_dash_link_renderer_extension_wraps_inside_lightweight_container() -> None:
@@ -286,10 +287,10 @@ def test_dash_link_renderer_extension_wraps_inside_lightweight_container() -> No
     assert block is manifest.page.blocks[0]
     assert title.children == "Details"
     assert namespace == "custom-links"
-    assert isinstance(link_container, html.Div)
+    assert isinstance(link_container, html.Section)
     assert getattr(link_container, "style") == {"gridRow": "1 / span 1", "gridColumn": "1 / span 1"}
-    assert link_container.children.id == "custom-link"
-    assert link_container.children.children[1] is body
+    assert link_container.children[0].id == "custom-link"
+    assert link_container.children[0].children[1] is body
 
 
 def test_dash_unresolved_standalone_plot_is_an_accessible_alert(tmp_path) -> None:
@@ -304,6 +305,6 @@ def test_dash_unresolved_standalone_plot_is_an_accessible_alert(tmp_path) -> Non
         namespace="standalone-missing",
     )
 
-    alert = page.layout().children[2].children[0].children
+    alert = page.layout().children[2].children[0].children[0]
     assert isinstance(alert, html.Span)
     assert getattr(alert, "role") == "alert"

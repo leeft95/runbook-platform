@@ -192,9 +192,9 @@ def test_controls_attach_to_non_link_block_in_mixed_link_page() -> None:
     assert isinstance(normal, html.Section)
     control_body = normal.children[1]
     assert control_body.children[0].children[1].__class__.__name__ == "Dropdown"
-    assert isinstance(link, html.Div)
-    assert isinstance(link.children, dcc.Link)
-    assert link.children.children == "Open details"
+    assert isinstance(link, html.Section)
+    assert isinstance(link.children[1], dcc.Link)
+    assert link.children[1].children == "Open details"
 
 
 def test_controls_reject_link_only_page() -> None:

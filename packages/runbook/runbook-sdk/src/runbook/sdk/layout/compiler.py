@@ -12,7 +12,7 @@ from runbook.core.pdl.models import PDLBlock, PDLLinkDestination
 from runbook.sdk import ui
 
 from .builder import Report
-from .models import GridLayout, HeadingLayout, LayoutBlock, ReportLayout, SectionLayout
+from .models import GridLayout, HeadingLayout, LayoutBlock, ReportLayout, RowLayout, SectionLayout, StackLayout
 
 
 def _layout(value: Report | ReportLayout) -> ReportLayout:
@@ -39,6 +39,18 @@ def _surviving_grid(node: object) -> list[GridLayout]:
         return result
     if isinstance(node, GridLayout):
         return [node] if node.blocks else []
+    return []
+
+
+def _surviving_row(node: object) -> list[RowLayout]:
+    """Collect non-empty explicit rows in child order."""
+    if isinstance(node, (ReportLayout, SectionLayout)):
+        result: list[RowLayout] = []
+        for child in node.children:
+            result.extend(_surviving_row(child))
+        return result
+    if isinstance(node, RowLayout):
+        return [node] if node.children else []
     return []
 
 
@@ -73,6 +85,16 @@ def _validate_names(layout: ReportLayout) -> None:
         elif isinstance(node, GridLayout):
             for block_index, block in enumerate(node.blocks, 1):
                 add(_block_name(block, node.name or owner, block_index), block.kind)
+        elif isinstance(node, StackLayout):
+            for block_index, block in enumerate(node.children, 1):
+                add(_block_name(block, node.name or owner, block_index), block.kind)
+        elif isinstance(node, RowLayout):
+            for slot_index, child in enumerate(node.children, 1):
+                if isinstance(child, StackLayout):
+                    for block_index, block in enumerate(child.children, 1):
+                        add(_block_name(block, child.name or node.name or owner, block_index), block.kind)
+                else:
+                    add(_block_name(child, node.name or owner, slot_index), child.kind)
         elif isinstance(node, SectionLayout):
             if _has_content(node):
                 section_owner = f"{_slug(node.title or owner)}-section-{index:03d}"
@@ -85,6 +107,74 @@ def _validate_names(layout: ReportLayout) -> None:
                 walk(report_child, owner, child_index)
 
     walk(layout, layout.title)
+
+
+def _validate_stack(stack: StackLayout, owner: str) -> None:
+    """Validate one explicit vertical composition."""
+    if not stack.children:
+        raise ValueError(f"Stack '{stack.owner_label or owner}' cannot be empty")
+    for block in stack.children:
+        if not isinstance(block, LayoutBlock):
+            raise ValueError(f"Stack '{stack.owner_label or owner}' accepts only direct blocks")
+        if isinstance(block.col_span, bool) or not isinstance(block.col_span, int) or block.col_span < 1:
+            raise ValueError(
+                f"Stack '{stack.owner_label or owner}' block {block.name or '<unnamed>'!r} "
+                f"col_span={block.col_span!r}; expected a positive integer"
+            )
+        if block.col_span != 1:
+            raise ValueError(
+                f"Stack '{stack.owner_label or owner}' block {block.name or '<unnamed>'!r} requested "
+                f"col_span={block.col_span}; Stack children occupy the stack's full width"
+            )
+        if isinstance(block.row_span, bool) or not isinstance(block.row_span, int) or block.row_span < 1:
+            raise ValueError(
+                f"Stack '{stack.owner_label or owner}' block {block.name or '<unnamed>'!r} row_span must be >= 1"
+            )
+
+
+def _validate_row(row: RowLayout, owner: str) -> None:
+    """Validate one explicit horizontal composition."""
+    if isinstance(row.columns, bool) or not isinstance(row.columns, int) or row.columns < 1:
+        raise ValueError(
+            f"Row '{row.owner_label or owner}' has invalid columns={row.columns!r}; expected an integer >= 1"
+        )
+    if len(row.children) > row.columns:
+        raise ValueError(
+            f"Row '{row.owner_label or owner}' has columns={row.columns}; too many children ({len(row.children)})"
+        )
+    for child in row.children:
+        if isinstance(child, StackLayout):
+            _validate_stack(child, row.owner_label or owner)
+            continue
+        if not isinstance(child, LayoutBlock):
+            raise ValueError(f"Row '{row.owner_label or owner}' accepts only direct blocks or Stack children")
+        if isinstance(child.col_span, bool) or not isinstance(child.col_span, int) or child.col_span < 1:
+            raise ValueError(
+                f"Row '{row.owner_label or owner}' block {child.name or '<unnamed>'!r} "
+                f"col_span={child.col_span!r}; expected a positive integer"
+            )
+        if child.col_span != 1:
+            raise ValueError(
+                f"Row '{row.owner_label or owner}' block {child.name or '<unnamed>'!r} requested "
+                f"col_span={child.col_span}; Row children occupy one logical slot"
+            )
+        if isinstance(child.row_span, bool) or not isinstance(child.row_span, int) or child.row_span < 1:
+            raise ValueError(
+                f"Row '{row.owner_label or owner}' block {child.name or '<unnamed>'!r} row_span must be >= 1"
+            )
+
+
+def _validate_composition(node: object, owner: str) -> None:
+    """Validate authoring-only composition nodes before width normalization."""
+    if isinstance(node, (ReportLayout, SectionLayout)):
+        for child in node.children:
+            _validate_composition(child, owner)
+    elif isinstance(node, GridLayout):
+        _validate_grid(node, node.name or owner)
+    elif isinstance(node, RowLayout):
+        _validate_row(node, node.name or owner)
+    elif isinstance(node, StackLayout):
+        _validate_stack(node, node.name or owner)
 
 
 def _validate_grid(grid: GridLayout, owner: str) -> None:
@@ -222,15 +312,16 @@ def _lower_heading(heading: HeadingLayout, *, name: str, row: int, columns: int)
 def compile_layout(ctx: Any, report: Report | ReportLayout) -> Any:
     """Compile a Report into a validated pdl-core manifest."""
     layout = _layout(report)
+    _validate_composition(layout, layout.title)
     grids = _surviving_grid(layout)
-    for grid in grids:
-        _validate_grid(grid, grid.name or "grid")
-    columns = math.lcm(*(grid.columns for grid in grids)) if grids else 1
+    rows = _surviving_row(layout)
+    widths = [grid.columns for grid in grids] + [row.columns for row in rows]
+    columns = math.lcm(*widths) if widths else 1
     configured_limit = _configured_limit(ctx)
     if columns > configured_limit:
-        values = ", ".join(str(grid.columns) for grid in grids)
+        values = ", ".join(str(width) for width in widths)
         raise ValueError(
-            f"Report '{layout.title}' requires columns={columns} for logical grids ({values}), "
+            f"Report '{layout.title}' requires columns={columns} for logical grids/rows ({values}), "
             f"which exceeds layout.max_columns={configured_limit}; "
             "set ctx.config['layout']['max_columns'] explicitly for an ultrawide report"
         )
@@ -294,6 +385,73 @@ def compile_layout(ctx: Any, report: Report | ReportLayout) -> Any:
             max_row = max(max_row, local_row + block.row_span - 1)
         row_cursor += max_row
 
+    def add_stack(stack: StackLayout, owner: str, *, col: int = 1, col_span: int = columns) -> None:
+        """Emit a stack's direct blocks vertically at one page position."""
+        nonlocal row_cursor, auto_index
+        _validate_stack(stack, stack.name or owner)
+        local_row = row_cursor + 1
+        for block_index, block in enumerate(stack.children, 1):
+            auto_index += 1
+            name = _block_name(block, stack.name or owner, auto_index)
+            pdl_blocks.append(
+                _lower_block(
+                    block,
+                    name=name,
+                    row=local_row,
+                    col=col,
+                    row_span=block.row_span,
+                    col_span=col_span,
+                )
+            )
+            local_row += block.row_span
+        row_cursor = local_row - 1
+
+    def add_row(row: RowLayout, owner: str) -> None:
+        """Emit one explicit row with deterministic slot heights."""
+        nonlocal row_cursor, auto_index
+        _validate_row(row, row.name or owner)
+        if not row.children:
+            return
+        factor = columns // row.columns
+        heights = [
+            (sum(block.row_span for block in child.children) if isinstance(child, StackLayout) else child.row_span)
+            for child in row.children
+        ]
+        physical_height = max(heights)
+        start_row = row_cursor + 1
+        for slot_index, child in enumerate(row.children):
+            slot_col = slot_index * factor + 1
+            if isinstance(child, StackLayout):
+                local_row = start_row
+                for block_index, block in enumerate(child.children, 1):
+                    auto_index += 1
+                    name = _block_name(block, child.name or row.name or owner, auto_index)
+                    pdl_blocks.append(
+                        _lower_block(
+                            block,
+                            name=name,
+                            row=local_row,
+                            col=slot_col,
+                            row_span=block.row_span,
+                            col_span=factor,
+                        )
+                    )
+                    local_row += block.row_span
+                continue
+            auto_index += 1
+            name = _block_name(child, row.name or owner, auto_index)
+            pdl_blocks.append(
+                _lower_block(
+                    child,
+                    name=name,
+                    row=start_row,
+                    col=slot_col,
+                    row_span=physical_height,
+                    col_span=factor,
+                )
+            )
+        row_cursor += physical_height
+
     def add_section(section: SectionLayout, owner: str, section_index: int) -> None:
         """Append a surviving section and its ordered children."""
         nonlocal row_cursor
@@ -307,8 +465,12 @@ def compile_layout(ctx: Any, report: Report | ReportLayout) -> Any:
                 add_direct(child, section_owner)
             elif isinstance(child, HeadingLayout):
                 add_heading(child, section_owner)
-            else:
+            elif isinstance(child, GridLayout):
                 add_grid(child, section_owner)
+            elif isinstance(child, RowLayout):
+                add_row(child, section_owner)
+            else:
+                add_stack(child, section_owner)
 
     for child_index, child in enumerate(layout.children, 1):
         if isinstance(child, SectionLayout):
@@ -317,8 +479,12 @@ def compile_layout(ctx: Any, report: Report | ReportLayout) -> Any:
             add_direct(child, layout.title)
         elif isinstance(child, HeadingLayout):
             add_heading(child, layout.title)
-        else:
+        elif isinstance(child, GridLayout):
             add_grid(child, layout.title)
+        elif isinstance(child, RowLayout):
+            add_row(child, layout.title)
+        else:
+            add_stack(child, layout.title)
 
     if not pdl_blocks:
         raise ValueError(f"Report '{layout.title}' has no blocks to compile; add at least one block")
