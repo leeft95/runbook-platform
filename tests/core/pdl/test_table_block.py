@@ -170,11 +170,6 @@ def test_pdl_table_links_cover_static_dynamic_and_areas() -> None:
         {
             "area": "cells",
             "field": "month",
-            "destination": {"kind": "plot", "value": "plots/month"},
-        },
-        {
-            "area": "cells",
-            "field": "month",
             "destination": {"kind": "url", "value": "a", "value_field": "url"},
         },
     ],
@@ -182,6 +177,17 @@ def test_pdl_table_links_cover_static_dynamic_and_areas() -> None:
 def test_pdl_table_links_reject_invalid_combinations(payload: dict[str, object]) -> None:
     with pytest.raises(ValueError):
         TableLink.model_validate(payload)
+
+
+def test_pdl_table_links_allow_plot_destinations_in_body_cells() -> None:
+    assert (
+        TableLink(
+            area="cells",
+            field="month",
+            destination={"kind": "plot", "value": "plots/month"},
+        ).destination.kind
+        == PDLLinkKind.plot
+    )
 
 
 def test_pdl_link_serialization_is_deterministic_and_02_round_trips() -> None:

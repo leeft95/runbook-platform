@@ -35,7 +35,7 @@ from runbook.sdk.extensions.dash import (
     render_dash_page,
     validate_dash_manifest,
 )
-from runbook.sdk.extensions.dash.renderer import _build_native_table, _convert_output
+from runbook.sdk.extensions.dash.renderer import _build_ag_grid, _build_native_table, _convert_output
 from runbook.sdk.table_style import link_column, link_header, link_index_header
 
 
@@ -396,6 +396,90 @@ def test_interactive_table_stays_ag_grid_when_declared_as_output(tmp_path) -> No
     page = render_dash_page(manifest, definition, ctx, namespace="grid")
     table = page.layout().children[2].children[0].children[0]
     assert table.__class__.__name__ == "AgGrid"
+
+
+def test_ag_grid_consumes_resolved_style_and_semantic_links(tmp_path) -> None:
+    store = BlobStore(f"file:{tmp_path}")
+    ctx = SimpleNamespace(_artifact_store=store, _artifact_prefix="reports/r")
+    style = {
+        "format": {"na_rep": "NA", "columns": {"amount": "{:,.1f}"}},
+        "sizing": {"columns": [{"label": "label", "width_px": 140}]},
+        "rules": [
+            {
+                "id": "negative",
+                "target": {"scope": "columns", "labels": ["amount"]},
+                "condition": {"op": "lt", "rhs": {"kind": "literal", "value": 0}},
+                "action": {"background_color": "#fee2e2", "font_weight": "bold"},
+            }
+        ],
+        "options": {"hidden_columns": ["helper"], "hidden_rows": [{"mode": "position", "value": 1}]},
+    }
+    store.put_json("reports/r/styles/table.json", style)
+    store.put_json("reports/r/plots/plot-one.json", {})
+    store.put_json("reports/r/plots/plot-two.json", {})
+    store.put_json("reports/r/plots/all-a.json", {})
+    frame = pd.DataFrame(
+        {
+            "label": ["one", "hidden", "null"],
+            "amount": [-12.5, 1.0, 2.0],
+            "report": ["detail/one", "detail/two", None],
+            "url": ["https://example.test/one", None, None],
+            "plot": ["plot-one", "plot-two", None],
+            "helper": ["one-helper", "two-helper", "null-helper"],
+        },
+        index=pd.Index(["row-a", "row-b", "row-c"], name="Region"),
+    )
+    block = PDLTableBlock(
+        name="table",
+        data_ref="table.parquet",
+        style_ref="styles/table.json",
+        row=1,
+        col=1,
+        links=[
+            {"area": "cells", "field": "label", "destination": {"kind": "report", "value_field": "report"}},
+            {"area": "cells", "field": "report", "destination": {"kind": "url", "value_field": "url"}},
+            {"area": "cells", "field": "plot", "destination": {"kind": "plot", "value_field": "plot"}},
+            {"area": "header", "field": "label", "destination": {"kind": "report", "value": "header"}},
+            {"area": "index_header", "destination": {"kind": "plot", "value": "all-plots"}},
+        ],
+        columns=[
+            column("label"),
+            column("amount", role="measure"),
+            column("report", hidden=True),
+            column("url"),
+            column("plot"),
+            column("helper"),
+        ],
+    )
+
+    def route(kind: str, value: str) -> str:
+        return f"/resolved/{kind}/{value}"
+
+    config = _build_ag_grid(
+        frame,
+        block,
+        ctx,
+        route,
+        {"plot-one": "plots/plot-one.json", "plot-two": "plots/plot-two.json", "all-a": "plots/all-a.json"},
+    )
+    definitions = {definition["field"]: definition for definition in config.column_defs}
+    assert len(config.row_data) == 2
+    assert config.row_data[0]["__runbook_links__"] == {
+        "label": "/resolved/report/detail/one",
+        "report": "https://example.test/one",
+        "plot": "/resolved/plot/plot-one",
+    }
+    assert config.row_data[1]["__runbook_links__"] == {}
+    styles = config.row_data[0]["__runbook_styles__"]
+    assert styles["amount"]["backgroundColor"] == "#fee2e2"
+    assert styles["amount"]["fontWeight"] == "bold"
+    assert definitions["label"]["width"] == definitions["label"]["minWidth"] == 140
+    assert definitions["helper"]["hide"] is True
+    assert definitions["report"]["cellRenderer"]["function"]
+    assert definitions["label"]["headerLink"] == "/resolved/report/header"
+    assert definitions["label"]["headerComponent"]["function"]
+    assert config.column_defs[0]["headerLink"] == "/resolved/plot/all-plots"
+    assert config.style["border"] == "2px solid black"
 
 
 def test_native_table_consumes_persisted_style_resolution(tmp_path) -> None:

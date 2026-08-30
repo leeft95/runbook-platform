@@ -185,16 +185,14 @@ def _build_components(
             if block.name in interactive_tables:
                 import dash_ag_grid as dag
 
-                # pandas' restored index is intentionally not part of rowData. Derive
-                # the renderer schema from the same logical columns to avoid exposing
-                # parquet's synthetic __index_level_0__ field in AG Grid.
-                schema = pa.Schema.from_pandas(frame, preserve_index=False)
+                grid = _build_ag_grid(frame, block, ctx, route_resolver, plot_refs)
                 body = dag.AgGrid(
                     id=ids.block(block.name),
-                    rowData=_records(frame, block.columns),
-                    columnDefs=build_ag_grid_column_defs(schema, block.columns),
+                    rowData=grid.row_data,
+                    columnDefs=grid.column_defs,
                     defaultColDef=ag_grid_default_col_def(),
                     dashGridOptions={"sideBar": "columns"},
+                    style=grid.style,
                     # Phase C uses client-side grouping/pivot/value aggregation in
                     # local preview. Formatter functions use only Dash AG Grid's
                     # trusted preloaded d3 namespace; PDL has no JS escape hatch.
@@ -460,6 +458,94 @@ def _build_native_table(
     )
 
 
+@dataclass(frozen=True)
+class _AGGridConfig:
+    """Renderer-owned AG Grid properties derived from one resolved table."""
+
+    row_data: list[dict[str, Any]]
+    column_defs: list[dict[str, Any]]
+    style: dict[str, str]
+
+
+def _metadata_field(prefix: str, frame: pd.DataFrame) -> str:
+    """Choose a deterministic row metadata field not present in analyst data."""
+    fields = {str(field) for field in frame.columns}
+    candidate = prefix
+    while candidate in fields:
+        candidate += "_"
+    return candidate
+
+
+def _build_ag_grid(
+    frame: pd.DataFrame,
+    block: PDLTableBlock,
+    ctx: Any,
+    route_resolver: RouteResolver | None,
+    plot_refs: Mapping[str, str],
+) -> _AGGridConfig:
+    """Translate one resolved table into AG Grid props without re-evaluating rules."""
+    schema = pa.Schema.from_pandas(frame, preserve_index=False)
+    plan = _read_table_style(ctx, block)
+    resolved = resolve_table_style(frame, plan)
+    styles_field = _metadata_field("__runbook_styles__", frame)
+    links_field = _metadata_field("__runbook_links__", frame) if resolved.links else None
+    index_field = (
+        _metadata_field("__runbook_index__", frame)
+        if resolved.show_index and resolved.index_header_link is not None
+        else None
+    )
+    header_links: dict[str, tuple[str, str]] = {}
+    for field, destination in resolved.header_links.items():
+        href = _destination_href(destination, route_resolver, ctx, plot_refs)
+        if href is not None:
+            header_links[field] = (href, destination.kind.value)
+    index_header_link = None
+    if resolved.index_header_link is not None:
+        href = _destination_href(resolved.index_header_link, route_resolver, ctx, plot_refs)
+        if href is not None:
+            index_header_link = (href, resolved.index_header_link.kind.value)
+    cell_link_kinds = {
+        link.field: link.destination.kind.value
+        for link in resolved.links
+        if link.area == "cells" and link.field is not None
+    }
+    row_data = _records(
+        frame,
+        block.columns,
+        resolved=resolved,
+        styles_field=styles_field,
+        links_field=links_field,
+        index_field=index_field,
+        route_resolver=route_resolver,
+        ctx=ctx,
+        plot_refs=plot_refs,
+    )
+    column_defs = build_ag_grid_column_defs(
+        schema,
+        block.columns,
+        resolved=resolved,
+        cell_style_field=styles_field,
+        cell_links_field=links_field,
+        cell_link_kinds=cell_link_kinds,
+        header_links=header_links,
+        index_field=index_field,
+        index_header_link=index_header_link,
+        index_header_name="" if frame.index.name is None else str(frame.index.name),
+        na_rep=resolved.na_rep,
+    )
+    global_style = resolved.global_style
+    return _AGGridConfig(
+        row_data=row_data,
+        column_defs=column_defs,
+        style={
+            "border": global_style.table_border,
+            "fontFamily": global_style.font_family,
+            "fontSize": global_style.font_size,
+            "width": "100%",
+        },
+    )
+
+
 def _read_table_style(ctx: Any, block: PDLTableBlock) -> TableStylePlan:
     """Read one persisted style plan, or use the resolver defaults."""
     if block.style_ref:
@@ -518,6 +604,24 @@ def _dash_link(
             **{"data-runbook-link-kind": "url"},
         )
     return display
+
+
+def _destination_href(
+    destination: TableLinkDestination,
+    route_resolver: RouteResolver | None,
+    ctx: Any | None,
+    plot_refs: Mapping[str, str] | None,
+) -> str | None:
+    """Resolve a semantic destination for renderer-owned AG Grid metadata."""
+    if destination.value is None:
+        return None
+    if destination.kind == TableLinkKind.url:
+        return destination.value
+    value = _plot_name(destination.value) if destination.kind == TableLinkKind.plot else destination.value
+    if destination.kind == TableLinkKind.plot and plot_refs is not None:
+        if _plot_link_error(ctx, value, plot_refs) is not None:
+            return None
+    return _resolve_route(route_resolver, destination.kind.value, value)
 
 
 def _resolve_route(route_resolver: RouteResolver | None, kind: str, value: str) -> str | None:
@@ -795,7 +899,16 @@ def _make_callback(
         result = handler(ctx, state)
         if not isinstance(result, Mapping):
             raise TypeError(f"interaction {handler.__name__!r} must return a mapping")
-        return [_convert_output(output_blocks[name], result.get(name)) for name in output_names]
+        return [
+            _convert_output(
+                output_blocks[name],
+                result.get(name),
+                ctx=ctx,
+                route_resolver=route_resolver,
+                plot_refs=plot_refs,
+            )
+            for name in output_names
+        ]
 
     return callback
 
@@ -840,7 +953,14 @@ def _state_from_values(
     return state
 
 
-def _convert_output(block: Any, value: Any) -> Any:
+def _convert_output(
+    block: Any,
+    value: Any,
+    *,
+    ctx: Any | None = None,
+    route_resolver: RouteResolver | None = None,
+    plot_refs: Mapping[str, str] | None = None,
+) -> Any:
     """Validate and convert a handler result to a Dash component property value."""
     if isinstance(block, PDLTextBlock):
         if not isinstance(value, str):
@@ -855,15 +975,35 @@ def _convert_output(block: Any, value: Any) -> Any:
     if isinstance(block, PDLTableBlock):
         if not isinstance(value, pd.DataFrame):
             raise TypeError(f"interaction output {block.name!r} expects a pandas.DataFrame")
+        if ctx is not None:
+            return _build_ag_grid(
+                value,
+                block,
+                ctx,
+                route_resolver,
+                {} if plot_refs is None else plot_refs,
+            ).row_data
         return _records(value, block.columns)
     raise TypeError(f"unsupported interaction output block: {type(block)!r}")
 
 
-def _records(frame: pd.DataFrame, columns: Sequence[PDLColumn] | None = None) -> list[dict[str, Any]]:
+def _records(
+    frame: pd.DataFrame,
+    columns: Sequence[PDLColumn] | None = None,
+    *,
+    resolved: Any | None = None,
+    styles_field: str | None = None,
+    links_field: str | None = None,
+    index_field: str | None = None,
+    route_resolver: RouteResolver | None = None,
+    ctx: Any | None = None,
+    plot_refs: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
     """Convert a dataframe to JSON-safe AG Grid row records with PDL time types."""
-    schema = pa.Schema.from_pandas(frame, preserve_index=False)
+    source = frame if resolved is None else frame.head(resolved.max_rows)
+    schema = pa.Schema.from_pandas(source, preserve_index=False)
     semantics = merge_columns(schema, columns)
-    normalized = frame.copy()
+    normalized = source.copy()
     for semantic in semantics:
         if semantic.role != PDLColumnRole.time or semantic.field not in normalized:
             continue
@@ -874,7 +1014,43 @@ def _records(frame: pd.DataFrame, columns: Sequence[PDLColumn] | None = None) ->
         else:
             values = parsed.dt.strftime("%Y-%m-%d")
         normalized[semantic.field] = values.where(parsed.notna(), None)
-    return json.loads(normalized.to_json(orient="records", date_format="iso"))
+    records = json.loads(normalized.to_json(orient="records", date_format="iso"))
+    if resolved is None:
+        return records
+
+    result: list[dict[str, Any]] = []
+    for row_pos, (record, index_value) in enumerate(zip(records, source.index, strict=True)):
+        if row_pos in resolved.hidden_rows:
+            continue
+        if index_field is not None:
+            record[index_field] = _display_scalar(index_value)
+        if styles_field is not None:
+            record[styles_field] = {
+                semantic.field: _ag_cell_style(resolved, row_pos, semantic.field) for semantic in semantics
+            }
+        if links_field is not None:
+            links: dict[str, str] = {}
+            for (link_row, field), destination in resolved.cell_links.items():
+                if link_row != row_pos:
+                    continue
+                href = _destination_href(destination, route_resolver, ctx, plot_refs)
+                if href is not None:
+                    links[field] = href
+            record[links_field] = links
+        result.append(record)
+    return result
+
+
+def _ag_cell_style(resolved: Any, row_pos: int, field: str) -> dict[str, str]:
+    """Combine resolved base, sizing, and conditional CSS for one AG cell."""
+    global_style = resolved.global_style
+    style: dict[str, str] = {}
+    if global_style.one_bg_color or row_pos % 2 == 0:
+        style["backgroundColor"] = global_style.background_color
+    _apply_width(style, resolved.column_width_px.get(field))
+    _apply_width(style, resolved.row_width_px.get(row_pos))
+    style.update(_dash_style(resolved.cell_css.get((row_pos, field), {})))
+    return style
 
 
 def _read_bytes(ctx: Any, ref: str) -> bytes:

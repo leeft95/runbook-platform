@@ -69,8 +69,6 @@ class TableLink(BaseModel):
             raise ValueError("link field must be omitted for area='index_header'")
         if self.destination.value_field is not None and self.area != "cells":
             raise ValueError("dynamic link destinations are only valid for area='cells'")
-        if self.area == "cells" and self.destination.kind == TableLinkKind.plot:
-            raise ValueError("plot link destinations are not valid for area='cells'")
         return self
 
 
