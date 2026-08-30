@@ -11,7 +11,7 @@ from runbook.core.pdl.models import PDLManifest
 from runbook.sdk.context import Ctx
 from runbook.sdk.discovery import discover_report_definition
 from runbook.sdk.execution import ReportResult, execute_report, load_report_module
-from runbook.sdk.extensions.dash import DashPage, DashRendererExtension, render_dash_page
+from runbook.sdk.extensions.dash import DashPage, DashRendererExtension, RouteResolver, render_dash_page
 from runbook.sdk.live import LiveDataResolver
 from runbook.sdk.profiles import ReportProfile, resolve_report_path
 
@@ -26,6 +26,7 @@ def compose_report_page(
     reports_root: str | Path = "reports",
     live: LiveDataResolver | None = None,
     renderer_extension: DashRendererExtension | None = None,
+    route_resolver: RouteResolver | None = None,
 ) -> tuple[ReportResult, DashPage]:
     """Execute static report artifacts and compose a callback-capable page.
 
@@ -64,6 +65,7 @@ def compose_report_page(
         ctx,
         namespace=profile.profile_id,
         renderer_extension=renderer_extension,
+        route_resolver=route_resolver,
     )
 
 

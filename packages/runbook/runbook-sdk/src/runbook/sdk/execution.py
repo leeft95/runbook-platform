@@ -16,7 +16,7 @@ from plotly.utils import PlotlyJSONEncoder
 from pydantic import BaseModel, ConfigDict, Field
 from runbook.core import BlobStore
 from runbook.core.keying import build_context_hash
-from runbook.core.pdl.models import PDLManifest, PDLSourceType, PDLStyle
+from runbook.core.pdl.models import PDLArtifacts, PDLManifest, PDLSourceType, PDLStyle
 from runbook.core.utils.hashing import sha256_json
 from runbook.sdk.context import Ctx
 from runbook.sdk.discovery import discover_report_definition
@@ -39,6 +39,20 @@ class ReportResult(BaseModel):
     stage3_ref: str
     stage4_ref: str
     cache_hits: dict[str, bool] = Field(default_factory=dict)
+
+
+def _merge_registered_plot_refs(manifest: PDLManifest, refs: list[str]) -> PDLManifest:
+    """Keep every registered plot payload addressable from the canonical manifest."""
+    existing = list(manifest.artifacts.plots or ()) if manifest.artifacts is not None else []
+    plots = sorted(set(existing).union(refs))
+    if not plots and manifest.artifacts is None:
+        return manifest
+    artifacts = manifest.artifacts or PDLArtifacts()
+    return manifest.model_copy(
+        update={
+            "artifacts": artifacts.model_copy(update={"plots": plots or None}),
+        }
+    )
 
 
 def load_report_module(path: str | Path) -> Any:
@@ -213,6 +227,7 @@ def execute_report(
             f"{prefix}/{ref}",
             json.dumps(payload, cls=PlotlyJSONEncoder, sort_keys=True, separators=(",", ":")).encode("utf-8"),
         )
+    manifest = _merge_registered_plot_refs(manifest, list(payloads.plot_jsons))
     for ref, payload in sorted(payloads.table_styles.items()):
         store.put_immutable(
             f"{prefix}/{ref}",

@@ -7,6 +7,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
+from urllib.parse import quote
 
 import pandas as pd
 import pyarrow as pa
@@ -30,7 +31,7 @@ from runbook.sdk.extensions.dash.models import (
     DashToggle,
     DatasetValues,
 )
-from runbook.sdk.extensions.dash.page import DashPage
+from runbook.sdk.extensions.dash.page import DashPage, RouteResolver
 from runbook.sdk.extensions.dash.renderer_extensions import DashRenderedControl, DashRendererExtension
 from runbook.sdk.extensions.dash.tables import ag_grid_default_col_def, build_ag_grid_column_defs
 from runbook.sdk.extensions.dash.validation import (
@@ -48,12 +49,24 @@ def render_dash_page(
     *,
     namespace: str,
     renderer_extension: DashRendererExtension | None = None,
+    route_resolver: RouteResolver | None = None,
 ) -> DashPage:
     """Render a canonical PDL manifest into an embeddable, namespaced page."""
     pdl_extension = parse_dash_extension(manifest)
     validate_dash_manifest(manifest, pdl_extension, definition)
     ids = DashIds(namespace)
-    components, bindings = _build_components(manifest, pdl_extension, ctx, ids, renderer_extension)
+    components, bindings = _build_components(
+        manifest,
+        pdl_extension,
+        ctx,
+        ids,
+        renderer_extension,
+        route_resolver,
+    )
+
+    def plot_layout_factory(name: str) -> Any:
+        """Build a native detail or aggregate page for one logical plot target."""
+        return _build_plot_layout(manifest, ctx, name, ids)
 
     def layout_factory() -> Any:
         """Build the page layout without creating or owning a Dash app."""
@@ -81,9 +94,23 @@ def render_dash_page(
 
     def callback_registrar(app: Any) -> None:
         """Register this page's callbacks on the host-owned app."""
-        _register_callbacks(app, manifest, pdl_extension, definition, ctx, ids, bindings)
+        _register_callbacks(
+            app,
+            manifest,
+            pdl_extension,
+            definition,
+            ctx,
+            ids,
+            bindings,
+            route_resolver=route_resolver,
+        )
 
-    return DashPage(layout_factory=layout_factory, callback_registrar=callback_registrar, namespace=namespace)
+    return DashPage(
+        layout_factory=layout_factory,
+        callback_registrar=callback_registrar,
+        namespace=namespace,
+        plot_layout_factory=plot_layout_factory,
+    )
 
 
 def _warning_component(manifest: PDLManifest) -> Any:
@@ -112,11 +139,13 @@ def _build_components(
     ctx: Any,
     ids: DashIds,
     renderer_extension: DashRendererExtension | None,
+    route_resolver: RouteResolver | None,
 ) -> tuple[list[Any], dict[str, _ControlBinding]]:
     """Translate PDL blocks to Dash components and place them in the PDL grid."""
     from dash import dcc, html
 
     controls, bindings = _build_controls(extension, ctx, ids, renderer_extension) if extension else ([], {})
+    plot_refs = _manifest_plot_refs(manifest)
     interactive_tables = (
         {output for declaration in extension.interactions for output in declaration.outputs} if extension else set()
     )
@@ -160,7 +189,7 @@ def _build_components(
                     enableEnterpriseModules=True,
                 )
             else:
-                body = _build_native_table(frame, block, ids.block(block.name), ctx)
+                body = _build_native_table(frame, block, ids.block(block.name), ctx, route_resolver, plot_refs)
         else:
             raise ValueError(f"unsupported PDL block type: {block.type!r}")
         if controls and block is control_block:
@@ -328,7 +357,14 @@ def _wrap_default_block(title: Any | None, body: Any) -> list[Any]:
     return [item for item in (title, body) if item is not None]
 
 
-def _build_native_table(frame: pd.DataFrame, block: PDLTableBlock, component_id: str, ctx: Any) -> Any:
+def _build_native_table(
+    frame: pd.DataFrame,
+    block: PDLTableBlock,
+    component_id: str,
+    ctx: Any,
+    route_resolver: RouteResolver | None = None,
+    plot_refs: Mapping[str, str] | None = None,
+) -> Any:
     """Build a static Dash table from resolved renderer-neutral table semantics."""
     from dash import html
 
@@ -358,14 +394,14 @@ def _build_native_table(frame: pd.DataFrame, block: PDLTableBlock, component_id:
     if resolved.show_index:
         index_header: Any = "" if frame.index.name is None else str(frame.index.name)
         if resolved.index_header_link is not None:
-            index_header = _dash_link(index_header, resolved.index_header_link)
+            index_header = _dash_link(index_header, resolved.index_header_link, route_resolver, ctx, plot_refs)
         header_cells.append(html.Th(index_header, style=dict(header_base)))
     for field in fields:
         style = dict(header_base)
         _apply_width(style, resolved.column_width_px.get(field))
         header = by_field[field].label or field
         if field in resolved.header_links:
-            header = _dash_link(header, resolved.header_links[field])
+            header = _dash_link(header, resolved.header_links[field], route_resolver, ctx, plot_refs)
         header_cells.append(html.Th(header, style=style))
 
     body_rows: list[Any] = []
@@ -391,7 +427,7 @@ def _build_native_table(frame: pd.DataFrame, block: PDLTableBlock, component_id:
             value = _display_value(values[field], by_field[field], resolved)
             destination = resolved.cell_links.get((row_pos, field))
             if destination is not None:
-                value = _dash_link(value, destination)
+                value = _dash_link(value, destination, route_resolver, ctx, plot_refs)
             row_cells.append(html.Td(value, style=cell_style))
         body_rows.append(html.Tr(row_cells))
 
@@ -425,16 +461,33 @@ def _read_table_style(ctx: Any, block: PDLTableBlock) -> TableStylePlan:
     return TableStylePlan.model_validate(payload)
 
 
-def _dash_link(display: Any, destination: TableLinkDestination) -> Any:
+def _dash_link(
+    display: Any,
+    destination: TableLinkDestination,
+    route_resolver: RouteResolver | None = None,
+    ctx: Any | None = None,
+    plot_refs: Mapping[str, str] | None = None,
+) -> Any:
     """Build one native Dash link from resolved table semantics."""
     from dash import dcc, html
 
     if destination.kind == TableLinkKind.report:
         assert destination.value is not None
-        return dcc.Link(
-            display,
-            href=f"/report/{destination.value}",
-        )
+        route = _resolve_route(route_resolver, TableLinkKind.report.value, destination.value)
+        if route is None:
+            return _link_error(f"Unable to resolve report route for {destination.value!r}.")
+        return dcc.Link(display, href=route)
+    if destination.kind == TableLinkKind.plot:
+        assert destination.value is not None
+        plot_name = _plot_name(destination.value)
+        if plot_refs is not None:
+            error = _plot_link_error(ctx, plot_name, plot_refs)
+            if error is not None:
+                return _link_error(error)
+        route = _resolve_route(route_resolver, TableLinkKind.plot.value, plot_name)
+        if route is None:
+            return _link_error(f"Unable to resolve plot route for {plot_name!r}.")
+        return dcc.Link(display, href=route)
     if destination.kind == TableLinkKind.url:
         assert destination.value is not None
         return cast(Any, html.A)(
@@ -443,6 +496,127 @@ def _dash_link(display: Any, destination: TableLinkDestination) -> Any:
             **{"data-runbook-link-kind": "url"},
         )
     return display
+
+
+def _resolve_route(route_resolver: RouteResolver | None, kind: str, value: str) -> str | None:
+    """Resolve one logical destination without exposing artifact paths."""
+    if route_resolver is not None:
+        try:
+            route = route_resolver(kind, value)
+        except Exception:
+            return None
+        return route if isinstance(route, str) and route else None
+    if any(part in {".", ".."} for part in value.split("/")):
+        return None
+    encoded = "/".join(quote(part, safe="") for part in value.split("/"))
+    if kind == TableLinkKind.report.value:
+        return f"/report/{encoded}"
+    if kind == TableLinkKind.plot.value:
+        return f"/plot/{encoded}"
+    return None
+
+
+def _link_error(message: str) -> Any:
+    """Render an unresolved logical link as an accessible inline error."""
+    from dash import html
+
+    return html.Span(message, role="alert")
+
+
+def _plot_link_error(ctx: Any | None, name: str, refs: Mapping[str, str]) -> str | None:
+    """Validate a linked plot target before exposing a browser route."""
+    if name.endswith("-plots"):
+        prefix = f"{name[: -len('-plots')]}-"
+        members = sorted(member for member in refs if member.startswith(prefix) and member != name)
+        if not members:
+            return f"No registered plots match aggregate target {name!r}."
+    else:
+        members = [name] if name in refs else []
+        if not members:
+            return f"Plot target {name!r} is not registered."
+    if ctx is None:
+        return None
+    for member in members:
+        try:
+            _read_json(ctx, refs[member])
+        except Exception:
+            return f"Unable to load plot artifact {member!r}."
+    return None
+
+
+def _plot_name(ref: str) -> str:
+    """Normalize a plot artifact reference or logical destination name."""
+    name = str(ref)
+    if name.startswith("plots/"):
+        name = name[len("plots/") :]
+    if name.endswith(".json"):
+        name = name[: -len(".json")]
+    return name
+
+
+def _plot_error(message: str) -> Any:
+    """Render a native plot-page error without leaking a storage exception."""
+    from dash import html
+
+    return html.Div(message, role="alert")
+
+
+def _plot_component(ctx: Any, ref: str, *, component_id: str) -> Any:
+    """Read one registered Plotly payload, rendering stale artifacts accessibly."""
+    from dash import dcc
+
+    try:
+        payload = _read_json(ctx, ref)
+    except Exception:
+        return _plot_error(f"Unable to load plot artifact {_plot_name(ref)!r}.")
+    return dcc.Graph(id=component_id, figure=payload)
+
+
+def _manifest_plot_refs(manifest: PDLManifest) -> dict[str, str]:
+    """Return logical plot names from the canonical manifest artifact set."""
+    refs = list(manifest.artifacts.plots or ()) if manifest.artifacts is not None else []
+    # Manually authored manifests from before runtime plot registration may not
+    # have an artifacts section. Keep those inline plot refs usable as a small
+    # compatibility fallback; executed manifests use artifacts.plots above.
+    if not refs:
+        refs = [block.ref for block in manifest.page.blocks if isinstance(block, PDLPlotRefBlock)]
+    result: dict[str, str] = {}
+    for ref in refs:
+        name = _plot_name(ref)
+        if name and name not in result:
+            result[name] = ref
+    return result
+
+
+def _build_plot_layout(manifest: PDLManifest, ctx: Any, target: str, ids: DashIds) -> Any:
+    """Build an individual or aggregate native Dash plot page."""
+    from dash import dcc, html
+
+    name = _plot_name(target)
+    refs = _manifest_plot_refs(manifest)
+    if name.endswith("-plots"):
+        prefix = f"{name[: -len('-plots')]}-"
+        members = sorted(member for member in refs if member.startswith(prefix) and member != name)
+        if not members:
+            return _plot_error(f"No registered plots match aggregate target {name!r}.")
+        payloads: list[tuple[str, Any]] = []
+        for member in members:
+            try:
+                payloads.append((member, _read_json(ctx, refs[member])))
+            except Exception:
+                return _plot_error(f"Unable to load plot artifact {member!r}.")
+        graphs = [
+            dcc.Graph(id=ids.block(f"plot-{index}"), figure=payload) for index, (_, payload) in enumerate(payloads)
+        ]
+        return html.Div([html.H1(name), *graphs])
+    ref = refs.get(name)
+    if ref is None:
+        return _plot_error(f"Plot target {name!r} is not registered.")
+    try:
+        payload = _read_json(ctx, ref)
+    except Exception:
+        return _plot_error(f"Unable to load plot artifact {name!r}.")
+    return html.Div([html.H1(name), dcc.Graph(id=ids.block("plot-detail"), figure=payload)])
 
 
 def _apply_width(style: dict[str, Any], width: int | None) -> None:
@@ -551,6 +725,8 @@ def _register_callbacks(
     ctx: Any,
     ids: DashIds,
     bindings: Mapping[str, _ControlBinding],
+    *,
+    route_resolver: RouteResolver | None = None,
 ) -> None:
     """Bind declared plain-Python interactions to host Dash callbacks."""
     if extension is None:
@@ -570,6 +746,8 @@ def _register_callbacks(
             output_names=tuple(declaration.outputs),
             output_blocks={name: blocks[name] for name in declaration.outputs},
             bindings=bindings,
+            route_resolver=route_resolver,
+            plot_refs=_manifest_plot_refs(manifest),
         )
 
         if outputs:
@@ -584,6 +762,8 @@ def _make_callback(
     output_names: tuple[str, ...],
     output_blocks: Mapping[str, Any],
     bindings: Mapping[str, _ControlBinding],
+    route_resolver: RouteResolver | None,
+    plot_refs: Mapping[str, str],
 ) -> Any:
     """Create one isolated callback closure for one declared interaction."""
 

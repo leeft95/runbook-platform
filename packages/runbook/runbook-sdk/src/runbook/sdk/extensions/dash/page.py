@@ -8,6 +8,8 @@ from typing import Any
 
 from runbook.sdk.extensions.dash.ids import DashIds, validate_namespace
 
+RouteResolver = Callable[[str, str], str | None]
+
 
 @dataclass(frozen=True)
 class DashPage:
@@ -16,6 +18,7 @@ class DashPage:
     layout_factory: Callable[[], Any]
     callback_registrar: Callable[[Any], None]
     namespace: str
+    plot_layout_factory: Callable[[str], Any] | None = None
 
     def __post_init__(self) -> None:
         validate_namespace(self.namespace)
@@ -33,5 +36,11 @@ class DashPage:
         """Register this page's callbacks onto a host-owned Dash app."""
         self.callback_registrar(app)
 
+    def plot_layout(self, name: str) -> Any:
+        """Build a native Dash detail layout for one logical plot name."""
+        if self.plot_layout_factory is None:
+            raise ValueError("this DashPage does not expose native plot pages")
+        return self.plot_layout_factory(name)
 
-__all__ = ["DashPage"]
+
+__all__ = ["DashPage", "RouteResolver"]

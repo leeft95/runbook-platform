@@ -16,7 +16,7 @@ from runbook.sdk.extensions.dash.models import (
     DashInteraction,
     DatasetValues,
 )
-from runbook.sdk.extensions.dash.page import DashPage
+from runbook.sdk.extensions.dash.page import DashPage, RouteResolver
 from runbook.sdk.extensions.dash.renderer import render_dash_page
 from runbook.sdk.extensions.dash.renderer_extensions import DashRenderedControl, DashRendererExtension
 from runbook.sdk.extensions.dash.tables import ag_grid_default_col_def, build_ag_grid_column_defs
@@ -28,6 +28,7 @@ __all__ = [
     "DashInteraction",
     "DashIds",
     "DashPage",
+    "RouteResolver",
     "DashRenderedControl",
     "DashRendererExtension",
     "DatasetValues",

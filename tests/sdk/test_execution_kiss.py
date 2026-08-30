@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from functools import partial
+from types import SimpleNamespace
 
 import pandas as pd
+import runbook.sdk.execution as execution_module
 from plotly.offline import get_plotlyjs_version
 from runbook.core.data import DatasetFile
+from runbook.core.pdl.models import PDLArtifacts, PDLManifest, PDLPage, PDLPageType, PDLTextBlock
 from runbook.data import open_blob_store
 from runbook.data.manifests import (
     build_manifest,
@@ -14,6 +17,7 @@ from runbook.data.manifests import (
     write_dataframe,
 )
 from runbook.sdk import ReportProfile, execute_report
+from runbook.sdk.discovery import ReportDefinition
 
 
 def test_report_execution_is_shared_and_cache_is_type_stable(tmp_path, pointer_registry) -> None:
@@ -80,3 +84,53 @@ def test_report_execution_is_shared_and_cache_is_type_stable(tmp_path, pointer_r
     changed = run(profile=profile.model_copy(update={"title": "Changed title"}))
     assert changed.artifact_id != cold.artifact_id
     assert changed.prefix == "reports/vol_report/date=2026-01-01/version=0.0.1/2"
+
+
+def test_execute_report_reconciles_registered_plot_refs_into_stage3_manifest(tmp_path, monkeypatch) -> None:
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    store = open_blob_store(f"file:{tmp_path}")
+    source_manifest = PDLManifest(
+        schema_version="pdl-core/0.2",
+        title="Plot refs",
+        snapshot_id="source",
+        as_of=now,
+        page=PDLPage(
+            page_type=PDLPageType.grid,
+            rows=1,
+            columns=1,
+            blocks=[PDLTextBlock(name="summary", text="ok", row=1, col=1)],
+        ),
+        artifacts=PDLArtifacts(
+            plots=["plots/existing.json"],
+            tables=["tables/existing.parquet"],
+            files=["styles/existing.json"],
+        ),
+    )
+
+    def page(ctx):
+        ctx.artifact.plot({"data": [], "layout": {"title": {"text": "z"}}}, name="z")
+        ctx.artifact.plot({"data": [], "layout": {"title": {"text": "a"}}}, name="a")
+        return source_manifest
+
+    definition = ReportDefinition(["source"], {}, page, {})
+    monkeypatch.setattr(execution_module, "resolve_report_path", lambda *_args: "reports/demo.py")
+    monkeypatch.setattr(execution_module, "load_report_module", lambda _path: SimpleNamespace())
+    monkeypatch.setattr(execution_module, "discover_report_definition", lambda _module: definition)
+
+    result = execute_report(
+        store=store,
+        profile=ReportProfile(profile_id="plot-refs", report_id="demo", datasets={"source": "source"}),
+        snapshot=SimpleNamespace(snapshot_id="snapshot", watermark=now, warnings=()),
+        code_version="test",
+        reports_root="reports",
+        generated_at=now,
+        platform_version="0.0.1",
+    )
+
+    persisted = store.get_json(result.stage3_ref)
+    assert persisted["schema_version"] == "pdl-core/0.2"
+    assert persisted["artifacts"] == {
+        "plots": ["plots/a.json", "plots/existing.json", "plots/z.json"],
+        "tables": ["tables/existing.parquet"],
+        "files": ["styles/existing.json"],
+    }

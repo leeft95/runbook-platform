@@ -13,7 +13,7 @@ from runbook.data import open_blob_store, open_pointer_registry, resolve_snapsho
 from runbook.sdk.context import Ctx
 from runbook.sdk.discovery import discover_report_definition
 from runbook.sdk.execution import ReportResult, execute_report, load_report_module, resolve_code_version
-from runbook.sdk.extensions.dash import DashPage, render_dash_page
+from runbook.sdk.extensions.dash import DashPage, RouteResolver, render_dash_page
 from runbook.sdk.live import LiveDataResolver
 from runbook.sdk.live_sqlite import build_demo_live_provider
 from runbook.sdk.logging import configure_logging
@@ -28,6 +28,7 @@ def compose_dash_app(
     reports_root: str | Path = "reports",
     code_version: str,
     live: LiveDataResolver | None = None,
+    route_resolver: RouteResolver | None = None,
 ) -> tuple[Any, ReportResult, DashPage]:
     """Execute one report and compose its DashPage into a host-owned app."""
     result = execute_report(
@@ -55,7 +56,13 @@ def compose_dash_app(
     for name, function in definition.calc_fns.items():
         ctx.register_calc(name, function)
     manifest = PDLManifest.model_validate(store.get_json(result.stage3_ref))
-    page = render_dash_page(manifest, definition, ctx, namespace=profile.profile_id)
+    page = render_dash_page(
+        manifest,
+        definition,
+        ctx,
+        namespace=profile.profile_id,
+        route_resolver=route_resolver,
+    )
     from dash import Dash
 
     app = Dash(__name__ + "_interactive_preview", use_pages=False)
