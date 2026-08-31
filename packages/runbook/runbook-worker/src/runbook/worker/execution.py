@@ -13,7 +13,7 @@ from runbook.data.ingest import run_stage1_acquire
 from runbook.data.ingest.models import HistoricalExecutionContext
 from runbook.data.ingest.runner import load_previous_acquisition_state
 from runbook.data.ingest.runners import run_stage2_curate
-from runbook.sdk import execute_report, resolve_code_version
+from runbook.sdk import ReportResult, attempt_report_email_delivery, execute_report, resolve_code_version
 from runbook.services.config import validate_config
 from runbook.services.db import sync_sessions
 from runbook.services.logging import RunLogIdentity, capture_worker_logs
@@ -150,14 +150,18 @@ def _report(row, profile: ReportProfile, identity: RunLogIdentity) -> dict[str, 
             if row.snapshot_id is not None and snapshot.snapshot_id != row.snapshot_id:
                 raise ValueError("report snapshot payload does not match the pinned snapshot ID")
             code_version = resolve_code_version(row.code_version)
+            store = open_blob_store(os.environ.get("RUNBOOK_DATA_STORE_URI"))
             result = execute_report(
-                store=open_blob_store(os.environ.get("RUNBOOK_DATA_STORE_URI")),
+                store=store,
                 profile=profile,
                 snapshot=snapshot,
                 code_version=code_version,
                 reports_root=os.environ.get("RUNBOOK_REPORTS_ROOT", "reports"),
             )
             outcome = result.model_dump(mode="json")
+            delivery = attempt_report_email_delivery(store=store, profile=profile, result=result)
+            if delivery is not None:
+                outcome["delivery"] = {"email": delivery}
             outcome.update({"status": "success", "log_ref": log.log_ref, "snapshot": snapshot.model_dump(mode="json")})
             return outcome
         except ValueError as exc:
@@ -169,6 +173,63 @@ def _report(row, profile: ReportProfile, identity: RunLogIdentity) -> dict[str, 
         except Exception as exc:
             logger.exception("report worker failed run_id={}", identity.run_id)
             return {"status": "failed", "reason": str(exc), "log_ref": log.log_ref}
+
+
+def deliver_existing_report(run_id: str, *, force: bool = False) -> int:
+    """Retry delivery from a successful run's immutable published artifacts."""
+    database = os.environ.get("RUNBOOK_DATABASE_URL")
+    if not database:
+        raise ValueError("RUNBOOK_DATABASE_URL is required")
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        row = repository.get_run_for_update(run_id)
+        if row is None:
+            raise ValueError("run was not found")
+        if row.kind != "profile" or row.status != "success":
+            raise ValueError("delivery retry requires a successful profile run")
+        if not isinstance(row.result, dict) or row.result.get("status") != "success":
+            raise ValueError("successful profile run has no valid report result")
+        config = repository.get_config("profile", row.target_id, row.config_revision)
+        if config is None:
+            raise ValueError("pinned configuration revision is unavailable")
+        validated = validate_config("profile", row.target_id, dict(config.payload))
+        if validated.config_hash != row.config_hash or not isinstance(validated.model, ReportProfile):
+            raise ValueError("pinned configuration hash does not match the run")
+        profile = validated.model
+        # The row lock is held through sending and update_report_delivery.
+        # Re-read this state after all validation so concurrent retries cannot
+        # pass a stale sent/attempt guard.
+        previous = row.result.get("delivery")
+        if isinstance(previous, dict):
+            previous_email = previous.get("email")
+            if isinstance(previous_email, dict) and previous_email.get("status") == "sent" and not force:
+                raise ValueError("delivery was already sent; use --force to resend")
+        fields = (
+            "report_id",
+            "artifact_id",
+            "snapshot_id",
+            "context_hash",
+            "code_version",
+            "prefix",
+            "html_ref",
+            "stage3_ref",
+            "stage4_ref",
+            "linked_html_refs",
+            "cache_hits",
+        )
+        result = ReportResult.model_validate({name: row.result[name] for name in fields if name in row.result})
+        delivery = attempt_report_email_delivery(
+            store=open_blob_store(os.environ.get("RUNBOOK_DATA_STORE_URI")),
+            profile=profile,
+            result=result,
+            previous=previous if isinstance(previous, dict) else None,
+        )
+        if delivery is None:
+            raise ValueError("profile has no email delivery configured")
+        if not repository.update_report_delivery(run_id, delivery=delivery):
+            raise ValueError("run is no longer a successful profile run")
+        session.commit()
+    return 0
 
 
 def execute_run(run_id: str) -> int:

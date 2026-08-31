@@ -168,6 +168,10 @@ class RunRepository:
         """Return one run by ID."""
         return self.session.get(Run, run_id, populate_existing=True)
 
+    def get_run_for_update(self, run_id: str) -> Run | None:
+        """Return one run while holding its row lock until transaction commit."""
+        return self.session.scalar(select(Run).where(Run.run_id == run_id).with_for_update())
+
     def list_runs(
         self,
         *,
@@ -529,6 +533,18 @@ class RunRepository:
         )
         self.session.flush()
         return int(getattr(result, "rowcount", 0)) == 1
+
+    def update_report_delivery(self, run_id: str, *, delivery: dict[str, Any]) -> bool:
+        """Update only retryable delivery metadata on a successful profile run."""
+        row = self.get_run_for_update(run_id)
+        if row is None or row.kind != "profile" or row.status != "success" or row.result is None:
+            return False
+        payload = dict(row.result)
+        payload["delivery"] = {"email": dict(delivery)}
+        row.result = payload
+        row.updated_at = now_utc()
+        self.session.flush()
+        return True
 
     def mark_running(self, row: Run) -> None:
         """Mark a run as started."""

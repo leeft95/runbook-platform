@@ -109,6 +109,56 @@ def test_postgres_head_and_advisory_lock_without_dropping_database() -> None:
         assert acquired
 
 
+def test_postgres_report_delivery_row_lock_is_held_until_commit() -> None:
+    """A delivery retry lock must cover the provider send/update transaction."""
+    database = _database()
+    _upgrade(database)
+    identity = f"delivery-lock-{uuid4().hex}"
+    payload = {"report_id": "demo", "datasets": {"prices": "prices"}}
+    with sync_sessions(database)() as session:
+        repository = RunRepository(session)
+        config = repository.save_config("profile", identity, payload)
+        row = repository.queue_run(
+            kind="profile",
+            target_id=identity,
+            slot=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            trigger="manual",
+            force=True,
+            config=config,
+        )
+        row.status = "success"
+        row.result = {"status": "success"}
+        session.commit()
+        run_id = row.run_id
+
+    second_started = threading.Event()
+    second_finished = threading.Event()
+    errors: list[BaseException] = []
+
+    def acquire_second_lock() -> None:
+        try:
+            with sync_sessions(database)() as session:
+                second_started.set()
+                assert RunRepository(session).get_run_for_update(run_id) is not None
+                session.commit()
+        except BaseException as exc:  # pragma: no cover - reported in the parent thread
+            errors.append(exc)
+        finally:
+            second_finished.set()
+
+    with sync_sessions(database)() as first:
+        assert RunRepository(first).get_run_for_update(run_id) is not None
+        thread = threading.Thread(target=acquire_second_lock)
+        thread.start()
+        assert second_started.wait(timeout=5)
+        assert not second_finished.wait(timeout=0.5)
+        first.commit()
+        assert second_finished.wait(timeout=5)
+        thread.join(timeout=5)
+    if errors:
+        raise errors[0]
+
+
 def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
