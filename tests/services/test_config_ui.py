@@ -4,8 +4,15 @@ import asyncio
 from types import SimpleNamespace
 
 import dash
+from runbook.services.config import validate_config
 from runbook.services.dash import _config
-from runbook.services.dash._config import register_config_page
+from runbook.services.dash._config import (
+    PROFILE_COLUMNS,
+    PROFILE_SPEC,
+    _payload_from_row,
+    _profile_new_row,
+    register_config_page,
+)
 
 
 class _Session:
@@ -64,6 +71,32 @@ def _invoke(app: dash.Dash, prefix: str, trigger: str, kind: str, monkeypatch):
             [row],
         )
     )
+
+
+def test_profile_delivery_has_generic_editor_field_and_validates_payload() -> None:
+    row = _profile_new_row()
+    row.update(
+        {
+            "config_id": "profile",
+            "report_id": "report",
+            "datasets": {"data": "data"},
+            "delivery": {"email": {"provider": "company", "to": ["person@example.test"]}},
+        }
+    )
+    config_id, payload = _payload_from_row("profile", row)
+    assert config_id == "profile"
+    assert payload["delivery"]["email"]["provider"] == "company"
+    assert any(column["field"] == "delivery" and column["headerName"] == "Delivery" for column in PROFILE_COLUMNS)
+    assert PROFILE_SPEC.complex_fields["delivery"] == "delivery"
+    assert validate_config("profile", config_id, payload).model.delivery is not None
+
+    row["delivery"] = {"email": {"provider": "company", "to": ["a@example.test", " a@example.test "]}}
+    try:
+        validate_config("profile", config_id, _payload_from_row("profile", row)[1])
+    except ValueError as exc:
+        assert "duplicate" in str(exc)
+    else:  # pragma: no cover - assertion branch
+        raise AssertionError("malformed delivery payload was accepted")
 
 
 def test_confirmed_profile_run_queues_once_and_source_run_trigger_is_unchanged(monkeypatch) -> None:

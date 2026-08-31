@@ -62,6 +62,7 @@ def _profile_new_row() -> dict[str, Any]:
         "params": {},
         "layout": {},
         "extensions": {},
+        "delivery": None,
         "revision": None,
         "config_hash": None,
         "created_at": None,
@@ -150,6 +151,13 @@ PROFILE_COLUMNS = [
         "valueFormatter": {"function": "jsonSummary(params.value)"},
         "minWidth": 130,
     },
+    {
+        "field": "delivery",
+        "headerName": "Delivery",
+        "editable": False,
+        "valueFormatter": {"function": "jsonSummary(params.value)"},
+        "minWidth": 130,
+    },
     {"field": "revision", "headerName": "Rev", "editable": False, "width": 85},
     {"field": "_status", "headerName": "Status", "editable": False, "width": 110},
     {"field": "created_at", "headerName": "Created", "editable": False, "minWidth": 185},
@@ -167,7 +175,13 @@ PROFILE_SPEC = ConfigGridSpec(
     title="Profiles",
     columns=PROFILE_COLUMNS,
     new_row=_profile_new_row,
-    complex_fields={"datasets": "datasets", "params": "params", "layout": "layout", "extensions": "extensions"},
+    complex_fields={
+        "datasets": "datasets",
+        "params": "params",
+        "layout": "layout",
+        "extensions": "extensions",
+        "delivery": "delivery",
+    },
 )
 
 
@@ -222,6 +236,7 @@ def _payload_from_row(kind: str, row: dict[str, Any]) -> tuple[str, dict[str, An
             "params": row.get("params") or {},
             "layout": row.get("layout") or {},
             "extensions": row.get("extensions") or {},
+            "delivery": row.get("delivery"),
         }
     return config_id, payload
 
@@ -706,7 +721,7 @@ def _page_layout(prefix: str, spec: ConfigGridSpec) -> html.Div:
                 className="runbook-form-actions",
             ),
             html.Div(
-                "Edit scalar cells directly. Click Schedule, Datasets, Params, Layout or Extensions to open an editor.",
+                "Edit scalar cells directly. Click Schedule, Datasets, Params, Layout, Extensions or Delivery to open an editor.",
                 style={"marginBottom": "10px", "opacity": 0.75},
             ),
             _main_grid(prefix, spec),
@@ -928,7 +943,7 @@ def register_config_page(
             columns, dataset_rows = [], []
         json_value = (
             json.dumps(row.get(field) or {}, indent=2, sort_keys=True)
-            if field in {"params", "layout", "extensions"}
+            if field in {"params", "layout", "extensions", "delivery"}
             else "{}"
         )
         titles = {
@@ -937,6 +952,7 @@ def register_config_page(
             "params": "Edit params",
             "layout": "Edit layout",
             "extensions": "Edit extensions",
+            "delivery": "Edit delivery",
         }
         return (
             context,
@@ -944,7 +960,7 @@ def register_config_page(
             titles[field],
             {"display": "block"} if field == "schedule" else {"display": "none"},
             {"display": "block"} if field == "datasets" else {"display": "none"},
-            {"display": "block"} if field in {"params", "layout", "extensions"} else {"display": "none"},
+            {"display": "block"} if field in {"params", "layout", "extensions", "delivery"} else {"display": "none"},
             cron["mode"],
             cron["minute"],
             cron["hour"],
@@ -1068,7 +1084,7 @@ def register_config_page(
             elif field == "datasets":
                 datasets = _datasets_from_editor(kind, dataset_rows)
                 target["datasets"] = datasets
-            elif field in {"params", "layout", "extensions"}:
+            elif field in {"params", "layout", "extensions", "delivery"}:
                 value = json.loads(json_text or "{}")
                 if not isinstance(value, dict):
                     raise ValueError(f"{field} must be a JSON object")
