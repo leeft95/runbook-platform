@@ -4,6 +4,19 @@ from runbook.core.table import highlight
 from runbook.sdk.authoring import RequiredAliases, report, required_aliases
 from runbook.sdk.client import RunbookClient, create_client
 from runbook.sdk.context import Ctx
+from runbook.sdk.delivery import (
+    EmailAttachment,
+    EmailDeliveryError,
+    EmailMessage,
+    EmailSender,
+    EmailSendReceipt,
+    attempt_report_email_delivery,
+    build_report_email,
+    build_report_email_attachment,
+    load_email_sender,
+    reports_base_url,
+    rewrite_dashboard_links,
+)
 from runbook.sdk.execution import ReportResult, execute_report, resolve_code_version
 from runbook.sdk.live import LiveCapabilityUnavailableError, LiveDataResolver, LiveQuerySource
 from runbook.sdk.live_report_preview import compose_report_page
@@ -39,6 +52,14 @@ __all__ = [
     "ScheduleSpec",
     "SourceConfig",
     "ReportResult",
+    "EmailAttachment",
+    "EmailDeliveryError",
+    "EmailMessage",
+    "EmailSendReceipt",
+    "EmailSender",
+    "attempt_report_email_delivery",
+    "build_report_email",
+    "build_report_email_attachment",
     "Ctx",
     "RequiredAliases",
     "RunbookClient",
@@ -52,6 +73,7 @@ __all__ = [
     "grid",
     "infer_columns",
     "load_profiles",
+    "load_email_sender",
     "link_column",
     "link_column_header",
     "link_header",
@@ -73,6 +95,8 @@ __all__ = [
     "report",
     "required_aliases",
     "resolve_code_version",
+    "reports_base_url",
+    "rewrite_dashboard_links",
     "table",
     "text",
     "highlight",
