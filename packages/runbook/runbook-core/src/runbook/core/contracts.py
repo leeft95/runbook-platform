@@ -94,6 +94,61 @@ class SourceConfig(BaseModel):
         return value
 
 
+def _recipient_values(value: Any, field_name: str) -> tuple[str, ...]:
+    """Normalize recipient values without claiming to validate mailbox syntax."""
+    if value is None:
+        if field_name == "cc":
+            return ()
+        raise ValueError("to must contain at least one recipient")
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise ValueError(f"{field_name} must be a list of recipient strings")
+    recipients = tuple(item.strip() if isinstance(item, str) else item for item in value)
+    if any(not isinstance(item, str) or not item for item in recipients):
+        raise ValueError(f"{field_name} must not contain empty recipients")
+    folded = [item.casefold() for item in recipients]
+    if len(folded) != len(set(folded)):
+        raise ValueError(f"{field_name} must not contain duplicate recipients")
+    return recipients
+
+
+class EmailDeliverySpec(BaseModel):
+    """Profile-level email policy; transport configuration stays in the deployment."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider: str
+    to: tuple[str, ...] = Field(min_length=1)
+    cc: tuple[str, ...] = ()
+    subject: str | None = None
+
+    @field_validator("provider")
+    @classmethod
+    def validate_provider(cls, value: str) -> str:
+        if not _ID.fullmatch(value):
+            raise ValueError("provider must be a safe lowercase identifier")
+        return value
+
+    @field_validator("to", "cc", mode="before")
+    @classmethod
+    def normalize_recipients(cls, value: Any, info: Any) -> tuple[str, ...]:
+        return _recipient_values(value, info.field_name)
+
+    @model_validator(mode="after")
+    def reject_cross_field_duplicates(self) -> "EmailDeliverySpec":
+        recipients = [item.casefold() for item in (*self.to, *self.cc)]
+        if len(recipients) != len(set(recipients)):
+            raise ValueError("to and cc must not contain duplicate recipients")
+        return self
+
+
+class ReportDeliverySpec(BaseModel):
+    """Optional delivery policy attached to a report profile revision."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    email: EmailDeliverySpec | None = None
+
+
 class ReportProfile(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -105,6 +160,12 @@ class ReportProfile(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     layout: dict[str, Any] = Field(default_factory=dict)
     extensions: dict[str, Any] = Field(default_factory=dict)
+    delivery: ReportDeliverySpec | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("delivery", mode="before")
+    @classmethod
+    def normalize_delivery(cls, value: Any) -> Any:
+        return None if value == {} else value
 
     @field_validator("datasets")
     @classmethod
@@ -125,6 +186,8 @@ class ReportProfile(BaseModel):
             raise ValueError("profile_id and report_id must be safe lowercase identifiers")
         if not self.title:
             object.__setattr__(self, "title", self.report_id)
+        if self.delivery is not None and self.delivery.email is None:
+            object.__setattr__(self, "delivery", None)
         for namespace, extension in self.extensions.items():
             if not isinstance(namespace, str) or not namespace or not isinstance(extension, dict):
                 raise ValueError("extensions must map names to objects")
@@ -150,7 +213,14 @@ class ReportProfile(BaseModel):
         }
 
 
-__all__ = ["DatasetBinding", "ReportProfile", "ScheduleSpec", "SourceConfig"]
+__all__ = [
+    "DatasetBinding",
+    "EmailDeliverySpec",
+    "ReportDeliverySpec",
+    "ReportProfile",
+    "ScheduleSpec",
+    "SourceConfig",
+]
 
 
 def load_source_configs(path: str | Path) -> dict[str, SourceConfig]:

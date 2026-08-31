@@ -7,16 +7,27 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .contracts import DatasetBinding, ReportProfile, ScheduleSpec, SourceConfig, load_profiles, load_source_configs
+from .contracts import (
+    DatasetBinding,
+    EmailDeliverySpec,
+    ReportDeliverySpec,
+    ReportProfile,
+    ScheduleSpec,
+    SourceConfig,
+    load_profiles,
+    load_source_configs,
+)
 from .storage import BlobStore, open_blob_store
 
 __all__ = [
     "BlobStore",
     "DatasetBinding",
+    "EmailDeliverySpec",
     "DatasetFile",
     "DatasetManifest",
     "SnapshotProducer",
     "ReportProfile",
+    "ReportDeliverySpec",
     "ScheduleSpec",
     "Snapshot",
     "SourceConfig",

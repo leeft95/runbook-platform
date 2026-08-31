@@ -91,7 +91,10 @@ def test_linked_table_golden_publishes_semantic_links_and_plot_pages(tmp_path, p
     assert 'href="plots/asset-price-line.html"' in html_output
     assert 'href="plots/asset-volume-line.html"' in html_output
     assert 'href="plots/asset-plots.html"' in html_output
-    assert '<a href="plots/asset-plots.html" data-runbook-link-kind="plot">Asset</a>' in html_output
+    assert (
+        '<a href="plots/asset-plots.html" data-runbook-link-kind="plot" '
+        'data-runbook-plot-name="asset-plots">Asset</a>' in html_output
+    )
     assert html_output.count('href="plots/asset-plots.html"') == 1
     assert 'class="rb-block rb-table-explicit-width"' in html_output
     assert "--rb-table-width: 40vw;" in html_output

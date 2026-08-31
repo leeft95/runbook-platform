@@ -634,7 +634,8 @@ def link_anchor(display: str, destination: TableLinkDestination) -> str:
         if plot_name.endswith(".json"):
             plot_name = plot_name[: -len(".json")]
     href = escape(f"plots/{plot_name}.html", quote=True)
-    return f'<a href="{href}" data-runbook-link-kind="plot">{display}</a>'
+    plot_attr = escape(plot_name, quote=True)
+    return f'<a href="{href}" data-runbook-link-kind="plot" data-runbook-plot-name="{plot_attr}">{display}</a>'
 
 
 def _replace_index_header(html_output: str, index_name: Any, destination: TableLinkDestination | None) -> str:

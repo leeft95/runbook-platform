@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 from runbook.core.table import general_table_with_link, render_table_html, table_with_linked_plots_monthly
+from runbook.core.table.builder import link_anchor
+from runbook.core.table.models import TableLinkDestination, TableLinkKind
 
 
 def _frame(*columns: str, periods: int = 900) -> pd.DataFrame:
@@ -15,6 +17,12 @@ def test_plot_link_options_false_preserve_payload_shape() -> None:
     output = general_table_with_link(_frame("A"), header="Asset")
     assert set(output["Asset"]) == {"data", "style", "plots"}
     assert "links" not in output["Asset"]["style"]
+
+
+def test_non_prefixed_json_plot_name_keeps_legacy_href() -> None:
+    anchor = link_anchor("Foo", TableLinkDestination(kind=TableLinkKind.plot, value="foo.json"))
+    assert 'href="plots/foo.json.html"' in anchor
+    assert 'data-runbook-plot-name="foo.json"' in anchor
 
 
 def test_general_plot_links_are_named_in_figure_order_and_include_modes() -> None:
@@ -86,7 +94,8 @@ def test_monthly_plot_names_follow_raw_plot_order_and_filtered_headers_are_not_l
     assert output["style"]["links"][0]["destination"]["kind"].value == "plot"
     assert output["style"]["links"][0]["destination"]["value"] == "monthly-asset-plots"
     assert (
-        '<a href="plots/monthly-asset-plots.html" data-runbook-link-kind="plot">Monthly / Asset</a>'
+        '<a href="plots/monthly-asset-plots.html" data-runbook-link-kind="plot" '
+        'data-runbook-plot-name="monthly-asset-plots">Monthly / Asset</a>'
         in render_table_html(output["data"], output["style"])
     )
 
