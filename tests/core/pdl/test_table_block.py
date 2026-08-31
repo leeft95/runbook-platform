@@ -37,6 +37,98 @@ def test_pdl_table_block_accepts_optional_style_refs() -> None:
     )
 
 
+def test_table_width_defaults_to_fill() -> None:
+    block = PDLTableBlock(
+        name="prices",
+        data_ref="tables/prices.parquet",
+        row=1,
+        col=1,
+    )
+
+    assert block.width == "fill"
+
+
+@pytest.mark.parametrize("width", ["content", "0in", "0vw", "6in", "6.5in", "40vw", "40.5vw"])
+def test_table_accepts_content_and_css_length_widths(width: str) -> None:
+    block = PDLTableBlock(
+        name="prices",
+        data_ref="tables/prices.parquet",
+        row=1,
+        col=1,
+        width=width,
+    )
+
+    assert block.width == width
+
+
+@pytest.mark.parametrize(
+    "width",
+    ["banana", "-6in", "6 in", "6IN", "6px", "60%", "calc(6in)", "1e2in", 6, None],
+)
+def test_table_rejects_invalid_width(width: object) -> None:
+    with pytest.raises(ValueError):
+        PDLTableBlock(
+            name="prices",
+            data_ref="tables/prices.parquet",
+            row=1,
+            col=1,
+            width=width,
+        )
+
+
+def _manifest_with_table(*, schema_version: str, width: str = "fill") -> PDLManifest:
+    return PDLManifest(
+        schema_version=schema_version,
+        title="Test",
+        snapshot_id="snapshot",
+        as_of="2026-01-01T00:00:00Z",
+        page=PDLPage(
+            page_type=PDLPageType.grid,
+            rows=1,
+            columns=1,
+            blocks=[
+                PDLTableBlock(
+                    name="prices",
+                    data_ref="prices.parquet",
+                    row=1,
+                    col=1,
+                    width=width,
+                )
+            ],
+        ),
+    )
+
+
+@pytest.mark.parametrize("width", ["content", "6in", "40vw"])
+def test_pdl_01_rejects_non_fill_width_table(width: str) -> None:
+    with pytest.raises(ValueError, match="pdl-core/0.1"):
+        _manifest_with_table(schema_version="pdl-core/0.1", width=width)
+
+
+@pytest.mark.parametrize("width", ["content", "6in", "40vw"])
+def test_pdl_02_accepts_non_fill_width_table(width: str) -> None:
+    manifest = _manifest_with_table(schema_version="pdl-core/0.2", width=width)
+
+    block = manifest.page.blocks[0]
+    assert isinstance(block, PDLTableBlock)
+    assert block.width == width
+
+
+def test_default_width_is_implicit_in_serialized_manifest() -> None:
+    manifest = _manifest_with_table(schema_version="pdl-core/0.1")
+    payload = manifest.model_dump(mode="json")
+
+    assert "width" not in payload["page"]["blocks"][0]
+
+
+@pytest.mark.parametrize("width", ["content", "6.5in", "40.5vw"])
+def test_non_fill_width_is_serialized_for_pdl_02(width: str) -> None:
+    manifest = _manifest_with_table(schema_version="pdl-core/0.2", width=width)
+    payload = manifest.model_dump(mode="json")
+
+    assert payload["page"]["blocks"][0]["width"] == width
+
+
 def test_pdl_spec_table_block_contains_style_fields() -> None:
     spec_path = Path("packages/runbook/runbook-core/src/runbook/core/pdl/spec.json")
     payload = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -71,6 +163,51 @@ def test_pdl_spec_documents_field_uniqueness_contract() -> None:
     columns = payload["$defs"]["tableBlock"]["allOf"][1]["properties"]["columns"]
     assert columns["x-runbook-unique-by"] == "field"
     assert columns["uniqueItems"] is True
+
+
+def test_pdl_spec_width_contract() -> None:
+    v01 = json.loads(Path("packages/runbook/runbook-core/src/runbook/core/pdl/spec.json").read_text(encoding="utf-8"))
+    v02 = json.loads(
+        Path("packages/runbook/runbook-core/src/runbook/core/pdl/spec-0.2.json").read_text(encoding="utf-8")
+    )
+    assert "width" not in v01["$defs"]["tableBlock"]["allOf"][1]["properties"]
+    assert v02["$defs"]["tableBlock"]["allOf"][1]["properties"]["width"] == {
+        "type": "string",
+        "pattern": r"^(?:fill|content|[0-9]+(?:\.[0-9]+)?(?:in|vw))$",
+        "default": "fill",
+    }
+
+
+def test_pdl_02_schema_accepts_content_and_rejects_invalid_width() -> None:
+    import jsonschema
+
+    validator_type = getattr(jsonschema, "Draft202012Validator", jsonschema.Draft7Validator)
+    schema = json.loads(
+        Path("packages/runbook/runbook-core/src/runbook/core/pdl/spec-0.2.json").read_text(encoding="utf-8")
+    )
+    validator = validator_type(schema)
+    payload = _manifest_with_table(schema_version="pdl-core/0.2", width="content").model_dump(mode="json")
+
+    validator.validate(payload)
+    payload["page"]["blocks"][0]["width"] = "banana"
+    with pytest.raises(jsonschema.ValidationError):
+        validator.validate(payload)
+
+
+@pytest.mark.parametrize("width", ["content", "6in", "40vw"])
+def test_pdl_02_schema_guard_rejects_non_fill_width_under_v01(width: str) -> None:
+    import jsonschema
+
+    validator_type = getattr(jsonschema, "Draft202012Validator", jsonschema.Draft7Validator)
+    schema = json.loads(
+        Path("packages/runbook/runbook-core/src/runbook/core/pdl/spec-0.2.json").read_text(encoding="utf-8")
+    )
+    validator = validator_type(schema)
+    payload = _manifest_with_table(schema_version="pdl-core/0.2", width=width).model_dump(mode="json")
+    payload["schema_version"] = "pdl-core/0.1"
+
+    with pytest.raises(jsonschema.ValidationError):
+        validator.validate(payload)
 
 
 def test_pdl_spec_table_block_ref_fields_match_table_artifact_ref_schema() -> None:

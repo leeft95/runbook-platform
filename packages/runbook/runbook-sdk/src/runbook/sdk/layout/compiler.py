@@ -265,6 +265,7 @@ def _lower_block(
             row_span=row_span,
             col_span=col_span,
             columns=block.columns,
+            width=block.table_width,
             extensions=block.extensions,
         )
     if block.kind == "plot":

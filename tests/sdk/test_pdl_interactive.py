@@ -435,6 +435,7 @@ def test_ag_grid_consumes_resolved_style_and_semantic_links(tmp_path) -> None:
         style_ref="styles/table.json",
         row=1,
         col=1,
+        width="40vw",
         links=[
             {"area": "cells", "field": "label", "destination": {"kind": "report", "value_field": "report"}},
             {"area": "cells", "field": "report", "destination": {"kind": "url", "value_field": "url"}},
@@ -478,8 +479,11 @@ def test_ag_grid_consumes_resolved_style_and_semantic_links(tmp_path) -> None:
     assert definitions["report"]["cellRenderer"]["function"]
     assert definitions["label"]["headerLink"] == "/resolved/report/header"
     assert definitions["label"]["headerComponent"]["function"]
+    assert config.column_defs[0]["headerName"] == "Region"
     assert config.column_defs[0]["headerLink"] == "/resolved/plot/all-plots"
     assert config.style["border"] == "2px solid black"
+    # Interactive AG Grid keeps its own full-slot sizing model in v0.3.2.
+    assert config.style["width"] == "100%"
 
 
 def test_native_table_consumes_persisted_style_resolution(tmp_path) -> None:

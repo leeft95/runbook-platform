@@ -42,6 +42,14 @@ DEFAULT_GRID_CSS = """.rb-page {
   border-collapse: collapse;
 }
 
+.rb-table-content-width table {
+  width: auto;
+}
+
+.rb-table-explicit-width table {
+  width: var(--rb-table-width);
+}
+
 .rb-block td,
 .rb-block th {
   border: 1px solid #eee;
@@ -112,7 +120,22 @@ def render_html(store: BlobStore, manifest: PDLManifest, prefix: str) -> str:
         else:
             raise ValueError(f"unsupported PDL block type: {block.type!r}")
         position = f"grid-row: {block.row} / span {block.row_span}; grid-column: {block.col} / span {block.col_span};"
-        blocks.append(f'<section class="rb-block" style="{position}">{title}{body}</section>')
+
+        block_classes = ["rb-block"]
+        table_width = None
+
+        if isinstance(block, PDLTableBlock):
+            if block.width == "content":
+                block_classes.append("rb-table-content-width")
+            elif block.width != "fill":
+                block_classes.append("rb-table-explicit-width")
+                table_width = block.width
+
+        classes = " ".join(block_classes)
+        if table_width is not None:
+            position += f" --rb-table-width: {escape(table_width)};"
+
+        blocks.append(f'<section class="{classes}" style="{position}">{title}{body}</section>')
     css = ""
     if manifest.style:
         css = re.sub(

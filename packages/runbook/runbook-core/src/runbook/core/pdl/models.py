@@ -133,6 +133,12 @@ class PDLColumn(BaseModel):
         return self
 
 
+PDLTableWidth = Annotated[
+    str,
+    StringConstraints(pattern=r"^(?:fill|content|[0-9]+(?:\.[0-9]+)?(?:in|vw))$"),
+]
+
+
 class PDLStyle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -157,6 +163,7 @@ class PDLBlockBase(BaseModel):
 class PDLTableBlock(PDLBlockBase, TableArtifactRef):
     type: Literal["table"] = "table"
     columns: list[PDLColumn] | None = None
+    width: PDLTableWidth = Field(default="fill", exclude_if=lambda value: value == "fill")
 
     @field_validator("columns")
     @classmethod
@@ -258,13 +265,16 @@ class PDLManifest(BaseModel):
     extensions: dict[str, dict[str, Any]] | None = None
 
     @model_validator(mode="after")
-    def validate_link_schema_version(self) -> "PDLManifest":
-        has_links = any(
-            (isinstance(block, PDLTableBlock) and block.links) or isinstance(block, PDLLinkBlock)
+    def validate_schema_version_features(self) -> "PDLManifest":
+        requires_v02 = any(
+            isinstance(block, PDLLinkBlock)
+            or (isinstance(block, PDLTableBlock) and (bool(block.links) or block.width != "fill"))
             for block in self.page.blocks
         )
-        if has_links and self.schema_version == "pdl-core/0.1":
-            raise ValueError("pdl-core/0.1 does not support linked table blocks; use pdl-core/0.2")
+
+        if requires_v02 and self.schema_version == "pdl-core/0.1":
+            raise ValueError("pdl-core/0.1 does not support linked or content-width table blocks; use pdl-core/0.2")
+
         return self
 
     @field_validator("warnings", mode="before")

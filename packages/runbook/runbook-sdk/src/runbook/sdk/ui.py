@@ -23,6 +23,7 @@ from runbook.core.pdl.models import (
     PDLPlotRefBlock,
     PDLStyle,
     PDLTableBlock,
+    PDLTableWidth,
     PDLTextBlock,
     PDLTextFormat,
 )
@@ -93,11 +94,13 @@ def manifest(
                 raise TypeError(f"PDL extension {namespace!r} must serialize to an object")
             serialized_extensions[namespace] = value
 
-    has_links = any(
-        (isinstance(block, PDLTableBlock) and block.links) or isinstance(block, PDLLinkBlock) for block in page.blocks
+    requires_v02 = any(
+        isinstance(block, PDLLinkBlock)
+        or (isinstance(block, PDLTableBlock) and (bool(block.links) or block.width != "fill"))
+        for block in page.blocks
     )
     return PDLManifest(
-        schema_version="pdl-core/0.2" if has_links else "pdl-core/0.1",
+        schema_version="pdl-core/0.2" if requires_v02 else "pdl-core/0.1",
         title=resolved_title,
         snapshot_id=ctx.snapshot.snapshot_id,
         as_of=ctx.snapshot.as_of or ctx.snapshot.watermark,
@@ -193,6 +196,7 @@ def table(
     row_span: int = 1,
     col_span: int = 1,
     columns: list[PDLColumn] | None = None,
+    width: PDLTableWidth = "fill",
     extensions: dict[str, dict[str, Any]] | None = None,
 ) -> PDLTableBlock:
     """Create a positioned table block from an artifact reference."""
@@ -211,6 +215,7 @@ def table(
         row_span=row_span,
         col_span=col_span,
         columns=columns,
+        width=width,
         extensions=extensions,
     )
 

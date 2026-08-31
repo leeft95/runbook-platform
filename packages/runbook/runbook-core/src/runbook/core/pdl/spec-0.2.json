@@ -110,17 +110,17 @@
           "additionalProperties": false,
           "properties": {
             "plots": {
-              "type": "array",
+              "type": ["array", "null"],
               "items": { "type": "string", "minLength": 1 },
               "uniqueItems": true
             },
             "tables": {
-              "type": "array",
+              "type": ["array", "null"],
               "items": { "type": "string", "minLength": 1 },
               "uniqueItems": true
             },
             "files": {
-              "type": "array",
+              "type": ["array", "null"],
               "items": { "type": "string", "minLength": 1 },
               "uniqueItems": true
             }
@@ -167,6 +167,14 @@
                         "properties": {
                           "type": { "const": "link" }
                         }
+                      },
+                      {
+                        "required": ["width"],
+                        "properties": {
+                          "width": {
+                            "pattern": "^(?:content|[0-9]+(?:\\.[0-9]+)?(?:in|vw))$"
+                          }
+                        }
                       }
                     ]
                   }
@@ -211,6 +219,13 @@
           "unevaluatedProperties": false,
           "required": ["type", "data_ref"],
           "properties": {
+            "name": { "$ref": "#/$defs/blockBase/properties/name" },
+            "title": { "$ref": "#/$defs/blockBase/properties/title" },
+            "row": { "$ref": "#/$defs/blockBase/properties/row" },
+            "col": { "$ref": "#/$defs/blockBase/properties/col" },
+            "row_span": { "$ref": "#/$defs/blockBase/properties/row_span" },
+            "col_span": { "$ref": "#/$defs/blockBase/properties/col_span" },
+            "extensions": { "$ref": "#/$defs/blockBase/properties/extensions" },
             "type": { "const": "table" },
             "data_ref": { "type": "string", "minLength": 1 },
             "style_ref": {
@@ -252,6 +267,11 @@
               "items": { "$ref": "#/$defs/column" },
               "uniqueItems": true,
               "x-runbook-unique-by": "field"
+            },
+            "width": {
+              "type": "string",
+              "pattern": "^(?:fill|content|[0-9]+(?:\\.[0-9]+)?(?:in|vw))$",
+              "default": "fill"
             }
           }
         }
@@ -342,6 +362,13 @@
           "additionalProperties": false,
           "required": ["type", "ref"],
           "properties": {
+            "name": { "$ref": "#/$defs/blockBase/properties/name" },
+            "title": { "$ref": "#/$defs/blockBase/properties/title" },
+            "row": { "$ref": "#/$defs/blockBase/properties/row" },
+            "col": { "$ref": "#/$defs/blockBase/properties/col" },
+            "row_span": { "$ref": "#/$defs/blockBase/properties/row_span" },
+            "col_span": { "$ref": "#/$defs/blockBase/properties/col_span" },
+            "extensions": { "$ref": "#/$defs/blockBase/properties/extensions" },
             "type": { "const": "plot_ref" },
             "ref": { "type": "string", "minLength": 1 }
           }
@@ -356,9 +383,16 @@
           "additionalProperties": false,
           "required": ["type", "text"],
           "properties": {
+            "name": { "$ref": "#/$defs/blockBase/properties/name" },
+            "title": { "$ref": "#/$defs/blockBase/properties/title" },
+            "row": { "$ref": "#/$defs/blockBase/properties/row" },
+            "col": { "$ref": "#/$defs/blockBase/properties/col" },
+            "row_span": { "$ref": "#/$defs/blockBase/properties/row_span" },
+            "col_span": { "$ref": "#/$defs/blockBase/properties/col_span" },
+            "extensions": { "$ref": "#/$defs/blockBase/properties/extensions" },
             "type": { "const": "text" },
             "text": { "type": "string" },
-            "format": { "type": "string", "enum": ["plain", "markdown"] }
+            "format": { "type": ["string", "null"], "enum": ["plain", "markdown", null] }
           }
         }
       ]
@@ -371,6 +405,13 @@
           "unevaluatedProperties": false,
           "required": ["type", "label", "destination"],
           "properties": {
+            "name": { "$ref": "#/$defs/blockBase/properties/name" },
+            "title": { "$ref": "#/$defs/blockBase/properties/title" },
+            "row": { "$ref": "#/$defs/blockBase/properties/row" },
+            "col": { "$ref": "#/$defs/blockBase/properties/col" },
+            "row_span": { "$ref": "#/$defs/blockBase/properties/row_span" },
+            "col_span": { "$ref": "#/$defs/blockBase/properties/col_span" },
+            "extensions": { "$ref": "#/$defs/blockBase/properties/extensions" },
             "type": { "const": "link" },
             "label": { "type": "string", "minLength": 1 },
             "destination": {
@@ -424,7 +465,8 @@
             { "$ref": "#/$defs/currencyFormat" },
             { "$ref": "#/$defs/percentFormat" },
             { "$ref": "#/$defs/dateFormat" },
-            { "$ref": "#/$defs/datetimeFormat" }
+            { "$ref": "#/$defs/datetimeFormat" },
+            { "type": "null" }
           ]
         },
         "hidden": { "type": "boolean", "default": false }

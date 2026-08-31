@@ -8,7 +8,7 @@ from plotly.offline import get_plotlyjs_version
 from runbook.core.pdl.models import PDLManifest, PDLPage, PDLPageType, PDLTableBlock
 from runbook.core.storage import BlobStore
 from runbook.core.table import TableLink, TableStylePlan, render_table_html
-from runbook.sdk.html import render_html, render_html_bundle
+from runbook.sdk.html import DEFAULT_GRID_CSS, render_html, render_html_bundle
 
 PLOTLY_CDN_URL = f"https://cdn.plot.ly/plotly-{get_plotlyjs_version()}.min.js"
 
@@ -17,9 +17,9 @@ def _plot_payload(title: str) -> dict[str, object]:
     return {"data": [{"x": [1], "y": [2], "type": "bar"}], "layout": {"title": {"text": title}}}
 
 
-def _manifest(*links: TableLink) -> PDLManifest:
+def _manifest(*links: TableLink, width: str = "fill") -> PDLManifest:
     return PDLManifest(
-        schema_version="pdl-core/0.2" if links else "pdl-core/0.1",
+        schema_version="pdl-core/0.2" if links or width != "fill" else "pdl-core/0.1",
         title="Report",
         snapshot_id="snapshot",
         as_of="2026-01-01T00:00:00Z",
@@ -27,7 +27,16 @@ def _manifest(*links: TableLink) -> PDLManifest:
             page_type=PDLPageType.grid,
             rows=1,
             columns=1,
-            blocks=[PDLTableBlock(name="table", data_ref="table.parquet", row=1, col=1, links=list(links) or None)],
+            blocks=[
+                PDLTableBlock(
+                    name="table",
+                    data_ref="table.parquet",
+                    row=1,
+                    col=1,
+                    links=list(links) or None,
+                    width=width,
+                )
+            ],
         ),
     )
 
@@ -85,6 +94,35 @@ def test_no_link_bundle_main_matches_existing_renderer(tmp_path) -> None:
 
     assert rendered.main == render_html(store, manifest, "reports/report")
     assert rendered.linked_pages == {}
+
+
+def test_table_width_modifier_and_css_preserve_fill_behavior(tmp_path) -> None:
+    fill_html = render_html(_store(tmp_path / "fill", _manifest()), _manifest(), "reports/report")
+    content_manifest = _manifest(width="content")
+    content_html = render_html(_store(tmp_path / "content", content_manifest), content_manifest, "reports/report")
+    explicit_manifest = _manifest(width="6.5in")
+    explicit_html = render_html(_store(tmp_path / "explicit", explicit_manifest), explicit_manifest, "reports/report")
+
+    assert "rb-table-content-width" not in fill_html
+    assert 'class="rb-block rb-table-content-width"' in content_html
+    assert ".rb-block table" in DEFAULT_GRID_CSS
+    assert "width: 100%" in DEFAULT_GRID_CSS
+    assert ".rb-table-content-width table" in DEFAULT_GRID_CSS
+    assert "width: auto" in DEFAULT_GRID_CSS
+    assert 'class="rb-block rb-table-explicit-width"' in explicit_html
+    assert "--rb-table-width: 6.5in;" in explicit_html
+    assert ".rb-table-explicit-width table" in DEFAULT_GRID_CSS
+    assert "width: var(--rb-table-width)" in DEFAULT_GRID_CSS
+
+
+def test_prerendered_content_width_table_keeps_modifier(tmp_path) -> None:
+    link = TableLink(area="header", field="value", destination={"kind": "plot", "value": "value-plot"})
+    manifest = _manifest(link, width="content")
+    store = _store(tmp_path, manifest)
+    html = render_html(store, manifest, "reports/report")
+
+    assert 'class="rb-block rb-table-content-width"' in html
+    assert 'href="plots/value-plot.html"' in html
 
 
 def test_individual_page_and_main_href_use_semantic_name(tmp_path) -> None:

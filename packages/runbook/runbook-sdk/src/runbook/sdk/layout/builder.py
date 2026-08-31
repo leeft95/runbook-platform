@@ -6,7 +6,7 @@ import re
 from dataclasses import replace
 from typing import Any, Iterable
 
-from runbook.core.pdl.models import PDLColumn, PDLLinkDestination, PDLLinkKind
+from runbook.core.pdl.models import PDLColumn, PDLLinkDestination, PDLLinkKind, PDLTableWidth
 from runbook.core.table.models import TableArtifactRef
 
 from .models import (
@@ -112,6 +112,7 @@ def table(
     col_span: int = 1,
     row_span: int = 1,
     columns: list[PDLColumn] | None = None,
+    width: PDLTableWidth = "fill",
     extensions: dict[str, dict[str, Any]] | None = None,
 ) -> LayoutBlock:
     """Create a thin table block from an existing artifact reference."""
@@ -125,6 +126,7 @@ def table(
         col_span=_span(col_span, kind="col_span"),
         row_span=_span(row_span, kind="row_span"),
         columns=list(columns) if columns is not None else None,
+        table_width=width,
         extensions=dict(extensions) if extensions is not None else None,
     )
 

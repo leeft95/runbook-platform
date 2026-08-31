@@ -322,24 +322,16 @@ def _build_monthly_style(
     links: list[TableLink] | None = None,
 ) -> dict[str, tp.Any]:
     """Build monthly style."""
-    first_col = str(ret_df.columns[0])
-    value_cols = [str(col) for col in ret_df.columns[1:10]]
+    value_cols = [str(col) for col in ret_df.columns[:9]]
     data_cols = [col for col in value_cols if col in ret_df.columns]
     first_row_label = str(ret_df.index[0]) if not ret_df.empty else "0"
 
     format_columns: dict[str, TableFormatSpec] = {
         col: TableFormatNumber(digits=0, thousands=False) for col in data_cols
     }
-    sizing_cols = [TableColumnSizing(label=first_col, width_px=120)] + [
-        TableColumnSizing(label=col, width_px=80) for col in data_cols
-    ]
+    sizing_cols = [TableColumnSizing(label=col, width_px=80) for col in data_cols]
 
     rules: list[TableRule] = [
-        TableRule(
-            id="align_first_col_left",
-            target=TableTarget(scope=TargetScope.columns, labels=[first_col]),
-            action=TableAction(text_align="left"),
-        ),
         TableRule(
             id="first_row_bold_border",
             target=TableTarget(scope=TargetScope.rows, labels=[first_row_label]),
@@ -357,7 +349,7 @@ def _build_monthly_style(
         data_col_positions = [idx for idx, col in enumerate(ret_df.columns) if col in data_cols]
         rules.extend(color_negative_red(list(ret_df.columns), [(pos, pos) for pos in data_col_positions]))
 
-    rules.extend(highlight_zscore(list(ret_df.columns), [(1, "_mean", "_std"), (2, "_mean1", "_std1")]))
+    rules.extend(highlight_zscore(list(ret_df.columns), [(0, "_mean", "_std"), (1, "_mean1", "_std1")]))
 
     options = TableStyleOptions(
         max_rows=100,
@@ -435,8 +427,7 @@ def table_with_linked_plots_monthly(
     if header is not None:
         table_df.index.name = header
 
-    ret_df = table_df.reset_index()
-    ret_df.columns = [str(col) for col in ret_df.columns]
+    table_df.columns = [str(col) for col in table_df.columns]
     links: list[TableLink] | None = None
     plot_names: list[str] | None = None
     all_plots_name: str | None = None
@@ -445,13 +436,13 @@ def table_with_linked_plots_monthly(
         plot_names, links, all_plots_name = _build_plot_link_metadata(
             header,
             [(str(col), plot_type) for col in raw_df.columns],
-            [str(col) for col in ret_df.columns],
+            [str(col) for col in table_df.columns],
             column_plot_links=column_plot_links,
             all_plots_link=all_plots_link,
         )
     payload: dict[str, tp.Any] = {
-        "data": ret_df,
-        "style": _build_monthly_style(ret_df, na_rep=na_rep, links=links),
+        "data": table_df,
+        "style": _build_monthly_style(table_df, na_rep=na_rep, links=links),
         "plots": seasonal_plots,
     }
     if plot_names is not None:

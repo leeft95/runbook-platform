@@ -64,8 +64,11 @@ def test_general_table_with_link_mixed_semantics_and_hidden_helpers() -> None:
     assert "A_chg_mean" not in html
     assert "A_chg_std" not in html
 
-    rendered_df = table_df.loc[:, ["Liquids Price", "A", "B"]]
-    assert rendered_df.iloc[-1, 0] == "20d mv (simple)"
+    assert table_df.index.name == "Liquids Price"
+    assert not isinstance(table_df.index, pd.RangeIndex)
+    rendered_df = table_df.loc[:, ["A", "B"]]
+    assert [item["label"] for item in style["sizing"]["columns"]] == ["A", "B"]
+    assert rendered_df.index[-1] == "20d mv (simple)"
     assert np.isclose(
         float(rendered_df.iloc[-1]["A"]),
         float(raw_df["A"].rolling(20).mean().iloc[-1]),

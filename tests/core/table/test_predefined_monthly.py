@@ -31,10 +31,13 @@ def test_table_with_linked_plots_monthly_applies_column_overrides_and_row_suffix
     )
     table_df = out["Commodity"]["data"]
 
+    assert table_df.index.name == "Commodity"
+    assert not isinstance(table_df.index, pd.RangeIndex)
+    assert all(item["label"] != "Commodity" for item in out["Commodity"]["style"]["sizing"]["columns"])
     assert "10d Change" in table_df.columns
     assert "20d Change" in table_df.columns
-    assert "Brent [MA]" in set(table_df["Commodity"].astype(str))
-    assert "WTI [Sum]" in set(table_df["Commodity"].astype(str))
+    assert "Brent [MA]" in set(table_df.index.astype(str))
+    assert "WTI [Sum]" in set(table_df.index.astype(str))
 
 
 def test_table_with_linked_plots_monthly_uses_moving_average_type_for_ma_mode() -> None:
@@ -49,7 +52,7 @@ def test_table_with_linked_plots_monthly_uses_moving_average_type_for_ma_mode() 
     )
     table_df = out["Asset"]["data"]
 
-    actual_10d = float(table_df.loc[table_df["Asset"] == "x", "10d MA"].iloc[0])
+    actual_10d = float(table_df.loc[table_df.index == "x", "10d MA"].iloc[0])
     expected_10d = float(
         pd.Series(calculate_moving_average(raw_df["x"], window=10, kind=MovingAvgModes.EXPONENTIAL)).iloc[-1]
     )
@@ -71,7 +74,7 @@ def test_table_with_linked_plots_monthly_window_highlighting_routes_to_window_mo
     )
     table_df = out["Asset"]["data"]
 
-    row = table_df.loc[table_df["Asset"] == "x"].iloc[0]
+    row = table_df.loc[table_df.index == "x"].iloc[0]
     expected_mean = float(raw_df["x"].rolling(5).mean().iloc[-2])
     expected_std = float(raw_df["x"].rolling(5).std().iloc[-2])
 

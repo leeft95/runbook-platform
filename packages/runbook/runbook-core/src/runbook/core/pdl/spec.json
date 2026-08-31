@@ -28,20 +28,25 @@
       "uniqueItems": true
     },
     "style": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["css_ref", "source_type", "source_key"],
-      "properties": {
-        "css_ref": { "type": "string", "minLength": 1 },
-        "source_type": {
-          "type": "string",
-          "enum": ["manual", "default", "theme"]
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["css_ref", "source_type", "source_key"],
+          "properties": {
+            "css_ref": { "type": "string", "minLength": 1 },
+            "source_type": {
+              "type": "string",
+              "enum": ["manual", "default", "theme"]
+            },
+            "source_key": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         },
-        "source_key": {
-            "type": "string",
-            "minLength": 1
-        }
-      }
+        { "type": "null" }
+      ]
     },
     "page": {
       "type": "object",
@@ -98,31 +103,41 @@
       ]
     },
     "artifacts": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "plots": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "plots": {
+              "type": ["array", "null"],
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            "tables": {
+              "type": ["array", "null"],
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            "files": {
+              "type": ["array", "null"],
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            }
+          }
         },
-        "tables": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true
-        },
-        "files": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true
-        }
-      }
+        { "type": "null" }
+      ]
     },
     "extensions": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "object"
-      }
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        { "type": "null" }
+      ]
     }
   },
   "$defs": {
@@ -135,13 +150,13 @@
           "type": "string",
           "pattern": "^[a-zA-Z0-9_\\-\\.]+$"
         },
-        "title": { "type": "string" },
+        "title": { "type": ["string", "null"] },
         "row": { "type": "integer", "minimum": 1 },
         "col": { "type": "integer", "minimum": 1 },
         "row_span": { "type": "integer", "minimum": 1, "default": 1 },
         "col_span": { "type": "integer", "minimum": 1, "default": 1 },
         "extensions": {
-          "type": "object",
+          "type": ["object", "null"],
           "additionalProperties": {
             "type": "object"
           }
@@ -156,6 +171,13 @@
           "additionalProperties": false,
           "required": ["type", "data_ref"],
           "properties": {
+            "name": { "$ref": "#/$defs/blockBase/properties/name" },
+            "title": { "$ref": "#/$defs/blockBase/properties/title" },
+            "row": { "$ref": "#/$defs/blockBase/properties/row" },
+            "col": { "$ref": "#/$defs/blockBase/properties/col" },
+            "row_span": { "$ref": "#/$defs/blockBase/properties/row_span" },
+            "col_span": { "$ref": "#/$defs/blockBase/properties/col_span" },
+            "extensions": { "$ref": "#/$defs/blockBase/properties/extensions" },
             "type": { "const": "table" },
             "data_ref": { "type": "string", "minLength": 1 },
             "style_ref": {
@@ -197,6 +219,13 @@
           "additionalProperties": false,
           "required": ["type", "ref"],
           "properties": {
+            "name": { "$ref": "#/$defs/blockBase/properties/name" },
+            "title": { "$ref": "#/$defs/blockBase/properties/title" },
+            "row": { "$ref": "#/$defs/blockBase/properties/row" },
+            "col": { "$ref": "#/$defs/blockBase/properties/col" },
+            "row_span": { "$ref": "#/$defs/blockBase/properties/row_span" },
+            "col_span": { "$ref": "#/$defs/blockBase/properties/col_span" },
+            "extensions": { "$ref": "#/$defs/blockBase/properties/extensions" },
             "type": { "const": "plot_ref" },
             "ref": { "type": "string", "minLength": 1 }
           }
@@ -211,9 +240,16 @@
           "additionalProperties": false,
           "required": ["type", "text"],
           "properties": {
+            "name": { "$ref": "#/$defs/blockBase/properties/name" },
+            "title": { "$ref": "#/$defs/blockBase/properties/title" },
+            "row": { "$ref": "#/$defs/blockBase/properties/row" },
+            "col": { "$ref": "#/$defs/blockBase/properties/col" },
+            "row_span": { "$ref": "#/$defs/blockBase/properties/row_span" },
+            "col_span": { "$ref": "#/$defs/blockBase/properties/col_span" },
+            "extensions": { "$ref": "#/$defs/blockBase/properties/extensions" },
             "type": { "const": "text" },
             "text": { "type": "string" },
-            "format": { "type": "string", "enum": ["plain", "markdown"] }
+            "format": { "type": ["string", "null"], "enum": ["plain", "markdown", null] }
           }
         }
       ]
@@ -239,7 +275,8 @@
             { "$ref": "#/$defs/currencyFormat" },
             { "$ref": "#/$defs/percentFormat" },
             { "$ref": "#/$defs/dateFormat" },
-            { "$ref": "#/$defs/datetimeFormat" }
+            { "$ref": "#/$defs/datetimeFormat" },
+            { "type": "null" }
           ]
         },
         "hidden": { "type": "boolean", "default": false }

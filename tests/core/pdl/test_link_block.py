@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import jsonschema
 import pytest
 from runbook.core.pdl.models import (
     PDLLinkBlock,
@@ -83,7 +84,6 @@ def test_packaged_02_schema_contains_static_link_block_and_01_guard() -> None:
 
 
 def test_packaged_02_schema_validates_standalone_url_safety() -> None:
-    jsonschema = pytest.importorskip("jsonschema")
     schema = json.loads(
         Path("packages/runbook/runbook-core/src/runbook/core/pdl/spec-0.2.json").read_text(encoding="utf-8")
     )

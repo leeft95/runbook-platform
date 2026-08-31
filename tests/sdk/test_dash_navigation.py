@@ -91,6 +91,17 @@ def test_default_routes_reject_dot_segments() -> None:
     assert table.children[0].children.children[1].children.role == "alert"
 
 
+def test_native_table_width_maps_fill_to_full_and_content_to_auto() -> None:
+    frame = pd.DataFrame({"value": [1]})
+    fill = PDLTableBlock(name="fill", data_ref="table.parquet", row=1, col=1)
+    content = PDLTableBlock(name="content", data_ref="table.parquet", row=1, col=1, width="content")
+    explicit = PDLTableBlock(name="explicit", data_ref="table.parquet", row=1, col=1, width="6.5in")
+
+    assert _build_native_table(frame, fill, "fill", SimpleNamespace()).style["width"] == "100%"
+    assert _build_native_table(frame, content, "content", SimpleNamespace()).style["width"] == "auto"
+    assert _build_native_table(frame, explicit, "explicit", SimpleNamespace()).style["width"] == "6.5in"
+
+
 def test_external_url_remains_an_anchor() -> None:
     frame = pd.DataFrame({"value": [1]})
     block = PDLTableBlock(

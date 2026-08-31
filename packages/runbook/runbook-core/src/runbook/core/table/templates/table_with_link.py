@@ -181,39 +181,28 @@ def _build_internal_general_frame(
     summary_df = pd.DataFrame([summary_row], index=[summary_label])
     full_df = pd.concat([visible_body, summary_df], axis=0)
     full_df.index.name = header_label
-    ret_df = full_df.reset_index()
-    ret_df.columns = [str(col) for col in ret_df.columns]
-    return ret_df, helper_columns
+    full_df.columns = [str(col) for col in full_df.columns]
+    return full_df, helper_columns
 
 
 def _build_general_style(
     ret_df: pd.DataFrame,
     *,
-    header_label: str,
     helper_columns: list[str],
-    title_column_width: int,
     data_column_width: int,
     na_rep: str | None,
     links: list[TableLink] | None = None,
 ) -> dict[str, tp.Any]:
     """Build general style."""
-    first_col = str(ret_df.columns[0])
-    visible_data_cols = [str(col) for col in ret_df.columns[1:] if str(col) not in helper_columns]
-    summary_label = str(ret_df.iloc[-1, 0]) if not ret_df.empty else ""
+    visible_data_cols = [str(col) for col in ret_df.columns if str(col) not in helper_columns]
+    summary_label = str(ret_df.index[-1]) if not ret_df.empty else ""
 
     format_columns: dict[str, TableFormatSpec] = {
         col: TableFormatNumber(digits=2, thousands=False) for col in visible_data_cols
     }
-    sizing_cols = [TableColumnSizing(label=first_col, width_px=title_column_width)] + [
-        TableColumnSizing(label=col, width_px=data_column_width) for col in visible_data_cols
-    ]
+    sizing_cols = [TableColumnSizing(label=col, width_px=data_column_width) for col in visible_data_cols]
 
     rules: list[TableRule] = [
-        TableRule(
-            id="align_first_col_left",
-            target=TableTarget(scope=TargetScope.columns, labels=[first_col]),
-            action=TableAction(text_align="left"),
-        ),
         TableRule(
             id="align_data_center",
             target=TableTarget(scope=TargetScope.columns, labels=visible_data_cols),
@@ -361,9 +350,7 @@ def general_table_with_link(
         "data": ret_df,
         "style": _build_general_style(
             ret_df,
-            header_label=header_label,
             helper_columns=helper_columns,
-            title_column_width=title_column_width,
             data_column_width=data_column_width,
             na_rep=na_rep,
             links=links,

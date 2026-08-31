@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import jsonschema
 import pandas as pd
 from dash import Dash, Input, Output, dcc, html
 from runbook.core.data import DatasetFile
@@ -60,8 +62,23 @@ def _run(tmp_path, pointer_registry):
 
 def test_linked_table_golden_publishes_semantic_links_and_plot_pages(tmp_path, pointer_registry) -> None:
     store, _, _, result = _run(tmp_path, pointer_registry)
+    stage3 = store.get_json(result.stage3_ref)
+    persisted_table = next(block for block in stage3["page"]["blocks"] if block["name"] == "linked_prices")
+    assert persisted_table["width"] == "40vw"
+    schema = json.loads(
+        Path("packages/runbook/runbook-core/src/runbook/core/pdl/spec-0.2.json").read_text(encoding="utf-8")
+    )
+    jsonschema.Draft202012Validator(schema).validate(stage3)
     manifest = PDLManifest.model_validate(store.get_json(result.stage4_ref))
     assert manifest.schema_version == "pdl-core/0.2"
+    linked_table = next(block for block in manifest.page.blocks if block.name == "linked_prices")
+    assert linked_table.width == "40vw"
+    aggregate_link = next(link for link in linked_table.links or () if link.destination.value == "asset-plots")
+    assert aggregate_link.area == "index_header"
+    assert aggregate_link.field is None
+    assert not any(
+        link.area == "header" and link.destination.value == "asset-plots" for link in linked_table.links or ()
+    )
     assert set(manifest.artifacts.plots) == {
         "plots/asset-price-line.json",
         "plots/asset-volume-line.json",
@@ -74,6 +91,10 @@ def test_linked_table_golden_publishes_semantic_links_and_plot_pages(tmp_path, p
     assert 'href="plots/asset-price-line.html"' in html_output
     assert 'href="plots/asset-volume-line.html"' in html_output
     assert 'href="plots/asset-plots.html"' in html_output
+    assert '<a href="plots/asset-plots.html" data-runbook-link-kind="plot">Asset</a>' in html_output
+    assert html_output.count('href="plots/asset-plots.html"') == 1
+    assert 'class="rb-block rb-table-explicit-width"' in html_output
+    assert "--rb-table-width: 40vw;" in html_output
     assert "<table" in html_output
     assert "iframe" not in html_output.lower()
     assert store.exists(f"{result.prefix}/plots/asset-price-line.html")
@@ -109,6 +130,7 @@ def test_linked_table_golden_uses_host_owned_native_dash_routes(tmp_path, pointe
     assert "/host/report/price-detail/00" in tree
     assert "/host/plot/asset-price-line" in tree
     assert "/host/plot/asset-plots" in tree
+    assert "Link(children='Asset', href='/host/plot/asset-plots')" in tree
     assert "https://example.com/prices/00" in tree
     assert "AgGrid" not in tree
 

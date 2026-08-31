@@ -38,6 +38,7 @@ def page(ctx):
     )["Asset"]
 
     table_data = table_payload["data"].copy()
+    # Cross-report targets intentionally remain unresolved in single-report preview.
     table_data["report_ref"] = [f"price-detail/{index:02d}" for index in range(len(table_data))]
     table_data["source_url"] = [f"https://example.com/prices/{index:02d}" for index in range(len(table_data))]
     style = dict(table_payload["style"])
@@ -61,7 +62,7 @@ def page(ctx):
 
     layout = Report(ctx.config.get("title", "Linked Table Golden"))
     with layout.grid(columns=1) as report_grid:
-        report_grid.table(table_ref, name="linked_prices", title="Linked prices")
+        report_grid.table(table_ref, name="linked_prices", title="Linked prices", width="40vw")
         report_grid.plot(overview_ref, name="price_overview", title="Price overview")
     return layout
 

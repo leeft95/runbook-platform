@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
+import jsonschema
 import pandas as pd
 import pytest
 from plotly.offline import get_plotlyjs_version
 from runbook.core.data import DatasetFile
-from runbook.core.pdl.models import PDLManifest, PDLPage, PDLPageType, PDLSourceType, PDLStyle, PDLTextBlock
+from runbook.core.pdl.models import (
+    PDLManifest,
+    PDLPage,
+    PDLPageType,
+    PDLSourceType,
+    PDLStyle,
+    PDLTableBlock,
+    PDLTextBlock,
+)
 from runbook.core.report_artifacts import ArtifactRegistry
 from runbook.core.table.models import TableArtifactRef
 from runbook.data import open_blob_store
@@ -469,6 +480,34 @@ def test_table_and_plot_helpers_keep_artifact_semantics() -> None:
     assert blocks[1].ref == "plots/demo.json"
 
 
+def test_stack_table_content_width_survives_compilation_without_changing_occupancy() -> None:
+    ref = TableArtifactRef(data_ref="tables/prices.parquet")
+    layout = Report("Test")
+    with layout.stack() as report_stack:
+        report_stack.table(ref, name="prices", title="Prices", width="content")
+        report_stack.plot("plots/prices.json", name="prices_plot", title="Prices plot")
+
+    manifest = compile_layout(_ctx(), layout)
+    table_block = next(block for block in manifest.page.blocks if isinstance(block, PDLTableBlock))
+
+    assert table_block.width == "content"
+    assert manifest.schema_version == "pdl-core/0.2"
+    assert (table_block.row, table_block.col, table_block.col_span) == (1, 1, manifest.page.columns)
+
+
+def test_stack_table_defaults_to_fill_and_pdl_01() -> None:
+    ref = TableArtifactRef(data_ref="tables/prices.parquet")
+    layout = Report("Test")
+    with layout.stack() as report_stack:
+        report_stack.table(ref, name="prices")
+
+    manifest = compile_layout(_ctx(), layout)
+    table_block = next(block for block in manifest.page.blocks if isinstance(block, PDLTableBlock))
+
+    assert table_block.width == "fill"
+    assert manifest.schema_version == "pdl-core/0.1"
+
+
 def test_table_artifact_style_links_flow_through_report_compilation() -> None:
     registry = ArtifactRegistry(table_ref_resolver=lambda name: f"tables/{name}.parquet", table_writer=lambda *_: None)
     ref = registry.table(
@@ -553,6 +592,11 @@ def test_market_dashboard_golden_executes_and_uses_renderer_extension(tmp_path, 
     assert len(manifest.blocks) >= 100
     stage3 = store.get_json(result.stage3_ref)
     assert stage3["schema_version"] == "pdl-core/0.1"
+    assert all("width" not in block for block in stage3["page"]["blocks"] if block["type"] == "table")
+    legacy_schema = json.loads(
+        Path("packages/runbook/runbook-core/src/runbook/core/pdl/spec.json").read_text(encoding="utf-8")
+    )
+    jsonschema.Draft202012Validator(legacy_schema).validate(stage3)
     html = store.get(result.html_ref).decode()
     assert "Market Dashboard" in html and "Price Markets" in html
 

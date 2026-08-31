@@ -28,6 +28,10 @@ style -> a serializable table style plan
 plots -> a list of Plotly Figures
 ```
 
+The display DataFrame retains its meaningful index and names it with the
+requested `header`; this is the visible index header used by aggregate plot
+links.
+
 ## Complete report integration
 
 The helper expects a DataFrame indexed by dates. Its default 20-observation

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from runbook.core.table import general_table_with_link, table_with_linked_plots_monthly
+from runbook.core.table import general_table_with_link, render_table_html, table_with_linked_plots_monthly
 
 
 def _frame(*columns: str, periods: int = 900) -> pd.DataFrame:
@@ -32,6 +32,8 @@ def test_general_plot_links_are_named_in_figure_order_and_include_modes() -> Non
         "inventory-prices-c-seasonal-mva",
     ]
     assert output["all_plots_name"] == "inventory-prices-plots"
+    assert output["data"].index.name == "Inventory / Prices"
+    assert not isinstance(output["data"].index, pd.RangeIndex)
     assert [link["area"] for link in output["style"]["links"]] == [
         "header",
         "header",
@@ -76,10 +78,17 @@ def test_monthly_plot_names_follow_raw_plot_order_and_filtered_headers_are_not_l
         "monthly-asset-b-seasonal-mva",
     ]
     assert output["all_plots_name"] == "monthly-asset-plots"
+    assert output["data"].index.name == "Monthly / Asset"
+    assert not isinstance(output["data"].index, pd.RangeIndex)
     assert len(output["style"]["links"]) == 1
     assert output["style"]["links"][0]["area"] == "index_header"
+    assert "field" not in output["style"]["links"][0]
     assert output["style"]["links"][0]["destination"]["kind"].value == "plot"
     assert output["style"]["links"][0]["destination"]["value"] == "monthly-asset-plots"
+    assert (
+        '<a href="plots/monthly-asset-plots.html" data-runbook-link-kind="plot">Monthly / Asset</a>'
+        in render_table_html(output["data"], output["style"])
+    )
 
     with pytest.raises(ValueError):
         table_with_linked_plots_monthly(_frame("A"), header="Monthly", column_plot_links=["A"])

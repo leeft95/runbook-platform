@@ -391,7 +391,7 @@ def _build_native_table(
         "borderCollapse": "collapse",
         "fontFamily": global_style.font_family,
         "fontSize": global_style.font_size,
-        "width": "100%",
+        "width": "100%" if block.width == "fill" else "auto" if block.width == "content" else block.width,
     }
     header_base = {
         "borderBottom": global_style.header_border_bottom,
