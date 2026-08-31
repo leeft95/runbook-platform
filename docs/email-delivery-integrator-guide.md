@@ -11,6 +11,12 @@ the synchronous `EmailSender` protocol. A provider package implements
 `send(message)` and exposes a zero-argument factory in the
 `runbook.email_senders` entry-point group:
 
+`EmailMessage.html_body` is the report HTML and must be mapped to the
+provider's HTML body field. `attachments` defaults to an empty tuple; automatic
+delivery supplies no attachment. Integrators may explicitly pass generic
+`EmailAttachment` values (for example, an image or PDF) when constructing a
+message.
+
 ```python
 import os
 
@@ -68,12 +74,14 @@ standardize those names.
 
 7. Configure a test profile with a test recipient and `provider: "company"`.
 8. Execute one controlled report and verify that the run is `success`, the
-   email metadata is in `Run.result.delivery.email`, the ZIP contains only
-   `report.html`, dashboard links work, and external URLs are unchanged.
+   email metadata is in `Run.result.delivery.email`, the report is present in
+   `EmailMessage.html_body`, no automatic attachment is present, dashboard
+   links work, and external URLs are unchanged.
 
-The provider should translate `EmailMessage.to`, `cc`, `subject`, plain-text
-`text_body`, and each attachment into its own transport API. Live sends belong
-in opt-in deployment tests; normal CI should use a fake provider/client.
+The provider should translate `EmailMessage.to`, `cc`, `subject`, HTML
+`html_body`, and any explicitly supplied attachments into its own transport
+API. Live sends belong in opt-in deployment tests; normal CI should use a fake
+provider/client.
 
 ## Failure and retry behavior
 
@@ -124,7 +132,7 @@ def test_sender_maps_public_message(fake_provider, attachment):
             to=("research@example.com",),
             cc=(),
             subject="Report",
-            text_body="Report attached.",
+            html_body="<p>Report</p>",
             attachments=(attachment,),
         )
     )

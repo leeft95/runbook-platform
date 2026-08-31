@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import io
-import zipfile
 from types import SimpleNamespace
 
 import pytest
 from runbook.core import ReportProfile
 from runbook.data import open_blob_store
 from runbook.sdk.delivery.email import (
+    EmailAttachment,
     EmailDeliveryError,
     EmailSendReceipt,
     attempt_report_email_delivery,
-    build_report_email_attachment,
+    build_report_email,
     load_email_sender,
     reports_base_url,
     rewrite_dashboard_links,
@@ -84,18 +83,44 @@ def test_reports_url_validation_and_semantic_rewrite() -> None:
         )
 
 
-def test_attachment_is_one_deterministic_html_member_and_preserves_source(tmp_path) -> None:
+def test_build_report_email_rewrites_html_and_preserves_source(tmp_path) -> None:
     store = open_blob_store(f"file:{tmp_path}")
     result = _result()
     source = '<a href="/report/other" data-runbook-link-kind="report" data-runbook-report-id="other">Other</a>'
     store.put_immutable(result.html_ref, source.encode())
-    first = build_report_email_attachment(store, result, dashboard_base_url="https://reports.example.test")
-    second = build_report_email_attachment(store, result, dashboard_base_url="https://reports.example.test")
-    assert first.content == second.content
+    profile = ReportProfile(
+        profile_id="profile",
+        report_id="daily",
+        datasets={"data": "data"},
+        delivery={"email": {"provider": "company", "to": ["person@example.test"]}},
+    )
+    message = build_report_email(
+        store=store,
+        profile=profile,
+        result=result,
+        dashboard_base_url="https://reports.example.test",
+    )
     assert store.get(result.html_ref) == source.encode()
-    with zipfile.ZipFile(io.BytesIO(first.content)) as archive:
-        assert archive.namelist() == ["report.html"]
-        assert "https://reports.example.test/reports/other" in archive.read("report.html").decode()
+    assert message.html_body == (
+        '<a href="https://reports.example.test/reports/other" '
+        'data-runbook-link-kind="report" data-runbook-report-id="other">Other</a>'
+    )
+    assert message.attachments == ()
+
+
+def test_build_report_email_preserves_explicit_attachments(tmp_path) -> None:
+    store = open_blob_store(f"file:{tmp_path}")
+    result = _result()
+    store.put_immutable(result.html_ref, b"<html></html>")
+    profile = ReportProfile(
+        profile_id="profile",
+        report_id="daily",
+        datasets={"data": "data"},
+        delivery={"email": {"provider": "company", "to": ["person@example.test"]}},
+    )
+    attachment = EmailAttachment("report.pdf", "application/pdf", b"pdf")
+    message = build_report_email(store=store, profile=profile, result=result, attachments=(attachment,))
+    assert message.attachments == (attachment,)
 
 
 def test_sender_discovery_is_deterministic_and_sanitized(monkeypatch) -> None:
@@ -144,7 +169,7 @@ def test_delivery_failure_is_operational_metadata_only(tmp_path, monkeypatch) ->
     assert "secret" not in str(delivery)
 
 
-def test_successful_top_level_delivery_maps_message_and_attachment(tmp_path, monkeypatch) -> None:
+def test_successful_top_level_delivery_maps_message_and_inline_html(tmp_path, monkeypatch) -> None:
     store = open_blob_store(f"file:{tmp_path}")
     result = _result()
     source = (
@@ -196,24 +221,15 @@ def test_successful_top_level_delivery_maps_message_and_attachment(tmp_path, mon
     assert message.to == ("research@example.test",)
     assert message.cc == ("desk@example.test",)
     assert message.subject == "Daily report"
-    assert message.text_body == (
-        "Daily report\n\n"
-        "View report:\n"
-        "https://reports.example.test/reports/daily%2Freport\n\n"
-        "Snapshot: snapshot\n"
-        "Artifact: artifact\n\n"
-        "The generated HTML report is attached."
+    assert message.html_body == (
+        '<a href="https://reports.example.test/reports/other%2Freport" '
+        'data-runbook-link-kind="report" data-runbook-report-id="other/report">Other</a>'
+        '<a href="https://reports.example.test/reports/daily%2Freport/plots/plot%2Fname" '
+        'data-runbook-link-kind="plot" data-runbook-plot-name="plot/name">Plot</a>'
+        '<a href="https://example.test/x" data-runbook-link-kind="url">External</a>'
     )
-    assert len(message.attachments) == 1
-    attachment = message.attachments[0]
-    assert attachment.filename == "daily/report.zip"
-    assert attachment.content_type == "application/zip"
-    with zipfile.ZipFile(io.BytesIO(attachment.content)) as archive:
-        assert archive.namelist() == ["report.html"]
-        emailed_html = archive.read("report.html").decode()
-    assert 'href="https://reports.example.test/reports/other%2Freport"' in emailed_html
-    assert 'href="https://reports.example.test/reports/daily%2Freport/plots/plot%2Fname"' in emailed_html
-    assert 'href="https://example.test/x"' in emailed_html
+    assert message.attachments == ()
+    assert store.get(result.html_ref) == source.encode()
 
 
 def test_missing_dashboard_base_records_safe_reason_without_sender_discovery(tmp_path, monkeypatch) -> None:

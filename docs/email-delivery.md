@@ -46,9 +46,12 @@ through the `runbook.email_senders` entry-point group. See the
 ## Runtime and HTML contract
 
 The worker reads the already-published `ReportResult.html_ref`; it does not
-execute or render the report again. It sends one deterministic ZIP attachment
-named `<report-id>.zip` with exactly one member, `report.html`. The original
-immutable HTML object and linked plot pages remain unchanged.
+execute or render the report again. The decoded, transiently rewritten HTML is
+sent as the message's inline `EmailMessage.html_body`. Automatic delivery does
+not add attachments. The original immutable HTML object and linked plot pages
+remain unchanged. Generic `EmailAttachment` values (for example, an image or
+PDF) are supported only when an integrator explicitly supplies them to
+`build_report_email`.
 
 Runbook semantic report and plot anchors in the email copy become dashboard
 links. Configure one deployment-level URL in the worker environment:

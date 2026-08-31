@@ -112,11 +112,12 @@ run. See [Data and snapshots](data.md) and [Operations](operations.md).
 ## Optional email delivery
 
 A profile may request post-publish email delivery with `delivery.email`. The
-worker sends the already-published HTML as a deterministic ZIP after a
-successful report run; delivery is not part of report authoring or artifact
-identity. See [Post-publish email delivery](email-delivery.md) for the profile
-contract and [the integrator guide](email-delivery-integrator-guide.md) for
-provider deployment.
+worker sends the already-published HTML inline in `EmailMessage.html_body`
+after a successful report run and adds no automatic attachments; delivery is
+not part of report authoring or artifact identity. Generic attachments are
+available only when explicitly supplied by an integrator. See [Post-publish
+email delivery](email-delivery.md) for the profile contract and [the
+integrator guide](email-delivery-integrator-guide.md) for provider deployment.
 
 ## Layout links
 

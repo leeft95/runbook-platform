@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import io
 import os
 import re
-import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import escape
@@ -39,8 +37,8 @@ class EmailMessage:
     to: tuple[str, ...]
     cc: tuple[str, ...]
     subject: str
-    text_body: str
-    attachments: tuple[EmailAttachment, ...]
+    html_body: str
+    attachments: tuple[EmailAttachment, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -198,66 +196,31 @@ def rewrite_dashboard_links(
     return html_text
 
 
-def build_report_email_attachment(
-    store: BlobStore,
-    result: ReportResult,
-    *,
-    dashboard_base_url: str | None,
-) -> EmailAttachment:
-    """Package an immutable report HTML copy as a deterministic ZIP."""
-    html_text = store.get(result.html_ref).decode("utf-8")
-    emailed_html = rewrite_dashboard_links(
-        html_text,
-        current_report_id=result.report_id,
-        dashboard_base_url=dashboard_base_url,
-    )
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        info = zipfile.ZipInfo("report.html", date_time=(1980, 1, 1, 0, 0, 0))
-        info.compress_type = zipfile.ZIP_DEFLATED
-        info.create_system = 3
-        info.external_attr = 0o600 << 16
-        archive.writestr(info, emailed_html.encode("utf-8"))
-    return EmailAttachment(
-        filename=f"{result.report_id}.zip",
-        content_type="application/zip",
-        content=output.getvalue(),
-    )
-
-
 def build_report_email(
     *,
+    store: BlobStore,
     profile: ReportProfile,
     result: ReportResult,
-    attachment: EmailAttachment,
     dashboard_base_url: str | None = None,
+    attachments: tuple[EmailAttachment, ...] = (),
 ) -> EmailMessage:
-    """Build the deterministic plain-text message for one published report."""
+    """Build an inline-HTML message for one published report."""
     delivery = profile.delivery
     if delivery is None or delivery.email is None:
         raise EmailDeliveryError("email delivery is not configured")
     email = delivery.email
-    base = reports_base_url(dashboard_base_url)
-    title = profile.title or result.report_id
-    lines = [title, ""]
-    if base is not None:
-        lines.extend(["View report:", _dashboard_href(base, ("reports", result.report_id)), ""])
-    else:
-        lines.extend([f"Report ID: {result.report_id}", ""])
-    lines.extend(
-        [
-            f"Snapshot: {result.snapshot_id}",
-            f"Artifact: {result.artifact_id}",
-            "",
-            "The generated HTML report is attached.",
-        ]
+    html_body = rewrite_dashboard_links(
+        store.get(result.html_ref).decode("utf-8"),
+        current_report_id=result.report_id,
+        dashboard_base_url=dashboard_base_url,
     )
+    title = profile.title or result.report_id
     return EmailMessage(
         to=email.to,
         cc=email.cc,
         subject=email.subject or title,
-        text_body="\n".join(lines),
-        attachments=(attachment,),
+        html_body=html_body,
+        attachments=attachments,
     )
 
 
@@ -300,8 +263,7 @@ def attempt_report_email_delivery(
     started = datetime.now(timezone.utc)
     try:
         base = reports_base_url(dashboard_base_url) if dashboard_base_url is not None else reports_base_url()
-        attachment = build_report_email_attachment(store, result, dashboard_base_url=base)
-        message = build_report_email(profile=profile, result=result, attachment=attachment, dashboard_base_url=base)
+        message = build_report_email(store=store, profile=profile, result=result, dashboard_base_url=base)
         sender = load_email_sender(provider)
         receipt = sender.send(message)
         message_id = getattr(receipt, "message_id", None)
@@ -347,7 +309,6 @@ __all__ = [
     "EmailSender",
     "attempt_report_email_delivery",
     "build_report_email",
-    "build_report_email_attachment",
     "load_email_sender",
     "reports_base_url",
     "rewrite_dashboard_links",
