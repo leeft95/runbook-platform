@@ -7140,8 +7140,8 @@ packages:
   timestamp: 1786151875428
 - pypi: ./packages/runbook/runbook-core
   name: runbook-core
-  version: 0.3.2
-  sha256: 40408bd179ca29e54aed251c9a9e1d90ffd15c39bda51649ba64e5d9cf9cb240
+  version: 0.3.2.1
+  sha256: 5d0e86a38af3776d7761172b933b11a4799274a910a4291f8a6fddfe49c48991
   requires_dist:
   - pandas
   - numpy
@@ -7158,8 +7158,8 @@ packages:
   requires_python: '>=3.11'
 - pypi: ./packages/runbook/runbook-data
   name: runbook-data
-  version: 0.3.2
-  sha256: 9bdac18cae74ca6accf2c57aa4bd9dcb0c539e3efd6113893782b1a1c51be856
+  version: 0.3.2.1
+  sha256: d86f89f0066febbf67b38b067fbff605a69a36d97cfb7115092cf21d7cc3d0c5
   requires_dist:
   - pandas
   - pyarrow
@@ -7173,8 +7173,8 @@ packages:
   requires_python: '>=3.11'
 - pypi: ./packages/runbook/runbook-sdk
   name: runbook-sdk
-  version: 0.3.2
-  sha256: 37936983b708e3991aee928cdc57afc5200f8bdba034b57f1d904672af36ca40
+  version: 0.3.2.1
+  sha256: 307284df67d9d5678f16d8cf540430fcbcc58eb8df6701c9599501ee1376ea34
   requires_dist:
   - pandas
   - pyarrow
@@ -7188,8 +7188,8 @@ packages:
   requires_python: '>=3.11'
 - pypi: ./packages/runbook/runbook-services
   name: runbook-services
-  version: 0.3.2
-  sha256: c6e2a82aba4f46f53c19be5e6f7d46703b7d7d589ded410ec688736666ea1255
+  version: 0.3.2.1
+  sha256: 4b9262c1607b2d95f5e1fb390b990591144605bf1af8068aff421743436b294b
   requires_dist:
   - runbook-core
   - croniter
@@ -7205,8 +7205,8 @@ packages:
   requires_python: '>=3.11'
 - pypi: ./packages/runbook/runbook-worker
   name: runbook-worker
-  version: 0.3.2
-  sha256: 203e4b56e9e24a3161a445b8f2ea713625b2a40ea1a81066eee9c001d83a21ad
+  version: 0.3.2.1
+  sha256: f24c2f450aecf38958177cd50ca4b82c677596db7eb3fa3675fce727696044bf
   requires_dist:
   - runbook-core
   - runbook-data
