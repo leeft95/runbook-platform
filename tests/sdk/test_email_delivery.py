@@ -140,4 +140,107 @@ def test_delivery_failure_is_operational_metadata_only(tmp_path, monkeypatch) ->
     assert delivery["status"] == "failed"
     assert delivery["attempts"] == 1
     assert delivery["error"] == "RuntimeError"
+    assert "reason" not in delivery
     assert "secret" not in str(delivery)
+
+
+def test_successful_top_level_delivery_maps_message_and_attachment(tmp_path, monkeypatch) -> None:
+    store = open_blob_store(f"file:{tmp_path}")
+    result = _result()
+    source = (
+        '<a href="/report/other" data-runbook-link-kind="report" '
+        'data-runbook-report-id="other/report">Other</a>'
+        '<a href="plots/p.html" data-runbook-link-kind="plot" '
+        'data-runbook-plot-name="plot/name">Plot</a>'
+        '<a href="https://example.test/x" data-runbook-link-kind="url">External</a>'
+    )
+    store.put_immutable(result.html_ref, source.encode())
+    profile = ReportProfile(
+        profile_id="profile",
+        report_id="daily",
+        title="Daily report",
+        datasets={"data": "data"},
+        delivery={
+            "email": {
+                "provider": "company",
+                "to": ["research@example.test"],
+                "cc": ["desk@example.test"],
+                "subject": "Daily report",
+            }
+        },
+    )
+    sent: list = []
+
+    class Sender:
+        def send(self, message):
+            sent.append(message)
+            return EmailSendReceipt(message_id="message-123")
+
+    monkeypatch.setattr("runbook.sdk.delivery.email.load_email_sender", lambda _provider: Sender())
+    delivery = attempt_report_email_delivery(
+        store=store,
+        profile=profile,
+        result=result,
+        dashboard_base_url="https://reports.example.test",
+    )
+
+    assert delivery is not None
+    assert delivery["status"] == "sent"
+    assert delivery["provider"] == "company"
+    assert delivery["attempts"] == 1
+    assert delivery["message_id"] == "message-123"
+    assert "error" not in delivery
+    assert "reason" not in delivery
+    assert len(sent) == 1
+    message = sent[0]
+    assert message.to == ("research@example.test",)
+    assert message.cc == ("desk@example.test",)
+    assert message.subject == "Daily report"
+    assert message.text_body == (
+        "Daily report\n\n"
+        "View report:\n"
+        "https://reports.example.test/reports/daily%2Freport\n\n"
+        "Snapshot: snapshot\n"
+        "Artifact: artifact\n\n"
+        "The generated HTML report is attached."
+    )
+    assert len(message.attachments) == 1
+    attachment = message.attachments[0]
+    assert attachment.filename == "daily/report.zip"
+    assert attachment.content_type == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(attachment.content)) as archive:
+        assert archive.namelist() == ["report.html"]
+        emailed_html = archive.read("report.html").decode()
+    assert 'href="https://reports.example.test/reports/other%2Freport"' in emailed_html
+    assert 'href="https://reports.example.test/reports/daily%2Freport/plots/plot%2Fname"' in emailed_html
+    assert 'href="https://example.test/x"' in emailed_html
+
+
+def test_missing_dashboard_base_records_safe_reason_without_sender_discovery(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("RUNBOOK_REPORTS_BASE_URL", raising=False)
+    store = open_blob_store(f"file:{tmp_path}")
+    result = _result()
+    store.put_immutable(
+        result.html_ref,
+        b'<a href="/report/other" data-runbook-link-kind="report" data-runbook-report-id="other">Other</a>',
+    )
+    profile = ReportProfile(
+        profile_id="profile",
+        report_id="daily",
+        datasets={"data": "data"},
+        delivery={"email": {"provider": "company", "to": ["person@example.test"]}},
+    )
+    discovered: list[str] = []
+
+    def discover(provider: str):
+        discovered.append(provider)
+        raise AssertionError("sender discovery should not occur")
+
+    monkeypatch.setattr("runbook.sdk.delivery.email.load_email_sender", discover)
+    delivery = attempt_report_email_delivery(store=store, profile=profile, result=result)
+
+    assert delivery is not None
+    assert delivery["status"] == "failed"
+    assert delivery["error"] == "EmailDeliveryError"
+    assert delivery["reason"] == "dashboard_base_url_required"
+    assert discovered == []

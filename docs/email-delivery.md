@@ -76,7 +76,9 @@ The run remains `success` when email fails. Operational metadata is stored in
 `Run.result.delivery.email`: status, provider, attempt count, timestamp,
 optional provider message ID, and sanitized exception type. Recipients,
 message content, attachment bytes, credentials, and raw provider exceptions
-are not persisted or logged.
+are not persisted or logged. Allow-listed machine-readable failures may also
+include `delivery.email.reason`; currently the only value is
+`dashboard_base_url_required`.
 
 Retry a failed delivery from its existing successful run:
 

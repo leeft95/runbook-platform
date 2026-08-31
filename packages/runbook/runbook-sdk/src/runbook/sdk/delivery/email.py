@@ -20,6 +20,7 @@ from runbook.sdk.execution import ReportResult
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _ANCHOR_RE = re.compile(r"<a\b(?P<attrs>[^>]*?)>", re.IGNORECASE | re.DOTALL)
 _ATTR_RE = re.compile(r"""(?P<name>[^\s=/>]+)\s*=\s*(?P<quote>["'])(?P<value>.*?)\2""", re.DOTALL)
+_SAFE_DELIVERY_REASONS = {"dashboard_base_url_required"}
 
 
 class EmailDeliveryError(ValueError):
@@ -273,6 +274,14 @@ def _previous_attempts(previous: dict[str, Any] | None) -> int:
     return value if isinstance(value, int) and value >= 0 else 0
 
 
+def _safe_delivery_reason(exc: Exception) -> str | None:
+    """Return only explicitly allow-listed public delivery reason codes."""
+    if not isinstance(exc, EmailDeliveryError):
+        return None
+    value = str(exc)
+    return value if value in _SAFE_DELIVERY_REASONS else None
+
+
 def attempt_report_email_delivery(
     *,
     store: BlobStore,
@@ -291,9 +300,9 @@ def attempt_report_email_delivery(
     started = datetime.now(timezone.utc)
     try:
         base = reports_base_url(dashboard_base_url) if dashboard_base_url is not None else reports_base_url()
-        sender = load_email_sender(provider)
         attachment = build_report_email_attachment(store, result, dashboard_base_url=base)
         message = build_report_email(profile=profile, result=result, attachment=attachment, dashboard_base_url=base)
+        sender = load_email_sender(provider)
         receipt = sender.send(message)
         message_id = getattr(receipt, "message_id", None)
         outcome: dict[str, Any] = {
@@ -317,13 +326,17 @@ def attempt_report_email_delivery(
             type(exc).__name__,
             int((datetime.now(timezone.utc) - started).total_seconds() * 1000),
         )
-        return {
+        failure_outcome: dict[str, Any] = {
             "status": "failed",
             "provider": provider,
             "attempts": attempts,
             "attempted_at": attempted_at,
             "error": type(exc).__name__,
         }
+        reason = _safe_delivery_reason(exc)
+        if reason is not None:
+            failure_outcome["reason"] = reason
+        return failure_outcome
 
 
 __all__ = [
