@@ -27,6 +27,7 @@ claim a row before the service commits its worker ID.
 - `packages/runbook/runbook-services/src/runbook/services/worker_backends/local_process.py`
 - `packages/runbook/runbook-services/src/runbook/services/runner.py::_dispatch`
 - `tests/services/test_worker_boundary.py`
+- [Post-publish email delivery](../../email-delivery.md)
 
 ## Data/control flow
 
@@ -51,6 +52,9 @@ claim is `local:<pid>`; `wait_for_claim` rejects terminal/cancelled rows. Source
 normal runs publish pointer updates guarded by expected source-run IDs;
 historical runs skip production publication. Report runs validate pinned
 snapshot payload and code/config identity before `execute_report`.
+After a report result is published, an optional configured email sender consumes
+the existing HTML artifact. Delivery failure is recorded separately while the
+report remains successful; `--deliver-run-id` retries only that metadata path.
 
 If a worker exits without a terminal outcome, the owning runner records a
 failure; if ownership is lost after restart, the new runner reconciles the row

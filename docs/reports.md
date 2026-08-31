@@ -109,6 +109,15 @@ Preview resolves and pins the latest pointers but does not advance them. The
 service pins the same kind of immutable snapshot before dispatching a report
 run. See [Data and snapshots](data.md) and [Operations](operations.md).
 
+## Optional email delivery
+
+A profile may request post-publish email delivery with `delivery.email`. The
+worker sends the already-published HTML as a deterministic ZIP after a
+successful report run; delivery is not part of report authoring or artifact
+identity. See [Post-publish email delivery](email-delivery.md) for the profile
+contract and [the integrator guide](email-delivery-integrator-guide.md) for
+provider deployment.
+
 ## Layout links
 
 Use [Composable report layouts](composable-report-layouts.md) for grids,

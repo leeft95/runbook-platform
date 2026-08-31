@@ -113,9 +113,13 @@ scheduler must execute a particular durable run row:
 runbook-worker --run-id RUN_ID
 ```
 
-It accepts only the required `--run-id`. The worker reads its pinned config and
+The normal execution form accepts `--run-id`. The worker reads its pinned config and
 snapshot from PostgreSQL and gets `RUNBOOK_DATABASE_URL`,
 `RUNBOOK_DATA_STORE_URI`, and `RUNBOOK_REPORTS_ROOT` from its environment.
+
+To retry email delivery from an existing successful profile run without
+rerunning report generation, use `--deliver-run-id RUN_ID`. Add `--force` only
+for an intentional resend. See [post-publish email delivery](email-delivery.md).
 
 ## Environment defaults
 
@@ -124,6 +128,7 @@ RUNBOOK_DATABASE_URL    PostgreSQL control plane
 RUNBOOK_DATA_STORE_URI  file:.runbook unless overridden
 RUNBOOK_REPORTS_ROOT    reports unless overridden
 RUNBOOK_CODE_VERSION    required for report identity when Git metadata is absent
+RUNBOOK_REPORTS_BASE_URL deployment-level dashboard host for email links
 ```
 
 `file:` and `s3://` are the supported store forms. See [Deployment](deployment.md)

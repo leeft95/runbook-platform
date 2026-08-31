@@ -33,6 +33,8 @@ plotting-helpers
 table-templates
 data
 operations
+email-delivery
+email-delivery-integrator-guide
 pdl-interactive
 ```
 

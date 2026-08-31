@@ -29,6 +29,7 @@ IDs, callback semantics, host routing, authentication, or Operations branding.
 - `packages/runbook/runbook-data/src/runbook/data/ingest/discovery.py`
 - `packages/runbook/runbook-sdk/src/runbook/sdk/extensions/dash/renderer_extensions.py`
 - `docs/source-adapters-and-curation.md`, `docs/dash-renderer-extensions.md`
+- [Email delivery integrator guide](../../email-delivery-integrator-guide.md)
 
 ## Data/control flow
 
@@ -67,6 +68,8 @@ point, and test fresh-process discovery. For a parser, preserve source-blind
 deterministic output and partition/merge requirements. For report presentation,
 use `DashRendererExtension`; do not fork the renderer or add private fields to
 PDL. For Operations UI branding, use `OperationsBrand` in services instead.
+For email delivery, implement a private sender package and register the
+`runbook.email_senders` entry point; transport settings remain deployment-owned.
 
 ## Consumers
 
@@ -90,4 +93,3 @@ page and own routes/assets.
   Stage 2.
 - Shadowing built-in entry-point names.
 - Adding vendor routes, credentials, or private components to PDL.
-
