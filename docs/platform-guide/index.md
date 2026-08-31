@@ -50,6 +50,7 @@ and [table templates](../table-templates.md).
 01-system-map
 02-runtime-flows
 03-change-map
+03a-pdl-parameter-walkthrough
 04-contracts-and-boundaries
 05-testing-and-validation
 06-debugging-playbook

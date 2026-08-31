@@ -12,7 +12,7 @@ follow every consumer before changing a shared contract.
 | Dash report output | `sdk/extensions/dash/renderer.py` | PDL → controls/callbacks → native table or AG Grid → route resolver | PDL interaction/extension semantics; `DashRendererExtension` | `tests/sdk/test_pdl_interactive.py`, `tests/sdk/test_dash_renderer_extensions.py`, `tests/sdk/test_dash_navigation.py` |
 | Source acquisition | `worker/execution.py::_source`, `data/ingest/runner.py::run_stage1_acquire`, adapter contracts | adapter discovery → Stage 1 → raw artifact → Stage 2 parser | `SourceAdapter` / historical capability | `tests/data/test_generic_ingest.py`, `tests/data/test_historical_source_jobs.py` |
 | Curation and manifests | `data/ingest/runners/stage2.py`, `data/manifests.py` | immutable files → manifest → worker result → `services/pointers.py` → production snapshot | dataset manifest and service-owned pointer/snapshot contract; `data/pointers.py` only for standalone ingestion/client flows | `tests/data/test_pointers.py`, `tests/data/test_generic_ingest.py`, `tests/sdk/test_client_workspace.py`, `tests/services/test_staggered_settlement.py` |
-| Run lifecycle/cancellation | `services/repository.py`, `services/runner.py` | durable row → local backend → worker → reconciliation | `Run`, `RunView`, `ExecutionBackend` | `tests/services/test_service_lifecycle.py`, `test_cancellation.py`, `test_addressable_runs.py` |
+| Run lifecycle/cancellation | `services/repository.py`, `services/runner.py` | durable row → local backend → worker → reconciliation | `Run`, `RunView`, `ExecutionBackend` | `tests/services/test_service_lifecycle.py`, `test_cancellation.py`, `tests/services/test_addressable_runs.py` |
 | Downstream profile release | `services/runner.py::_release_dependencies` | producer success → provenance/barrier → pinned profile snapshot → worker | producer run identity and `dependencies_released_at` | `tests/services/test_staggered_settlement.py`, `tests/services/test_service_lifecycle.py`, `tests/postgres/test_phaseb_e2e.py` |
 | Worker execution | `worker/execution.py` | committed claim → config validation → `_source` or `_report` → guarded terminal write | ownership and `finish_owned` | `tests/services/test_worker_boundary.py`, `test_worker_execution.py`, `tests/services/test_addressable_runs.py` |
 | Adapter/parser extension | `data/ingest/discovery.py`, adapter/parser registries | entry point → signature validation → runtime composition | `runbook.adapters`, `runbook.parsers`, `Stage2Parser` | `tests/data/test_phasee_external_plugins.py`, `tests/postgres/test_phasee_external_plugins.py` |
@@ -68,3 +68,8 @@ publishes a production pointer or releases downstream reports.
 Trace declarative PDL extension semantics → public callback/runtime handling →
 `DashRendererExtension` → private host presentation. Operations UI branding
 (`OperationsBrand`) is a services seam, not a report renderer seam.
+
+> **Worked example:** follow the [PDL parameter walkthrough](03a-pdl-parameter-walkthrough.md)
+> for a junior-executable, repository-backed change journey through
+> `table(width=...)`, from artifact registration to persisted PDL, HTML, Dash,
+> AG Grid fallback, tests, and a golden report.
