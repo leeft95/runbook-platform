@@ -38,6 +38,7 @@ class ReportResult(BaseModel):
     html_ref: str
     stage3_ref: str
     stage4_ref: str
+    linked_html_refs: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     cache_hits: dict[str, bool] = Field(default_factory=dict)
 
 
@@ -257,8 +258,11 @@ def execute_report(
     logger.info("stage=4 render report={} prefix={}", profile.report_id, prefix)
     rendered_html = render_html_bundle(store, stage4_manifest, prefix, payloads.plot_jsons)
     store.put_immutable(html_ref, rendered_html.main.encode("utf-8"))
+    linked_html_refs: list[str] = []
     for name, page in sorted(rendered_html.linked_pages.items()):
-        store.put_immutable(f"{prefix}/plots/{name}.html", page.encode("utf-8"))
+        linked_ref = f"{prefix}/plots/{name}.html"
+        store.put_immutable(linked_ref, page.encode("utf-8"))
+        linked_html_refs.append(linked_ref)
     stage4_ref = f"{prefix}/manifest.stage4.json"
     store.put_immutable(
         stage4_ref,
@@ -284,5 +288,6 @@ def execute_report(
         html_ref=html_ref,
         stage3_ref=stage3_ref,
         stage4_ref=stage4_ref,
+        linked_html_refs=tuple(linked_html_refs),
         cache_hits=dict(ctx.cache_hits),
     )

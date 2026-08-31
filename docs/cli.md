@@ -14,6 +14,8 @@ latest dataset pointers, pins a snapshot, and writes static HTML:
 runbook-preview PROFILE_ID --output preview/report.html
 ```
 
+Linked plot pages, when present, are exported beside it under `plots/`.
+
 Options:
 
 ```text
@@ -22,7 +24,7 @@ Options:
 --store URI           file: or s3:// data store
 --database URL        PostgreSQL pointer registry
 --code-version VALUE  recorded code identity (or RUNBOOK_CODE_VERSION)
---output PATH         copy generated HTML locally
+--output PATH         copy generated HTML bundle locally
 --log-level LEVEL     DEBUG, INFO, WARNING, or ERROR
 ```
 
@@ -38,7 +40,9 @@ runbook-preview interactive pnl_explorer_demo --demo-live \
 ```
 
 `interactive` additionally accepts `--host`, `--port`, and `--demo-live`.
-It serves a temporary host-owned Dash app on loopback; it is not the
+It serves the current report and its linked plot pages in a temporary
+host-owned Dash app on loopback. Cross-report navigation requires a reporting
+host or portal; single-report preview does not support it. This is not the
 Operations service and has no production authentication or durable interactive
 state.
 

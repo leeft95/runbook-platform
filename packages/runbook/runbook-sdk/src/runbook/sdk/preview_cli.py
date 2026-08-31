@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote
 
 from runbook.core.keying import build_context_hash
 from runbook.core.pdl.models import PDLManifest
@@ -18,6 +19,43 @@ from runbook.sdk.live import LiveDataResolver
 from runbook.sdk.live_sqlite import build_demo_live_provider
 from runbook.sdk.logging import configure_logging
 from runbook.sdk.profiles import ReportProfile, load_profiles, resolve_report_path
+
+_PREVIEW_LOCATION_ID = "runbook-preview-location"
+_PREVIEW_CONTENT_ID = "runbook-preview-content"
+
+
+def _preview_route_resolver(kind: str, value: str) -> str | None:
+    """Resolve only plot links for the local preview host."""
+    from runbook.core.table import TableLinkKind
+
+    if kind != TableLinkKind.plot.value or any(part in {".", ".."} for part in value.split("/")):
+        return None
+    encoded = "/".join(quote(part, safe="") for part in value.split("/"))
+    return f"/plot/{encoded}"
+
+
+def _preview_layout(page: DashPage, pathname: str | None) -> Any:
+    """Resolve the local preview host route to a page layout."""
+    from dash import html
+
+    if pathname in {None, "", "/"}:
+        return page.layout()
+    if pathname.startswith("/plot/"):
+        return page.plot_layout(unquote(pathname[len("/plot/") :]))
+    return html.Div(f"Unable to resolve preview route {pathname!r}.", role="alert")
+
+
+def _export_html_bundle(store: Any, result: ReportResult, output: Path) -> None:
+    """Copy a report's main and linked HTML artifacts to a local bundle."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(store.get(result.html_ref))
+    prefix = f"{result.prefix.rstrip('/')}/"
+    for linked_ref in result.linked_html_refs:
+        if not linked_ref.startswith(prefix):
+            raise ValueError(f"linked HTML ref is outside report prefix: {linked_ref!r}")
+        linked_output = output.parent / linked_ref[len(prefix) :]
+        linked_output.parent.mkdir(parents=True, exist_ok=True)
+        linked_output.write_bytes(store.get(linked_ref))
 
 
 def compose_dash_app(
@@ -65,8 +103,27 @@ def compose_dash_app(
     )
     from dash import Dash
 
-    app = Dash(__name__ + "_interactive_preview", use_pages=False)
-    app.layout = page.layout()
+    app = Dash(
+        __name__ + "_interactive_preview",
+        use_pages=False,
+        suppress_callback_exceptions=route_resolver is not None,
+    )
+    if route_resolver is None:
+        app.layout = page.layout()
+    else:
+        from dash import Input, Output, dcc, html
+
+        app.layout = html.Div(
+            [
+                dcc.Location(id=_PREVIEW_LOCATION_ID, refresh=False),
+                html.Div(page.layout(), id=_PREVIEW_CONTENT_ID),
+            ]
+        )
+
+        @app.callback(Output(_PREVIEW_CONTENT_ID, "children"), Input(_PREVIEW_LOCATION_ID, "pathname"))
+        def resolve_preview_route(pathname: str | None) -> Any:
+            return _preview_layout(page, pathname)
+
     page.register_callbacks(app)
     return app, result, page
 
@@ -125,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
                 reports_root=args.reports_root,
                 code_version=resolve_code_version(args.code_version),
                 live=live,
+                route_resolver=_preview_route_resolver,
             )
             _serve_interactive_app(app, live=live, host=args.host, port=args.port)
         finally:
@@ -139,8 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         reports_root=args.reports_root,
     )
     if args.output is not None:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_bytes(store.get(result.html_ref))
+        _export_html_bundle(store, result, args.output)
     print(json.dumps(result.model_dump(mode="json"), sort_keys=True, separators=(",", ":")))
     return 0
 
