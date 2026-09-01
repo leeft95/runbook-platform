@@ -19,7 +19,7 @@ from runbook.core.keying import build_context_hash
 from runbook.core.pdl.models import PDLArtifacts, PDLManifest, PDLSourceType, PDLStyle
 from runbook.core.utils.hashing import sha256_json
 from runbook.sdk.context import Ctx
-from runbook.sdk.discovery import discover_report_definition
+from runbook.sdk.discovery import ReportDefinition, discover_report_definition
 from runbook.sdk.html import DEFAULT_GRID_CSS, DEFAULT_GRID_CSS_REF, render_html_bundle
 from runbook.sdk.layout import Report, compile_layout
 from runbook.sdk.live import LiveDataResolver
@@ -144,6 +144,7 @@ def execute_report(
     generated_at: datetime | None = None,
     platform_version: str | None = None,
     live: LiveDataResolver | None = None,
+    _definition: ReportDefinition | None = None,
 ) -> ReportResult:
     """Execute a report's Stage 3 manifest and Stage 4 HTML publication."""
     logger.info(
@@ -163,8 +164,11 @@ def execute_report(
             "context_hash": context_hash,
         }
     )
-    module = load_report_module(resolve_report_path(profile.report_id, reports_root))
-    definition = discover_report_definition(module)
+    if _definition is None:
+        module = load_report_module(resolve_report_path(profile.report_id, reports_root))
+        definition = discover_report_definition(module)
+    else:
+        definition = _definition
     aliases = sorted(profile.datasets)
     if aliases != definition.aliases:
         raise ValueError(f"report aliases do not match profile: required={definition.aliases}, configured={aliases}")

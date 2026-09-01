@@ -26,6 +26,7 @@ from runbook.sdk.live_sqlite import (
     build_demo_live_provider,
 )
 from runbook.sdk.profiles import ReportProfile, load_profiles
+from runbook.sdk.prototype import prototype_report, snapshot_from_frames
 from runbook.sdk.table_style import link_column, link_column_header, link_header, link_index_header
 from runbook.sdk.ui import (
     column,
@@ -51,6 +52,8 @@ __all__ = [
     "ScheduleSpec",
     "SourceConfig",
     "ReportResult",
+    "prototype_report",
+    "snapshot_from_frames",
     "EmailAttachment",
     "EmailDeliveryError",
     "EmailMessage",

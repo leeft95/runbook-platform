@@ -52,6 +52,43 @@ pixi install
 pixi run python -c "from runbook.sdk import RunbookClient; print(RunbookClient)"
 ```
 
+## Prototype a report directly from DataFrames
+
+For a quick report iteration, pass ordinary pandas frames keyed by the report
+aliases. The checked-in volatility report can run without PostgreSQL,
+filesystem setup, S3, MinIO, or any other object-storage service:
+
+```python
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pandas as pd
+from runbook.sdk import load_profiles, prototype_report
+
+
+profile = load_profiles(Path("data/contract/report_profiles.json"))["volatility_demo"]
+prices = pd.read_csv("data/fixtures/daily_prices.csv")
+result = prototype_report(
+    profile=profile,
+    frames={"prices": prices},
+    observed_at=datetime.now(timezone.utc),
+)
+print(result.html_ref)
+```
+
+Prototype mode freezes each frame into immutable in-memory Runbook dataset
+payloads and manifests before executing the real report. Report code remains
+transparent to the source: `ctx.dataset(alias)` reads the same snapshot-bound
+data it would read in production. The intended progression is to acquire and
+clean data in a notebook first, then add a SourceAdapter/parser later if the
+prototype should move into the production ingestion path; the report itself
+can remain unchanged.
+
+Notebook-defined decorated calculations and `page(ctx)` are also supported;
+move the same `ALIASES` and functions into a report module unchanged when
+ready for production publication. For a runnable authoring flow, see
+`notebooks/prototype_report.ipynb`.
+
 ## Construct a client and load profiles
 
 The client accepts explicit values, so notebook setup is visible and easy to

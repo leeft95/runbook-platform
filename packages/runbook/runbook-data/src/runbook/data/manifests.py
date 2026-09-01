@@ -144,6 +144,43 @@ def write_manifests(store: BlobStore, manifests: Iterable[tuple[DatasetManifest,
     }
 
 
+def build_snapshot(
+    datasets: Mapping[str, str],
+    *,
+    watermark: datetime,
+    as_of: datetime | None = None,
+    producer_provenance: Iterable[SnapshotProducer] = (),
+    warnings: Iterable[str] = (),
+    provenance: Iterable[SnapshotProducer] | None = None,
+) -> Snapshot:
+    """Build a canonical immutable snapshot from selected manifest references."""
+    if provenance is not None:
+        producer_provenance = provenance
+    normalized_provenance = tuple(sorted(producer_provenance, key=lambda item: (item.producer_id, item.source_run_id)))
+    normalized_warnings = tuple(sorted({str(item) for item in warnings}))
+    normalized_watermark = _utc(watermark)
+    normalized_as_of = _utc(as_of) if as_of is not None else None
+    selected = {alias: datasets[alias] for alias in sorted(datasets)}
+    payload: dict[str, Any] = {
+        "schema_version": "snapshot/1",
+        "watermark": normalized_watermark.isoformat(),
+        "as_of": normalized_as_of.isoformat() if normalized_as_of is not None else None,
+        "datasets": selected,
+    }
+    if normalized_provenance:
+        payload["producer_provenance"] = [item.model_dump(mode="json") for item in normalized_provenance]
+    if normalized_warnings:
+        payload["warnings"] = list(normalized_warnings)
+    return Snapshot(
+        snapshot_id=sha256_json(payload),
+        watermark=normalized_watermark,
+        as_of=normalized_as_of,
+        datasets=selected,
+        producer_provenance=normalized_provenance,
+        warnings=normalized_warnings,
+    )
+
+
 def publish_manifests(
     store: BlobStore,
     manifests: Iterable[tuple[DatasetManifest, str]],
@@ -207,26 +244,12 @@ def resolve_snapshot(
     watermark = min((manifest.watermark for manifest in manifests), default=datetime(1970, 1, 1, tzinfo=timezone.utc))
     if provenance is not None:
         producer_provenance = provenance
-    normalized_provenance = tuple(sorted(producer_provenance, key=lambda item: (item.producer_id, item.source_run_id)))
-    normalized_warnings = tuple(sorted({str(item) for item in warnings}))
-    payload: dict[str, Any] = {
-        "schema_version": "snapshot/1",
-        "watermark": _utc(watermark).isoformat(),
-        "as_of": _utc(as_of).isoformat() if as_of is not None else None,
-        "datasets": selected,
-    }
-    if normalized_provenance:
-        payload["producer_provenance"] = [item.model_dump(mode="json") for item in normalized_provenance]
-    if normalized_warnings:
-        payload["warnings"] = list(normalized_warnings)
-    normalized_as_of = _utc(as_of) if as_of is not None else None
-    return Snapshot(
-        snapshot_id=sha256_json(payload),
+    return build_snapshot(
+        selected,
         watermark=watermark,
-        as_of=normalized_as_of,
-        datasets=selected,
-        producer_provenance=normalized_provenance,
-        warnings=normalized_warnings,
+        as_of=as_of,
+        producer_provenance=producer_provenance,
+        warnings=warnings,
     )
 
 
