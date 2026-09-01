@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import io
 import json
 import re
@@ -85,15 +86,21 @@ class Ctx:
     def _cache_prefix(self, name: str) -> str:
         """Handle cache prefix."""
         safe = validate_artifact_name(name)
+        snapshot_id = str(self.snapshot.snapshot_id)
+        context_hash = str(self.context_hash)
         for label, value in (
             ("report_id", self.report_id),
-            ("snapshot_id", self.snapshot.snapshot_id),
+            ("snapshot_id", snapshot_id),
             ("code_version", self.code_version),
-            ("context_hash", self.context_hash),
+            ("context_hash", context_hash),
         ):
-            if not _SEGMENT_RE.fullmatch(str(value)):
+            if not _SEGMENT_RE.fullmatch(value):
                 raise ValueError(f"invalid {label} path segment: {value!r}")
-        return f"cache/{self.report_id}/{self.snapshot.snapshot_id}/{self.code_version}/{self.context_hash}/calc={safe}"
+        cache_key = hashlib.blake2s(
+            json.dumps((snapshot_id, str(self.code_version), context_hash), separators=(",", ":")).encode(),
+            digest_size=16,
+        ).hexdigest()
+        return f"cache/{self.report_id}/{cache_key}/calc={safe}"
 
     def _write_table(self, name: str, frame: pd.DataFrame) -> None:
         """Persist one immutable parquet table artifact under the report prefix."""

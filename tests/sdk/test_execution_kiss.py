@@ -62,6 +62,10 @@ def test_report_execution_is_shared_and_cache_is_type_stable(tmp_path, pointer_r
     assert store.get_json(f"{cold.prefix}/identity.json")["artifact_id"] == cold.artifact_id
     assert cold.cache_hits == {"returns": False, "vol": False}
     assert warm.cache_hits == {"returns": True, "vol": True}
+    cache_files = list(tmp_path.joinpath("cache").rglob("*.meta.json"))
+    assert cache_files
+    assert all(len(path.relative_to(tmp_path).as_posix()) < 140 for path in cache_files)
+    assert len(cache_files[0].relative_to(tmp_path).parts[2]) == 32
     assert store.get(cold.stage3_ref) == store.get(warm.stage3_ref)
     assert store.get_json(cold.stage3_ref)["style"] is None
     stage4 = store.get_json(cold.stage4_ref)
