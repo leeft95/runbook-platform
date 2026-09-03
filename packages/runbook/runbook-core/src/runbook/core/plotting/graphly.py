@@ -309,6 +309,7 @@ class GraphlyPlotter:
                 autorange="reversed" if plot_def.reversed_y else True,
                 row=row,
                 col=col,
+                secondary_y=plot_def.secondary_y
             )
 
         showlegend = any(p.show_legend for p in fig_def.plots)
