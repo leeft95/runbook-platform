@@ -36,7 +36,7 @@ links.
 
 The helper expects a DataFrame indexed by dates. Its default 20-observation
 moving average needs enough rows for the input series; pass
-`moving_averge_window=None` when that companion smoothing is not wanted. The
+`moving_average_window=None` when that companion smoothing is not wanted. The
 helper output is not yet a Runbook artifact: store each part explicitly, then
 place the references in a layout.
 
@@ -77,14 +77,14 @@ from runbook.core.timeseries.analysis import MovingAvgModes
 table_with_linked_plots_monthly(
     raw_df,
     header,
-    moving_averge_window=20,
+    moving_average_window=20,
     moving_average_type=MovingAvgModes.SIMPLE,
     aggregation_type=None,
     columns_filter=None,
     aggregation_columns=None,
     highlighting_rules=None,
     benchmark_month=None,
-    benchmark_quater=None,
+    benchmark_quarter=None,
     fill_na=None,
     na_rep="-",
     column_plot_links=True,
@@ -92,8 +92,7 @@ table_with_linked_plots_monthly(
 )
 ```
 
-The spellings `moving_averge_window` and `benchmark_quater` are the current
-public parameter names. Use keyword arguments so the code remains readable.
+Use keyword arguments so the code remains readable.
 The template returns a serializable style payload; `ctx.artifact.table` turns
 it into the immutable table data/style/HTML artifacts consumed by renderers.
 

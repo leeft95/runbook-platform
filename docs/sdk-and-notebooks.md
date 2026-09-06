@@ -233,7 +233,7 @@ returns_figure.show()
 
 The checked-in `demo_pnl_explorer` shape can also feed the monthly table
 helper. Its fixture has only twelve rows, so use the supported
-`moving_averge_window=None` value rather than asking for a 20-day window that
+`moving_average_window=None` value rather than asking for a 20-day window that
 the small fixture cannot satisfy:
 
 ```python
@@ -254,10 +254,10 @@ book_series = pnl.pivot_table(
 monthly = table_with_linked_plots_monthly(
     raw_df=book_series,
     header="Book",
-    moving_averge_window=None,
+    moving_average_window=None,
     aggregation_type=AggregationModes.DIFF,
     highlighting_rules={"window": 5},
-    benchmark_quater=None,
+    benchmark_quarter=None,
     na_rep="-",
 )["Book"]
 

@@ -322,12 +322,12 @@ def page(ctx):
     monthly = table_with_linked_plots_monthly(
         raw_df=ctx.calc("commodity_prices"),
         header="Commodity",
-        moving_averge_window=20,
+        moving_average_window=20,
         moving_average_type=MovingAvgModes.SIMPLE,
         aggregation_type=AggregationModes.DIFF,
         aggregation_columns={"Brent": AggregationModes.MA, "WTI": AggregationModes.SUM},
         highlighting_rules={"window": 5},
-        benchmark_quater=None,
+        benchmark_quarter=None,
         na_rep="-",
     )["Commodity"]
     table_ref = ctx.artifact.table(
@@ -353,10 +353,7 @@ The result is keyed by the `header` (`"Commodity"`). Its `data` is the
 display DataFrame, `style` is a serializable style plan, and `plots` contains
 one Plotly figure per input column. `ctx.artifact.table` and
 `ctx.artifact.plot` make those values immutable report artifacts; the layout
-only positions their references. The public spelling `moving_averge_window`
-is intentionally preserved, as is `benchmark_quater` when a quarterly
-benchmark is needed. See [Table templates](table-templates.md) for the full
-parameter list and style/template/layout distinction.
+only positions their references.
 
 ## Lower-level PDL builders
 

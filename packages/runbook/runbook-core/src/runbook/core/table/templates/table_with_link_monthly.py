@@ -171,7 +171,7 @@ def _build_monthly_table(
     aggregation_columns: dict[str, AggregationModes] | None,
     highlighting_rules: dict[str, tp.Any] | None,
     benchmark_month: tp.Any,
-    benchmark_quater: tp.Any,
+    benchmark_quarter: tp.Any,
 ) -> tuple[pd.DataFrame, AggregationModes | None, dict[str, AggregationModes | None]]:
     """Build monthly table."""
     default_agg_type = _parse_aggregation_mode(aggregation_type)
@@ -257,8 +257,8 @@ def _build_monthly_table(
                 ],
                 axis=1,
             )
-        elif benchmark_quater is not None:
-            benchmark_month_ts = tp.cast(pd.Timestamp, pd.Timestamp(benchmark_quater))
+        elif benchmark_quarter is not None:
+            benchmark_month_ts = tp.cast(pd.Timestamp, pd.Timestamp(benchmark_quarter))
             benchmark_months = [
                 _month_end(benchmark_month_ts),
                 _month_end(benchmark_month_ts + pd.DateOffset(months=1)),
@@ -268,7 +268,7 @@ def _build_monthly_table(
                 pd.Series,
                 window_change_last1.iloc[:, 0] - monthly.loc[benchmark_months, :].mean(),
             )
-            benchmark_month_df = _as_single_column_df(benchmark_month_delta, f"20dMA vs {benchmark_quater}")
+            benchmark_month_df = _as_single_column_df(benchmark_month_delta, f"20dMA vs {benchmark_quarter}")
             table_df = pd.concat(
                 [
                     window_change_last,
@@ -377,14 +377,14 @@ def _build_monthly_style(
 def table_with_linked_plots_monthly(
     raw_df: pd.DataFrame,
     header: str,
-    moving_averge_window: int | None = 20,
+    moving_average_window: int | None = 20,
     moving_average_type: MovingAvgModes = MovingAvgModes.SIMPLE,
     aggregation_type: AggregationModes | str | None = None,
     columns_filter: list[str] | None = None,
     aggregation_columns: dict[str, AggregationModes] | None = None,
     highlighting_rules: dict[str, tp.Any] | None = None,
     benchmark_month: tp.Any = None,
-    benchmark_quater: tp.Any = None,
+    benchmark_quarter: tp.Any = None,
     fill_na: str | None = None,
     na_rep: str | None = "-",
     column_plot_links: bool | list[str] = False,
@@ -403,7 +403,7 @@ def table_with_linked_plots_monthly(
 
     seasonal_plots = _seasonal_plots_for_columns(
         raw_df,
-        moving_average_window=moving_averge_window,
+        moving_average_window=moving_average_window,
         moving_average_type=moving_average_type,
     )
     df = _normalize_input_frame(raw_df, columns_filter=columns_filter, fill_na=fill_na)
@@ -414,7 +414,7 @@ def table_with_linked_plots_monthly(
         aggregation_columns=aggregation_columns,
         highlighting_rules=highlighting_rules,
         benchmark_month=benchmark_month,
-        benchmark_quater=benchmark_quater,
+        benchmark_quarter=benchmark_quarter,
     )
 
     if aggregation_columns is not None:
@@ -432,7 +432,7 @@ def table_with_linked_plots_monthly(
     plot_names: list[str] | None = None
     all_plots_name: str | None = None
     if link_requested:
-        plot_type = "seasonal-mva" if moving_averge_window is not None else "seasonal"
+        plot_type = "seasonal-mva" if moving_average_window is not None else "seasonal"
         plot_names, links, all_plots_name = _build_plot_link_metadata(
             header,
             [(str(col), plot_type) for col in raw_df.columns],

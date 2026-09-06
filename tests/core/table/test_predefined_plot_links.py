@@ -105,6 +105,6 @@ def test_monthly_plot_names_follow_raw_plot_order_and_filtered_headers_are_not_l
 
 def test_monthly_without_moving_average_uses_seasonal_plot_type() -> None:
     output = table_with_linked_plots_monthly(
-        _frame("A"), header="Monthly", moving_averge_window=None, all_plots_link=True
+        _frame("A"), header="Monthly", moving_average_window=None, all_plots_link=True
     )["Monthly"]
     assert output["plot_names"] == ["monthly-a-seasonal"]
