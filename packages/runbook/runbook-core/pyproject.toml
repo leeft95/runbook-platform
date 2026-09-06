@@ -11,7 +11,7 @@ license = "Apache-2.0"
 authors = [{ name = "leeft95" }]
 urls = { Repository = "https://github.com/leeft95/runbook-platform" }
 dependencies = [
-    "pandas", "numpy", "pyarrow", "prophet", "pydantic", "loguru", "statsmodels", "isoweek", "plotly", "scipy", "holidays", "pytz"
+    "pandas", "numpy", "pyarrow", "prophet", "pydantic", "loguru", "statsmodels", "isoweek", "plotly", "scipy", "holidays", "pytz", "blpapi", "blp"
 ]
 
 [tool.setuptools]

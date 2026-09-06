@@ -41,6 +41,7 @@ furo = ">=2024.8"
 sphinxcontrib-mermaid = ">=0.9,<1"
 
 [pypi-dependencies]
+blpapi = { version = "*", index = "https://blpapi.bloomberg.com/repository/releases/python/simple/" }
 dash-mantine-components = ">=2,<3"
 runbook-core = { path = "packages/runbook/runbook-core", editable = true }
 runbook-data = { path = "packages/runbook/runbook-data", editable = true }
