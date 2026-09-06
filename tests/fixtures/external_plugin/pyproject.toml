@@ -2,7 +2,7 @@
 name = "runbook-test-external-plugin"
 version = "0.1.0"
 description = "Installable external adapter and parser fixture for Runbook."
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.13"
 dependencies = ["runbook-data"]
 
 [project.entry-points."runbook.adapters"]

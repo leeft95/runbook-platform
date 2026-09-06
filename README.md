@@ -33,7 +33,7 @@ are linked from the analyst journey.
 
 ## Run the local example
 
-The repository uses Pixi and Python 3.11:
+The repository uses Pixi and Python 3.12:
 
 ```bash
 pixi install

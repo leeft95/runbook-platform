@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "runbook-core"
 version = "0.3.2.1"
 description = "Pure deterministic contracts, analysis, tables, and plots for Runbook."
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
 authors = [{ name = "leeft95" }]
 urls = { Repository = "https://github.com/leeft95/runbook-platform" }

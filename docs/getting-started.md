@@ -150,7 +150,7 @@ For exploratory pandas/Plotly work before committing a report module, see
 
 ## Environment
 
-The repository uses Python 3.11 and Pixi:
+The repository uses Python 3.12 and Pixi:
 
 ```bash
 pixi install

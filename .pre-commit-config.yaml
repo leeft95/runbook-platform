@@ -17,7 +17,7 @@ repos:
         files: \.pyi?$
         exclude: ^(\.gitignore|README\.md|pixi\.lock|data/|var/|\.pixi/|packages/.*/LICENSE)$
         args:
-          - --python-version=3.11
+          - --python-version=3.12
           - --ignore-missing-imports
           - --namespace-packages
           - --explicit-package-bases

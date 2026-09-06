@@ -458,7 +458,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "runbook-orders-adapter"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.13"
 dependencies = ["pandas", "requests", "runbook-data"]
 
 [project.entry-points."runbook.adapters"]
