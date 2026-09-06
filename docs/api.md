@@ -95,6 +95,9 @@ Dash route resolver handles the same logical destinations.
 .. automodule:: runbook.core.keying
    :members: build_context_hash
 
+.. automodule:: runbook.core.bloomberg.bbg
+   :members: BBGReturnTypes, IntradayEventType, bdh, bref, bdib, bbulkref, bql
+
 .. automodule:: runbook.core.table
    :members: highlight, highlight_on_key, highlight_on_range, highlight_zscore,
              normalize_table_style, render_table_html, table_style_hash,
