@@ -81,6 +81,25 @@ def test_plot_seasonal_forces_dummy_date_index() -> None:
     assert not isinstance(fig.data[0].x[0], (int, np.integer))
 
 
+@pytest.mark.parametrize("year", [2022, 2024, 2025])
+def test_plot_seasonal_forecast_matches_historical_color(year: int) -> None:
+    fig = plot_seasonal(
+        df=_seasonal_fixture_df(),
+        dash_from=pd.Timestamp(year=year, month=1, day=15),
+        dash_name="Projection",
+    )
+    historical_index, historical = next((i, trace) for i, trace in enumerate(fig.data) if trace.name == str(year))
+    forecast = next(trace for trace in fig.data if trace.name == f"{year}_Projection")
+    colors = fig.layout.template.layout.colorway
+    expected_color = historical.line.color or colors[historical_index % len(colors)]
+    assert forecast.line.color == expected_color
+    assert forecast.line.dash == "dash"
+    if year < 2025:
+        future = next(trace for trace in fig.data if trace.name == f"{year + 1}_Projection")
+        assert future.line.color == "red"
+        assert future.line.dash == "dash"
+
+
 def test_plot_cot_builds_two_by_three_layout_with_secondary_axes() -> None:
     fig = plot_cot(
         data=_cot_fixture_df(),

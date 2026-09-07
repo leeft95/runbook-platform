@@ -238,6 +238,14 @@ def plot_seasonal(
         holiday_countries=holiday_countries,
     ).plot(plot_defs, title=title)
 
+    if dash_year is not None:
+        for i, trace in enumerate(fig.data):
+            if trace.name == str(dash_year):
+                colors = fig.layout.template.layout.colorway or plotly.colors.DEFAULT_PLOTLY_COLORS
+                color = trace.line.color or colors[i % len(colors)]
+                fig.update_traces(line_color=color, selector={"name": f"{dash_year}_{dash_name}"})
+                break
+
     fig.update_layout(margin={"l": 50, "r": 20, "t": 60, "b": 50})
     fig.update_yaxes(title_text=kwargs.get("y_axis_title", ""), row=1, col=1)
     fig.update_xaxes(title_text="Date", row=rows, col=1)
