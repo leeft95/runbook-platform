@@ -42,6 +42,45 @@ def test_plot_seasonal_builds_three_stacked_subplots_when_enabled() -> None:
     assert {"x", "x2", "x3"}.issubset({trace.xaxis for trace in fig.data})
 
 
+@pytest.mark.parametrize("ytd", [False, True])
+@pytest.mark.parametrize("ytd_cum_sum", [False, True])
+@pytest.mark.parametrize("ytd_diff", [False, True])
+@pytest.mark.parametrize("vs_average", [False, True])
+def test_plot_seasonal_cumulative_flags_and_values(ytd, ytd_cum_sum, ytd_diff, vs_average) -> None:
+    dates = [pd.Timestamp(year=year, month=1, day=day) for year in (2023, 2024, 2025) for day in (1, 2, 3)]
+    df = pd.DataFrame({"value": [1, np.nan, 3, 2, 4, 8, 10, 20, 35]}, index=dates)
+    fig = plot_seasonal(df, ytd=ytd, ytd_cum_sum=ytd_cum_sum, ytd_diff=ytd_diff, vs_average=vs_average)
+    expected = {}
+    if ytd:
+        expected["YTD cumulative change"] = [np.nan, 10, 25] if ytd_diff else [10, 30, 65]
+    if ytd_cum_sum:
+        expected["Cum Cur Yr vs 5y Avg"] = [np.nan, 8, 19] if ytd_diff else [8.5, 24, 56]
+        expected["Cum Cur Yr vs Y-1"] = [np.nan, 8, 19] if ytd_diff else [8, 24, 51]
+    cumulative_traces = {trace.name: trace for trace in fig.data if trace.name.startswith(("YTD", "Cum "))}
+    assert cumulative_traces.keys() == expected.keys()
+    for name, values in expected.items():
+        trace = cumulative_traces[name]
+        np.testing.assert_allclose(trace.y, values, equal_nan=True)
+        assert trace.xaxis == ("x3" if vs_average else "x2")
+        assert trace.yaxis == ("y3" if vs_average else "y2")
+    assert len({trace.xaxis for trace in fig.data}) == 1 + int(vs_average) + int(ytd or ytd_cum_sum)
+
+
+def test_plot_seasonal_cumulative_average_uses_last_five_years() -> None:
+    dates = [pd.Timestamp(year=year, month=1, day=day) for year in range(2019, 2026) for day in (1, 2, 3)]
+    df = pd.DataFrame({"value": np.repeat([100, 1, 2, 3, 4, 5, 10], 3)}, index=dates)
+    fig = plot_seasonal(df, ytd_cum_sum=True, vs_average=False)
+    trace = next(trace for trace in fig.data if trace.name == "Cum Cur Yr vs 5y Avg")
+    np.testing.assert_allclose(trace.y, [7, 14, 21])
+
+
+@pytest.mark.parametrize("ytd", [False, True])
+def test_plot_seasonal_without_history_omits_cumulative_comparisons(ytd) -> None:
+    df = pd.DataFrame({"value": [10, 20, 35]}, index=pd.date_range("2025-01-01", periods=3))
+    fig = plot_seasonal(df, ytd=ytd, ytd_cum_sum=True, ytd_diff=True)
+    assert {trace.name for trace in fig.data} == ({"2025", "YTD cumulative change"} if ytd else {"2025"})
+
+
 def test_plot_seasonal_excludes_year_columns() -> None:
     seasonal_df = _seasonal_fixture_df()
     fig = plot_seasonal(df=seasonal_df, column="value", current_year=2025, exclude_years=[2023])

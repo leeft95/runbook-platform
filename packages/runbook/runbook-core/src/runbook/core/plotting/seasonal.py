@@ -56,7 +56,21 @@ def plot_seasonal(
     exclude_years: tp.List[int] | None = None,
     **kwargs: tp.Any,
 ) -> plotly.graph_objs._figure.Figure:
-    """Plot a seasonal chart with optional comparison and cumulative subplots."""
+    """Plot seasonal years, optional comparisons, and an optional cumulative panel.
+
+    ``vs_average`` shows current-year differences from the previous available year
+    and the mean of up to five previous available years. ``ytd`` adds the current
+    year's cumulative series; ``ytd_cum_sum`` independently adds both cumulative
+    comparisons when history exists. These cumulative lines share one panel.
+    ``ytd_diff`` switches all cumulative lines from accumulating values to
+    accumulating first differences; it does not enable a panel by itself.
+
+    Each year is accumulated separately before comparison or averaging, preserving
+    pandas' missing-value behavior. ``df_ytd`` cumulatively transforms every year
+    before any panel calculations; combining it with cumulative flags applies an
+    additional accumulation. Panels use primary y-axes and appear in the order
+    seasonal, comparisons, cumulative, omitting panels with no selected series.
+    """
     if not isinstance(df, pd.DataFrame):
         raise TypeError("df must be a pandas DataFrame.")
     if not isinstance(df.index, pd.DatetimeIndex):
@@ -170,34 +184,26 @@ def plot_seasonal(
 
     if ytd or ytd_cum_sum:
         data_ytd = pd.DataFrame(index=dts)
+        cumulative = (df_by_year.diff() if ytd_diff else df_by_year).cumsum()
+        current_cumulative = cumulative[current_year]
 
         if ytd:
             ytd_name = "YTD cumulative change"
-            if ytd_diff:
-                data_ytd[ytd_name] = df_by_year[current_year].diff().cumsum()
-            else:
-                data_ytd[ytd_name] = df_by_year[current_year].cumsum()
+            data_ytd[ytd_name] = current_cumulative
             series_styles[ytd_name] = {"line": {"color": "black", "width": 1}}
 
         if ytd_cum_sum:
+            if not history.empty:
+                cum_name = "Cum Cur Yr vs 5y Avg"
+                data_ytd[cum_name] = current_cumulative - cumulative[history.columns[-5:]].mean(axis=1)
+                series_styles[cum_name] = {"line": {"color": "grey", "width": 1}}
             if prev_year is not None:
                 cum_name = "Cum Cur Yr vs Y-1"
-                cum_vs = (df_by_year[current_year] - df_by_year[prev_year]).cumsum()
-            elif avg_5y is not None and not avg_5y.empty:
-                cum_name = "Cum Cur Yr vs 5y Avg"
-                cum_vs = (df_by_year[current_year] - avg_5y).cumsum()
-            else:
-                cum_name = "YTD cumulative change"
-                cum_vs = df_by_year[current_year].cumsum()
-
-            data_ytd[cum_name] = cum_vs
-            if cum_name == "Cum Cur Yr vs Y-1":
+                data_ytd[cum_name] = current_cumulative - cumulative[prev_year]
                 series_styles[cum_name] = {
                     "line": {"color": "grey", "width": 1, "dash": "dash"},
                     "fill": "tozeroy",
                 }
-            else:
-                series_styles[cum_name] = {"line": {"color": "grey", "width": 1}}
 
         if not data_ytd.empty:
             subplot_frames.append(data_ytd)

@@ -97,6 +97,45 @@ with section.grid(columns=1) as grid:
     grid.plot(seasonality_ref)
 ```
 
+The flags separate **which lines appear** from **how they are calculated**:
+
+| Argument | Effect |
+|---|---|
+| `vs_average=True` (default) | Adds current-year differences from the previous available year and the mean of up to five previous available years. |
+| `ytd=True` | Adds the current-year cumulative line. |
+| `ytd_cum_sum=True` | Independently adds cumulative comparisons against both historical benchmarks. |
+| `ytd_diff=True` | Uses `.diff().cumsum()` instead of `.cumsum()` for every cumulative line. Does not enable any line or panel by itself. |
+| `df_ytd=True` | Applies `.cumsum()` to every seasonal year before any panel calculations. Combining this with cumulative flags applies another accumulation. |
+
+`ytd` and `ytd_cum_sum` default to `False`. Enabling both puts all three
+cumulative lines in one panel. With `ytd=False, ytd_cum_sum=True`, only the two
+cumulative comparisons appear. With both disabled, `ytd_diff=True` has no effect.
+Use the exact argument `ytd_cum_sum`; `ytd_cum` is not a supported alias.
+
+For cumulative comparisons, each year is accumulated separately, then the
+historical cumulative series are averaged or subtracted. Missing values retain
+pandas' default behavior; accumulating the differences between years can give
+different results when observations are missing. With complete data,
+`.diff().cumsum()` measures change from the first value, leaving the first point
+missing; it does not calculate percentage returns.
+
+Panels appear in order: seasonal years, comparisons, cumulative lines, all on
+their primary y-axes. Disabling `vs_average` moves the cumulative panel directly
+under the seasonal plot. Comparisons use the years remaining after
+`exclude_years`; with no history, comparison lines are omitted, while `ytd=True`
+can still show the current-year cumulative line.
+
+```python
+# Seasonal plot plus cumulative changes relative to both historical benchmarks.
+seasonality = plot_seasonal(
+    prices[["brent"]],
+    vs_average=False,
+    ytd=False,
+    ytd_cum_sum=True,
+    ytd_diff=True,
+)
+```
+
 `plot_cot` creates a fixed two-row, three-panel COT figure. Its input must have
 the named main, price, and open-interest columns required by each panel, and
 `plot_titles` must contain exactly three titles:
