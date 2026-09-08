@@ -23,7 +23,7 @@ def plot_line(
     shared_xaxes: bool = False,
     horizontal_spacing: float | None = None,
     vertical_spacing: float | None = None,
-    tickformat: str | None = "%b",
+    tickformat: str | None = "%b\n%y",
     dtick: str | int | float | None = "M1",
     use_rangebreaks: bool = True,
     holiday_countries: list[str] | None = None,
