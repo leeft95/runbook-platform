@@ -98,15 +98,25 @@ def _to_yyyymmdd(value: dt.datetime | str) -> str:
 
 def _normalise_bdh(data, ticker, fields):
     """
-    Always return columns as a ``(field, ticker)`` MultiIndex.
+    1 ticker 1 field => column = Field
+    1 ticker many fields => columns = Fields
+    many tickers 1 field => columns = Tickers
+    many tickers many fields => multi index field, ticker
     """
-    available_fields = [field for field in fields if field in data.columns]
-    if available_fields:
-        df = data.pivot(index="date", columns="security", values=available_fields)
+    df = data.reindex(columns=["date", "security", *fields]).pivot(index="date", columns="security", values=fields)
+    if len(ticker) == 1 and len(fields) > 1:
+        df.columns = [x[0] for x in df.columns]
+        # df.column.name = "fields"
+    elif len(ticker) == 1 and len(fields) == 1:
+        df.columns = [x[0] for x in df.columns]
+        # df.column.name = "field"
+    elif len(ticker) > 1 and len(fields) == 1:
+        df.columns = [x[1] for x in df.columns]
+        # df.column.names = "tickers"
     else:
-        df = pd.DataFrame(index=pd.Index(data.get("date", pd.Series(dtype=object)), name="date").drop_duplicates())
-    columns = pd.MultiIndex.from_product([fields, ticker], names=["field", "ticker"])
-    return df.reindex(columns=columns).fillna(value=np.nan)
+        df.columns.names = ["field", "ticker"]
+    df = df.fillna(value=np.nan)
+    return df
 
 
 def _normalise_bref(data):
@@ -185,7 +195,11 @@ def bdh(
     options: dict | None = None,
 ):
     """
-    Simple wrapper around the BlpQuery api to query and normalise the data
+    Query Bloomberg history with analyst-friendly columns.
+
+    A single ticker returns field columns. Multiple tickers with one field
+    return ticker columns. Multiple tickers and fields return a
+    ``(field, ticker)`` MultiIndex.
     """
     _, BlpQuery = _blp_types()
     # normalise all inputs
