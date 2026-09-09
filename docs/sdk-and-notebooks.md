@@ -84,6 +84,20 @@ clean data in a notebook first, then add a SourceAdapter/parser later if the
 prototype should move into the production ingestion path; the report itself
 can remain unchanged.
 
+Prototype and `snapshot_from_frames` keys are readable too:
+
+```text
+curated/vol_report_prices/version=v1/1.parquet
+curated/vol_report_prices/manifests/2026-01-01T00-00-00.000000Z/1.json
+```
+
+The manifest directory uses the UTC publication timestamp with microseconds;
+its filename reuses the data file's numeric revision. Identical frames reuse
+that revision, and changed frames allocate the next one within the same
+store. Snapshot JSON carries alias-keyed `manifest_sha256` checksums, keeping
+snapshot identity and manifest verification tied to content even across
+fresh in-memory stores. Preserve this metadata when saving a Snapshot.
+
 Notebook-defined decorated calculations and `page(ctx)` are also supported;
 move the same `ALIASES` and functions into a report module unchanged when
 ready for production publication. For a runnable authoring flow, see
@@ -192,14 +206,16 @@ manifest = load_manifest(
     data_store,
     manifest_ref,
     expected_dataset_id=profile.datasets["prices"],
+    expected_sha256=saved_snapshot.manifest_sha256.get("prices"),
 )
 prices_again = load_snapshot_dataset(data_store, saved_snapshot, "prices")
 assert manifest.dataset_id == "demo_daily_prices"
 assert not prices_again.empty
 ```
 
-`load_manifest` verifies a content-addressed manifest digest and
-`load_snapshot_dataset` verifies each referenced file hash while reading it.
+`load_manifest` verifies a supplied manifest checksum and any digest in a
+production ingestion filename. `load_snapshot_dataset` supplies the saved
+Snapshot's manifest checksum and verifies each referenced file hash while reading it.
 The `expected_dataset_id` check prevents an alias from being paired with the
 wrong dataset. Keep the Snapshot JSON, research record, and notebook output
 together; the underlying manifest and data objects remain immutable.

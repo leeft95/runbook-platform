@@ -80,8 +80,36 @@ def volatility(ctx):
     return ctx.calc("returns").rolling(params.window).std()
 ```
 
-Calculations are cached using report identity, snapshot, code version, and
-context hash. Do not mutate `ctx.config`, snapshot inputs, or cached outputs.
+Calculations are cached inside the report's immutable revision, selected by
+report identity, snapshot, code version, context hash, UTC generation date,
+and SDK package version. An identical run reuses its calculations; changing
+parameters, inputs, code version, date, or SDK version starts a cold cache.
+Change `code_version` when calculation implementations change. Do not mutate
+`ctx.config`, snapshot inputs, or cached outputs.
+
+SDK output paths use report names, dates, versions, numeric revisions, and
+artifact names. For example:
+
+```text
+reports/vol_report/date=2026-01-01/version=0.3.2.2/1/
+  identity.json
+  calculations/returns.meta.json
+  calculations/returns.parquet
+  tables/returns.parquet
+  tables/returns.html
+  styles/returns.json
+  plots/returns.json
+  manifest.stage3.json
+  manifest.stage4.json
+  report.html
+```
+
+Table HTML and styles are written when styling is requested. Names accept
+letters, numbers, `.`, `_`, and `-`; reuse a name only for identical artifact
+content in a revision. Give differently styled tables distinct names.
+Hashes remain in identity and integrity metadata, not SDK-generated paths.
+Existing SHA-named SDK outputs and caches require regeneration; there is no
+migration or legacy cache lookup. Production ingestion paths are unchanged.
 
 ## Profiles and preview
 

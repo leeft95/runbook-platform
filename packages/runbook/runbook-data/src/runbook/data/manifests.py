@@ -115,11 +115,18 @@ def build_manifest(
     return manifest, digest
 
 
-def load_manifest(store: BlobStore, ref: str, *, expected_dataset_id: str | None = None) -> DatasetManifest:
-    """Load and verify a content-addressed manifest reference."""
+def load_manifest(
+    store: BlobStore,
+    ref: str,
+    *,
+    expected_dataset_id: str | None = None,
+    expected_sha256: str | None = None,
+) -> DatasetManifest:
+    """Load a manifest, verifying supplied and content-addressed digests."""
     payload = store.get(ref)
     match = re.search(r"sha256=([0-9a-f]{64})\.json$", ref)
-    if match and sha256_bytes(payload) != match.group(1):
+    digest = sha256_bytes(payload)
+    if (expected_sha256 is not None and digest != expected_sha256) or (match and digest != match.group(1)):
         raise IOError(f"manifest digest verification failed: {ref}")
     manifest = DatasetManifest.model_validate(json.loads(payload.decode("utf-8")))
     expected_prefix = f"curated/{manifest.dataset_id}/manifests/"
@@ -132,22 +139,29 @@ def load_manifest(store: BlobStore, ref: str, *, expected_dataset_id: str | None
     return manifest
 
 
-def write_manifests(store: BlobStore, manifests: Iterable[tuple[DatasetManifest, str]]) -> dict[str, str]:
+def write_manifests(
+    store: BlobStore,
+    manifests: Iterable[tuple[DatasetManifest, str]],
+    *,
+    refs: Mapping[str, str] | None = None,
+) -> dict[str, str]:
     """Write immutable manifests without mutating current pointer state."""
-    prepared = list(manifests)
-    for manifest, digest in prepared:
-        ref = f"curated/{manifest.dataset_id}/manifests/sha256={digest}.json"
+    written: dict[str, str] = {}
+    for manifest, digest in manifests:
+        prefix = f"curated/{manifest.dataset_id}/manifests/"
+        ref = refs[manifest.dataset_id] if refs is not None else f"{prefix}sha256={digest}.json"
+        if not ref.startswith(prefix) or ".." in PurePosixPath(ref).parts or "\\" in ref or not ref.endswith(".json"):
+            raise ValueError(f"invalid manifest reference for dataset {manifest.dataset_id!r}: {ref!r}")
         store.put_immutable(ref, canonical_json(manifest.model_dump(mode="json")).encode("utf-8"))
-    return {
-        manifest.dataset_id: f"curated/{manifest.dataset_id}/manifests/sha256={digest}.json"
-        for manifest, digest in prepared
-    }
+        written[manifest.dataset_id] = ref
+    return written
 
 
 def build_snapshot(
     datasets: Mapping[str, str],
     *,
     watermark: datetime,
+    manifest_sha256: Mapping[str, str] | None = None,
     as_of: datetime | None = None,
     producer_provenance: Iterable[SnapshotProducer] = (),
     warnings: Iterable[str] = (),
@@ -171,11 +185,14 @@ def build_snapshot(
         payload["producer_provenance"] = [item.model_dump(mode="json") for item in normalized_provenance]
     if normalized_warnings:
         payload["warnings"] = list(normalized_warnings)
+    if manifest_sha256:
+        payload["manifest_sha256"] = dict(manifest_sha256)
     return Snapshot(
         snapshot_id=sha256_json(payload),
         watermark=normalized_watermark,
         as_of=normalized_as_of,
         datasets=selected,
+        manifest_sha256=dict(manifest_sha256 or {}),
         producer_provenance=normalized_provenance,
         warnings=normalized_warnings,
     )
@@ -274,7 +291,7 @@ def load_snapshot_dataset(
     ref = snapshot.datasets.get(alias)
     if ref is None:
         raise KeyError(f"unknown snapshot dataset alias: {alias!r}")
-    manifest = load_manifest(store, ref)
+    manifest = load_manifest(store, ref, expected_sha256=snapshot.manifest_sha256.get(alias))
     selected = [item for item in manifest.files if filters is None or _partition_matches(item.partition, filters)]
     frames = [read_dataframe(store, item.ref, expected_sha256=item.sha256) for item in selected]
     if not frames:

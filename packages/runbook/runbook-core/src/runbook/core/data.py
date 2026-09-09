@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -95,8 +95,18 @@ class Snapshot(BaseModel):
     watermark: datetime
     as_of: datetime | None = None
     datasets: dict[str, str]
+    manifest_sha256: dict[str, Annotated[str, Field(pattern=_SHA256)]] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
     producer_provenance: tuple["SnapshotProducer", ...] = ()
     warnings: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_manifest_aliases(self) -> Snapshot:
+        """Keep manifest verification metadata tied to selected dataset aliases."""
+        if self.manifest_sha256.keys() - self.datasets.keys():
+            raise ValueError("manifest_sha256 aliases must belong to snapshot datasets")
+        return self
 
     @field_validator("snapshot_id")
     @classmethod

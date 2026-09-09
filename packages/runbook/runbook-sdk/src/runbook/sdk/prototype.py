@@ -9,7 +9,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 import pandas as pd
-from runbook.core import BlobStore, DatasetFile, ReportProfile, Snapshot
+from runbook.core import BlobStore, DatasetFile, DatasetManifest, ReportProfile, Snapshot
 from runbook.data.manifests import build_manifest, build_snapshot, write_dataframe, write_manifests
 from runbook.sdk.discovery import ReportDefinition
 from runbook.sdk.execution import ReportResult, execute_report
@@ -66,8 +66,10 @@ def snapshot_from_frames(
 ) -> Snapshot:
     """Freeze alias-keyed DataFrames into immutable in-memory manifests."""
     store = _store if _store is not None else _MemoryStore()
-    prepared: list[tuple[Any, str]] = []
+    prepared: list[tuple[DatasetManifest, str]] = []
     dataset_ids: dict[str, str] = {}
+    manifest_refs: dict[str, str] = {}
+    manifest_digests: dict[str, str] = {}
     for alias in sorted(frames):
         dataset_id = f"{report_id}_{alias}"
         ref, digest = write_dataframe(store, dataset_id, frames[alias])
@@ -79,10 +81,15 @@ def snapshot_from_frames(
         )
         prepared.append((manifest, manifest_digest))
         dataset_ids[alias] = dataset_id
-    manifest_refs = write_manifests(store, prepared)
+        published = manifest.published_at.strftime("%Y-%m-%dT%H-%M-%S.%fZ")
+        revision = PurePosixPath(ref).stem
+        manifest_refs[dataset_id] = f"curated/{dataset_id}/manifests/{published}/{revision}.json"
+        manifest_digests[alias] = manifest_digest
+    write_manifests(store, prepared, refs=manifest_refs)
     return build_snapshot(
         {alias: manifest_refs[dataset_ids[alias]] for alias in sorted(dataset_ids)},
         watermark=observed_at,
+        manifest_sha256=manifest_digests,
     )
 
 

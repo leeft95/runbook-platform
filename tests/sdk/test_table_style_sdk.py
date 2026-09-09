@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 
 import pandas as pd
 import pytest
+from runbook.core.report_artifacts import ArtifactRegistry
 from runbook.core.table.builder import normalize_table_style
+from runbook.data import open_blob_store
+from runbook.data.manifests import build_snapshot
+from runbook.sdk.context import Ctx
 from runbook.sdk.table_style import (
     action,
     condition,
@@ -105,6 +110,58 @@ def test_sdk_table_style_hash_and_payload_are_deterministic() -> None:
 
     assert table_style_payload(style_a) == table_style_payload(style_b)
     assert table_style_hash(style_a) == table_style_hash(style_b)
+
+
+def test_readable_table_artifacts_allow_identical_retries_and_reject_conflicts(tmp_path) -> None:
+    store = open_blob_store(f"file:{tmp_path}")
+    registry = ArtifactRegistry(
+        table_ref_resolver=lambda name: f"tables/{name}.parquet",
+        table_writer=lambda name, frame: store.put_immutable(f"tables/{name}.parquet", frame.to_parquet(index=True)),
+    )
+    frame = pd.DataFrame({"returns": [0.1, -0.2]})
+    style = table_style(
+        formats=[format_percent("returns", digits=1)],
+        rules=[
+            rule("negative", target_columns(["returns"]), condition("lt", rhs=rhs_literal(0)), action(text_color="red"))
+        ],
+    )
+    ref = registry.table(frame, name="monthly-summary", style=style)
+    assert ref.data_ref == "tables/monthly-summary.parquet"
+    assert ref.style_ref == "styles/monthly-summary.json"
+    assert ref.html_ref == "tables/monthly-summary.html"
+    assert registry.table(frame.copy(), name="monthly-summary", style=style) == ref
+    original_payloads = registry.payloads()
+    original_data = store.get(ref.data_ref)
+    with pytest.raises(IOError, match="immutable blob conflict"):
+        registry.table(frame * 2, name="monthly-summary", style=style)
+    with pytest.raises(ValueError, match="Duplicate table style artifact"):
+        registry.table(frame, name="monthly-summary", style=table_style(formats=[format_percent("returns", digits=2)]))
+    with pytest.raises(ValueError, match="Duplicate table html artifact"):
+        registry.table(frame, name="monthly-summary", style=style, style_df=-frame)
+    assert registry.payloads() == original_payloads
+    assert store.get(ref.data_ref) == original_data
+
+
+@pytest.mark.parametrize("name", ["../outside", "nested/name", "nested\\name", "/absolute", "bad name", ""])
+def test_readable_artifact_and_calculation_names_reject_unsafe_paths(tmp_path, name: str) -> None:
+    ctx = Ctx(
+        snapshot=build_snapshot({}, watermark=datetime(2026, 1, 1, tzinfo=timezone.utc)),
+        store=open_blob_store(f"file:{tmp_path}"),
+        report_id="demo",
+        config={},
+        code_version="test",
+        context_hash="a" * 64,
+        artifact_prefix="reports/demo/date=2026-01-01/version=0.0.1/1",
+    )
+    with pytest.raises(ValueError, match="Artifact name"):
+        ctx.register_calc(name, lambda _: None)
+    with pytest.raises(ValueError, match="Artifact name"):
+        ctx.calc(name)
+    with pytest.raises(ValueError, match="Artifact name"):
+        ctx.artifact.table(pd.DataFrame(), name=name)
+    with pytest.raises(ValueError, match="Artifact name"):
+        ctx.artifact.plot({"data": []}, name=name)
+    assert not list(tmp_path.rglob("*"))
 
 
 def test_sdk_table_style_preserves_typed_links_in_the_versioned_payload() -> None:

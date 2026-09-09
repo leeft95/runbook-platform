@@ -11,7 +11,6 @@ from runbook.core.table import (
     TableArtifactRef,
     TableLink,
     render_table_html,
-    table_style_hash,
     table_style_payload,
 )
 
@@ -90,9 +89,8 @@ class ArtifactRegistry:
             return TableArtifactRef(data_ref=data_ref)
 
         payload = table_style_payload(style, style_key=style_key, max_rows=max_rows)
-        style_hash = table_style_hash(style, style_key=style_key, max_rows=max_rows)
-        style_ref = f"styles/{artifact_name}.{style_hash}.json"
-        html_ref = f"tables/{artifact_name}.{style_hash}.html"
+        style_ref = f"styles/{artifact_name}.json"
+        html_ref = f"tables/{artifact_name}.html"
         html = render_table_html(
             df,
             style,

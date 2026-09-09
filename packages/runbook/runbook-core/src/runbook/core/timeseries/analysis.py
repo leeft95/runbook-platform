@@ -306,6 +306,7 @@ def calculate_realised_volatility(
     # reshape data into 1d array if it's 2d with one column
     to_calc = data_values.reshape(-1)
     changes = calculate_change(to_calc, flag=flag, n=1, as_series=False)
+    rolling_vol: np.ndarray | np.float64
     if rolling_window != 0:
         if decaying_factor == 0:
             weights: np.ndarray = np.ones(rolling_window) / rolling_window

@@ -6,8 +6,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import runbook.sdk.prototype as prototype_module
-from runbook.core import ReportProfile
-from runbook.data.manifests import load_manifest
+from runbook.core import ReportProfile, Snapshot
+from runbook.data.manifests import load_manifest, load_snapshot_dataset, write_manifests
 from runbook.sdk import prototype_report, report, required_aliases, snapshot_from_frames
 from runbook.sdk.layout import Report
 from runbook.sdk.prototype import _MemoryStore
@@ -27,13 +27,22 @@ def test_snapshot_from_frames_freezes_exact_aliases_and_is_deterministic() -> No
     assert first.watermark == observed
     assert set(first.datasets) == {"prices"}
     store = _MemoryStore()
-    snapshot_from_frames(frames, observed_at=observed, report_id="vol_report", _store=store)
+    saved = snapshot_from_frames(frames, observed_at=observed, report_id="vol_report", _store=store)
     manifest_ref = next(key for key in store._objects if "/manifests/" in key)
+    assert manifest_ref == "curated/vol_report_prices/manifests/2026-01-01T00-00-00.000000Z/1.json"
+    assert set(store._objects) == {manifest_ref, "curated/vol_report_prices/version=v1/1.parquet"}
+    assert snapshot_from_frames(frames, observed_at=observed, report_id="vol_report", _store=store) == saved
+    restored = Snapshot.model_validate_json(saved.model_dump_json())
+    assert restored == saved
+    pd.testing.assert_frame_equal(load_snapshot_dataset(store, restored, "prices"), original)
     manifest = load_manifest(store, manifest_ref, expected_dataset_id="vol_report_prices")
     assert manifest.watermark == observed
     assert manifest.published_at == observed
     with pytest.raises(IOError, match="immutable blob conflict"):
         store.put_immutable(manifest_ref, b"different")
+    store._objects[manifest_ref] = store.get(manifest_ref) + b" "
+    with pytest.raises(IOError, match="manifest digest verification failed"):
+        load_snapshot_dataset(store, restored, "prices")
     pd.testing.assert_frame_equal(prices, original)
 
 
@@ -47,6 +56,28 @@ def test_snapshot_from_frames_changes_when_a_frame_changes() -> None:
     second = snapshot_from_frames({"values": changed}, observed_at=observed, report_id="demo")
 
     assert first.snapshot_id != second.snapshot_id
+    assert first.datasets == second.datasets
+    assert first.manifest_sha256 != second.manifest_sha256
+
+
+def test_snapshot_from_frames_reuses_parquet_revisions_and_separates_publications() -> None:
+    store = _MemoryStore()
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    frames = {"values": pd.DataFrame({"value": [1]})}
+    first = snapshot_from_frames(frames, observed_at=now, report_id="demo", _store=store)
+    changed = snapshot_from_frames(
+        {"values": pd.DataFrame({"value": [2]})},
+        observed_at=now,
+        report_id="demo",
+        _store=store,
+    )
+    later = snapshot_from_frames(frames, observed_at=now + timedelta(microseconds=1), report_id="demo", _store=store)
+    assert first.datasets["values"] == "curated/demo_values/manifests/2026-01-01T00-00-00.000000Z/1.json"
+    assert changed.datasets["values"] == "curated/demo_values/manifests/2026-01-01T00-00-00.000000Z/2.json"
+    assert later.datasets["values"] == "curated/demo_values/manifests/2026-01-01T00-00-00.000001Z/1.json"
+    assert load_snapshot_dataset(store, first, "values")["value"].tolist() == [1]
+    assert load_snapshot_dataset(store, changed, "values")["value"].tolist() == [2]
+    assert load_snapshot_dataset(store, later, "values")["value"].tolist() == [1]
 
 
 def test_snapshot_from_frames_normalizes_offset_watermark() -> None:
@@ -66,6 +97,7 @@ def test_snapshot_from_frames_normalizes_offset_watermark() -> None:
     assert snapshot.watermark == expected
     assert manifest.watermark == expected
     assert manifest.published_at == expected
+    assert manifest_ref == "curated/demo_values/manifests/2026-01-01T00-00-00.000000Z/1.json"
 
 
 def test_prototype_report_requires_exact_profile_aliases() -> None:
@@ -150,6 +182,61 @@ def test_prototype_report_executes_supplied_notebook_definition_in_memory(monkey
     assert store.exists(result.stage4_ref)
     assert store.exists(result.html_ref)
     assert "Notebook Demo" in store.get(result.html_ref).decode()
+    assert set(store._objects) == {
+        "curated/notebook_only_report_prices/version=v1/1.parquet",
+        "curated/notebook_only_report_prices/manifests/2026-01-01T00-00-00.000000Z/1.json",
+        *(
+            f"{result.prefix}/{name}"
+            for name in (
+                "identity.json",
+                "calculations/returns.parquet",
+                "calculations/returns.meta.json",
+                "tables/returns.parquet",
+                "manifest.stage3.json",
+                "manifest.stage4.json",
+                "styles/grid.css",
+                "report.html",
+            )
+        ),
+    }
+
+
+@pytest.mark.parametrize("alias", ["../prices", "prices/other", "prices\\other"])
+def test_snapshot_from_frames_rejects_unsafe_names(alias: str) -> None:
+    with pytest.raises(ValueError, match="invalid dataset id"):
+        snapshot_from_frames({alias: pd.DataFrame()}, observed_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "curated/other/manifests/1.json",
+        "curated/demo_values/manifests/../1.json",
+        "curated/demo_values/manifests/..\\1.json",
+        "/curated/demo_values/manifests/1.json",
+    ],
+)
+def test_readable_manifest_refs_reject_wrong_dataset_and_traversal(ref: str) -> None:
+    store = _MemoryStore()
+    saved = snapshot_from_frames(
+        {"values": pd.DataFrame({"value": [1]})},
+        observed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        report_id="demo",
+        _store=store,
+    )
+    manifest = load_manifest(store, saved.datasets["values"])
+    with pytest.raises(ValueError, match="invalid manifest reference"):
+        write_manifests(store, [(manifest, saved.manifest_sha256["values"])], refs={"demo_values": ref})
+
+
+@pytest.mark.parametrize("digests", [{"values": "invalid"}, {"unknown": "a" * 64}])
+def test_snapshot_rejects_invalid_manifest_verification_metadata(digests) -> None:
+    saved = snapshot_from_frames(
+        {"values": pd.DataFrame({"value": [1]})},
+        observed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    with pytest.raises(ValueError):
+        Snapshot.model_validate({**saved.model_dump(), "manifest_sha256": digests})
 
 
 @pytest.mark.parametrize(

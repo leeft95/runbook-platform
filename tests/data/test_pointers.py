@@ -8,6 +8,7 @@ from runbook.data import (
     DatasetPointerUpdate,
     build_manifest,
     create_pointer_schema,
+    load_manifest,
     open_blob_store,
     resolve_snapshot,
     write_manifests,
@@ -96,6 +97,7 @@ def test_snapshot_uses_database_pointer_and_manifest_history(tmp_path, pointer_r
         files=[],
     )
     first_ref = write_manifests(store, [(first, first_digest)])["prices"]
+    assert first_ref == f"curated/prices/manifests/sha256={first_digest}.json"
     second, second_digest = build_manifest(
         dataset_id="prices",
         watermark=second_time,
@@ -123,3 +125,7 @@ def test_snapshot_uses_database_pointer_and_manifest_history(tmp_path, pointer_r
     assert latest.watermark == second_time
     assert historical.datasets == {"prices": first_ref}
     assert historical.watermark == first_time
+    assert "manifest_sha256" not in latest.model_dump(mode="json")
+    store.put(first_ref, store.get(first_ref) + b" ")
+    with pytest.raises(IOError, match="manifest digest verification failed"):
+        load_manifest(store, first_ref)

@@ -95,6 +95,11 @@ table_with_linked_plots_monthly(
 Use keyword arguments so the code remains readable.
 The template returns a serializable style payload; `ctx.artifact.table` turns
 it into the immutable table data/style/HTML artifacts consumed by renderers.
+For `name="monthly-summary"`, these are `tables/monthly-summary.parquet`,
+`styles/monthly-summary.json`, and `tables/monthly-summary.html` inside the
+report revision. Reusing the name accepts identical content; use another name
+for different data, style, or rendered HTML. `table_style_hash` remains
+available for metadata and comparisons, but is not part of artifact filenames.
 
 ### Semantic links and plot pages
 
