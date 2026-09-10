@@ -104,6 +104,7 @@ The flags separate **which lines appear** from **how they are calculated**:
 | `vs_average=True` (default) | Adds current-year differences from the previous available year and the mean of up to five previous available years. |
 | `ytd=True` | Adds the current-year cumulative line. |
 | `ytd_cum_sum=True` | Independently adds cumulative comparisons against both historical benchmarks. |
+| `ytd_cum_sum_5y_avg=False` | Hides only `Cum Cur Yr vs 5y Avg`, keeping the cumulative previous-year comparison enabled by `ytd_cum_sum=True`. Defaults to `True`. |
 | `ytd_diff=True` | Uses `.diff().cumsum()` instead of `.cumsum()` for every cumulative line. Does not enable any line or panel by itself. |
 | `df_ytd=True` | Applies `.cumsum()` to every seasonal year before any panel calculations. Combining this with cumulative flags applies another accumulation. |
 
@@ -111,6 +112,8 @@ The flags separate **which lines appear** from **how they are calculated**:
 cumulative lines in one panel. With `ytd=False, ytd_cum_sum=True`, only the two
 cumulative comparisons appear. With both disabled, `ytd_diff=True` has no effect.
 Use the exact argument `ytd_cum_sum`; `ytd_cum` is not a supported alias.
+To show only the cumulative previous-year comparison, use
+`plot_seasonal(df, ytd_cum_sum=True, ytd_cum_sum_5y_avg=False)`.
 
 For cumulative comparisons, each year is accumulated separately, then the
 historical cumulative series are averaged or subtracted. Missing values retain

@@ -83,18 +83,28 @@ def test_plot_seasonal_selects_current_year_and_only_earlier_history(
 
 @pytest.mark.parametrize("ytd", [False, True])
 @pytest.mark.parametrize("ytd_cum_sum", [False, True])
+@pytest.mark.parametrize("ytd_cum_sum_5y_avg", [False, True])
 @pytest.mark.parametrize("ytd_diff", [False, True])
 @pytest.mark.parametrize("vs_average", [False, True])
-def test_plot_seasonal_cumulative_flags_and_values(ytd, ytd_cum_sum, ytd_diff, vs_average) -> None:
+def test_plot_seasonal_cumulative_flags_and_values(ytd, ytd_cum_sum, ytd_cum_sum_5y_avg, ytd_diff, vs_average) -> None:
     dates = [pd.Timestamp(year=year, month=1, day=day) for year in (2023, 2024, 2025) for day in (1, 2, 3)]
     df = pd.DataFrame({"value": [1, np.nan, 3, 2, 4, 8, 10, 20, 35]}, index=dates)
-    fig = plot_seasonal(df, ytd=ytd, ytd_cum_sum=ytd_cum_sum, ytd_diff=ytd_diff, vs_average=vs_average)
+    fig = plot_seasonal(
+        df,
+        ytd=ytd,
+        ytd_cum_sum=ytd_cum_sum,
+        ytd_cum_sum_5y_avg=ytd_cum_sum_5y_avg,
+        ytd_diff=ytd_diff,
+        vs_average=vs_average,
+    )
     expected = {}
     if ytd:
         expected["YTD cumulative change"] = [np.nan, 10, 25] if ytd_diff else [10, 30, 65]
     if ytd_cum_sum:
-        expected["Cum Cur Yr vs 5y Avg"] = [np.nan, 8, 19] if ytd_diff else [8.5, 24, 56]
+        if ytd_cum_sum_5y_avg:
+            expected["Cum Cur Yr vs 5y Avg"] = [np.nan, 8, 19] if ytd_diff else [8.5, 24, 56]
         expected["Cum Cur Yr vs Y-1"] = [np.nan, 8, 19] if ytd_diff else [8, 24, 51]
+    assert ("Cur Yr vs 5y Avg" in {trace.name for trace in fig.data}) == vs_average
     cumulative_traces = {trace.name: trace for trace in fig.data if trace.name.startswith(("YTD", "Cum "))}
     assert cumulative_traces.keys() == expected.keys()
     for name, values in expected.items():
