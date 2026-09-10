@@ -54,7 +54,7 @@ def plot_seasonal(
     use_rangebreaks: bool = True,
     holiday_countries: list[str] | None = None,
     exclude_years: tp.List[int] | None = None,
-    ytd_cum_sum_5y_avg: bool = True,
+    five_year: bool = True,
     **kwargs: tp.Any,
 ) -> plotly.graph_objs._figure.Figure:
     """Plot seasonal years, optional comparisons, and an optional cumulative panel.
@@ -67,8 +67,8 @@ def plot_seasonal(
     and the mean of up to five previous available years. ``ytd`` adds the current
     year's cumulative series; ``ytd_cum_sum`` independently adds both cumulative
     comparisons when history exists. These cumulative lines share one panel.
-    Set ``ytd_cum_sum_5y_avg=False`` to omit only the cumulative five-year average
-    comparison, keeping the cumulative comparison with the previous year.
+    Set ``five_year=False`` to omit all five-year average comparisons, keeping
+    the comparisons with the previous year in both subplots.
     ``ytd_diff`` switches all cumulative lines from accumulating values to
     accumulating first differences; it does not enable a panel by itself.
 
@@ -114,7 +114,7 @@ def plot_seasonal(
     if not isinstance(dts, pd.DatetimeIndex):
         raise TypeError("Expected ts_by_year(dummy_date_index=True) to return a DatetimeIndex.")
     history = df_by_year.loc[:, df_by_year.columns < current_year]
-    avg_5y = history.iloc[:, -5:].mean(axis=1) if not history.empty else None
+    avg_5y = history.iloc[:, -5:].mean(axis=1) if five_year and not history.empty else None
     prev_year = int(history.columns[-1]) if not history.empty else None
 
     dash_cutoff = _as_dummy_cutoff(dts, dash_from) if dash_from is not None else None
@@ -203,7 +203,7 @@ def plot_seasonal(
             series_styles[ytd_name] = {"line": {"color": "black", "width": 1}}
 
         if ytd_cum_sum:
-            if ytd_cum_sum_5y_avg and not history.empty:
+            if five_year and not history.empty:
                 cum_name = "Cum Cur Yr vs 5y Avg"
                 data_ytd[cum_name] = current_cumulative - cumulative[history.columns[-5:]].mean(axis=1)
                 series_styles[cum_name] = {"line": {"color": "grey", "width": 1}}
