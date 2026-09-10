@@ -58,6 +58,10 @@ def plot_seasonal(
 ) -> plotly.graph_objs._figure.Figure:
     """Plot seasonal years, optional comparisons, and an optional cumulative panel.
 
+    ``current_year`` defaults to the latest available year at or before today's
+    calendar year, falling back to the latest available year for future-only data.
+    Only years before the selected year are used as history.
+
     ``vs_average`` shows current-year differences from the previous available year
     and the mean of up to five previous available years. ``ytd`` adds the current
     year's cumulative series; ``ytd_cum_sum`` independently adds both cumulative
@@ -93,7 +97,10 @@ def plot_seasonal(
     if exclude_years:
         df_by_year = df_by_year.drop(columns=exclude_years, errors="ignore")
 
-    current_year = kwargs.get("current_year", int(df_by_year.columns[-1]))
+    non_future_years = df_by_year.columns[df_by_year.columns <= dt.date.today().year]
+    current_year = kwargs.get(
+        "current_year", int(non_future_years[-1] if len(non_future_years) else df_by_year.columns[-1])
+    )
     if current_year not in df_by_year.columns:
         raise KeyError(f"current_year {current_year!r} not found in seasonal data.")
 
@@ -103,7 +110,7 @@ def plot_seasonal(
     dts = df_by_year.index
     if not isinstance(dts, pd.DatetimeIndex):
         raise TypeError("Expected ts_by_year(dummy_date_index=True) to return a DatetimeIndex.")
-    history = df_by_year.drop(columns=[current_year], errors="ignore")
+    history = df_by_year.loc[:, df_by_year.columns < current_year]
     avg_5y = history.iloc[:, -5:].mean(axis=1) if not history.empty else None
     prev_year = int(history.columns[-1]) if not history.empty else None
 

@@ -42,6 +42,45 @@ def test_plot_seasonal_builds_three_stacked_subplots_when_enabled() -> None:
     assert {"x", "x2", "x3"}.issubset({trace.xaxis for trace in fig.data})
 
 
+@pytest.mark.parametrize(
+    ("current_offset", "exclude_offsets", "current_value", "history_values"),
+    [
+        (None, [], 10, [1, 2]),
+        (-1, [], 2, [1]),
+        (None, [0], 2, [1]),
+        (None, [-2, -1], 10, []),
+        (None, [-2, -1, 0], 1000, []),
+    ],
+)
+def test_plot_seasonal_selects_current_year_and_only_earlier_history(
+    current_offset, exclude_offsets, current_value, history_values
+) -> None:
+    year = pd.Timestamp.today().year
+    dates = [pd.Timestamp(year=year + offset, month=1, day=day) for offset in (-2, -1, 0, 1) for day in (1, 2)]
+    df = pd.DataFrame({"value": np.repeat([1, 2, 10, 1000], 2)}, index=dates)
+    fig = plot_seasonal(
+        df,
+        ytd=True,
+        ytd_cum_sum=True,
+        exclude_years=[year + offset for offset in exclude_offsets],
+        **({"current_year": year + current_offset} if current_offset is not None else {}),
+    )
+    traces = {trace.name: trace for trace in fig.data}
+    np.testing.assert_allclose(traces["YTD cumulative change"].y, [current_value, 2 * current_value])
+    assert str(year + 1) in traces
+    for label, reference in (
+        ("5y Avg", np.mean(history_values) if history_values else None),
+        ("Y-1", history_values[-1] if history_values else None),
+    ):
+        if reference is None:
+            assert f"Cur Yr vs {label}" not in traces
+            assert f"Cum Cur Yr vs {label}" not in traces
+        else:
+            difference = current_value - reference
+            np.testing.assert_allclose(traces[f"Cur Yr vs {label}"].y, [difference, difference])
+            np.testing.assert_allclose(traces[f"Cum Cur Yr vs {label}"].y, [difference, 2 * difference])
+
+
 @pytest.mark.parametrize("ytd", [False, True])
 @pytest.mark.parametrize("ytd_cum_sum", [False, True])
 @pytest.mark.parametrize("ytd_diff", [False, True])
