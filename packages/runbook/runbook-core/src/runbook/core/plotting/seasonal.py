@@ -9,11 +9,6 @@ from runbook.core.plotting.graphly import GraphlyPlotter, PlotlyPlotDef, PlotTyp
 from runbook.core.timeseries.transforms import ts_by_year
 
 
-def _as_dummy_cutoff(dts: pd.DatetimeIndex, dash_from: dt.datetime) -> pd.Timestamp:
-    """Map a real date to the dummy plotting year used by ts_by_year."""
-    return pd.Timestamp(year=int(dts[0].year), month=dash_from.month, day=dash_from.day)
-
-
 def _row_heights_for_rows(rows: int) -> list[float] | None:
     """Handle row heights for rows."""
     match rows:
@@ -59,6 +54,11 @@ def plot_seasonal(
 ) -> plotly.graph_objs._figure.Figure:
     """Plot seasonal years, optional comparisons, and an optional cumulative panel.
 
+    Monthly, weekly, and business-day windows include a month-end boundary unless
+    it starts the next cycle. Other end boundaries remain exclusive. Years label
+    the start of each cycle; ``dash_from`` uses the original observation dates.
+    Holidays are not hidden by default on the artificial seasonal date axis.
+
     ``current_year`` defaults to the latest available year at or before today's
     calendar year, falling back to the latest available year for future-only data.
     Only years before the selected year are used as history.
@@ -83,8 +83,10 @@ def plot_seasonal(
     if not isinstance(df.index, pd.DatetimeIndex):
         raise TypeError("df index must be a pandas DatetimeIndex.")
 
-    df_by_year = ts_by_year(
-        df,
+    if holiday_countries is None:
+        holiday_countries = []
+
+    transform_kwargs: dict[str, tp.Any] = dict(
         frequency=frequency,
         start_day=start_day,
         start_month=start_month,
@@ -94,6 +96,7 @@ def plot_seasonal(
         over_year=over_year,
         dummy_date_index=True,
     )
+    df_by_year = ts_by_year(df, **transform_kwargs)
     if df_by_year.empty:
         raise ValueError("No seasonal data available after ts_by_year transformation.")
 
@@ -117,12 +120,21 @@ def plot_seasonal(
     avg_5y = history.iloc[:, -5:].mean(axis=1) if five_year and not history.empty else None
     prev_year = int(history.columns[-1]) if not history.empty else None
 
-    dash_cutoff = _as_dummy_cutoff(dts, dash_from) if dash_from is not None else None
-    dash_year = dash_from.year if dash_from is not None else None
+    forecast_mask = pd.DataFrame(False, index=dts, columns=df_by_year.columns)
+    if dash_from is not None:
+        cutoff = pd.Timestamp(dash_from)
+        if df.index.tz is not None and cutoff.tzinfo is None:
+            cutoff = cutoff.tz_localize(df.index.tz)
+        forecast_mask = (
+            ts_by_year(df.where(df.index.to_series() >= cutoff, axis=0), **transform_kwargs)
+            .reindex_like(df_by_year)
+            .notna()
+        )
+    forecast_years = [int(year) for year in df_by_year.columns if forecast_mask[year].any()]
+    dash_year = forecast_years[0] if forecast_years else None
     forecast_year_colors = ["black", "red", "blue", "green", "orange"]
     forecast_color_by_year: dict[int, str] = {}
     if dash_year is not None:
-        forecast_years = sorted(int(y) for y in df_by_year.columns if int(y) >= dash_year)
         for i, forecast_year in enumerate(forecast_years):
             forecast_color_by_year[forecast_year] = forecast_year_colors[i % len(forecast_year_colors)]
 
@@ -140,26 +152,14 @@ def plot_seasonal(
             base_style = {"line": {"color": "blue", "width": 1}}
         series = df_by_year[year]
 
-        if dash_cutoff is None or dash_year is None or year < dash_year:
+        if not forecast_mask[year].any():
             seasonal_data[base_name] = series
             if base_style:
                 series_styles[base_name] = base_style
             continue
 
-        if year > dash_year:
-            fcst_name = f"{year}_{dash_name}"
-            seasonal_data[fcst_name] = series
-            series_styles[fcst_name] = {
-                "line": {
-                    "color": forecast_color_by_year.get(year, forecast_year_colors[0]),
-                    "width": 2,
-                    "dash": "dash",
-                }
-            }
-            continue
-
-        hist_series = series.where(dts < dash_cutoff)
-        fcst_series = series.where(dts >= dash_cutoff)
+        hist_series = series.where(~forecast_mask[year])
+        fcst_series = series.where(forecast_mask[year])
 
         if hist_series.notna().any():
             seasonal_data[base_name] = hist_series

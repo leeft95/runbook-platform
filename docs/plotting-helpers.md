@@ -97,6 +97,35 @@ with section.grid(columns=1) as grid:
     grid.plot(seasonality_ref)
 ```
 
+For a July–June contract cycle, overlay each cycle using its starting year as
+the legend label (`2025` means July 2025 through June 2026):
+
+```python
+seasonality = plot_seasonal(
+    gas_curve[["price"]],
+    frequency="M",
+    start_month=7,
+    end_month=6,
+    over_year=True,
+    dash_from=pd.Timestamp("2026-03-01"),
+    show_legend=True,
+)
+```
+
+Monthly, weekly (`frequency="W"`), and business-day (`frequency="B"`) windows
+include their final month-end date, including June 30 in this example. A cutoff
+that starts the next cycle remains exclusive, so adjacent years do not overlap.
+Other explicit cutoffs, such as July 1 or July 15, also remain exclusive.
+`dash_from` compares
+the original observation dates: March–June 2026 is dashed on the `2025` curve,
+and later cycles are entirely dashed. Missing months keep their calendar positions.
+
+`B` uses Monday–Friday observations; `W` keeps the last observation in each calendar
+week. Both support the same contract-cycle and forecast arguments as the monthly
+example. Weekly alignment uses local calendar dates across daylight-saving changes.
+Seasonal plots do not hide holidays by default because their x-axis dates are
+artificial; `holiday_countries` can explicitly enable holiday breaks.
+
 The flags separate **which lines appear** from **how they are calculated**:
 
 | Argument | Effect |

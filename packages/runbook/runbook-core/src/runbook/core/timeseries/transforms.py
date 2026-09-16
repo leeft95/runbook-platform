@@ -44,6 +44,11 @@ def _normalize_weekly(series: pd.Series) -> pd.Series:
 
 def _position_index(index: pd.DatetimeIndex, start_ts: pd.Timestamp, frequency: str) -> NDArray[np.int64]:
     """Handle position index."""
+    # Seasonal slots follow local calendar dates, not elapsed hours across DST.
+    if index.tz is not None:
+        index = index.tz_localize(None)
+        start_ts = start_ts.tz_localize(None)
+
     if frequency == "D":
         return np.asarray((index - start_ts) // pd.Timedelta(days=1), dtype=np.int64)
 
@@ -55,15 +60,8 @@ def _position_index(index: pd.DatetimeIndex, start_ts: pd.Timestamp, frequency: 
         return np.asarray((index.year - start_ts.year) * 12 + (index.month - start_ts.month), dtype=np.int64)
 
     if frequency == "B":
-        idx_days = index
-        if idx_days.tz is not None:
-            idx_days = idx_days.tz_localize(None)
-        idx_days = idx_days.normalize().to_numpy(dtype="datetime64[D]")
-        start_day_np = (
-            np.datetime64(start_ts.tz_localize(None).date(), "D")
-            if start_ts.tz is not None
-            else np.datetime64(start_ts.date(), "D")
-        )
+        idx_days = index.normalize().to_numpy(dtype="datetime64[D]")
+        start_day_np = np.datetime64(start_ts.date(), "D")
         return np.asarray(np.busday_count(start_day_np, idx_days), dtype=np.int64)
 
     raise ValueError(f"Unsupported frequency: {frequency}")
@@ -118,7 +116,9 @@ def ts_by_year(
     over_year: if the timseries is seasonal and the year should be considered to start at the start_month and end at the end_month,
     e.g. for a seasonal timeseries that starts in October and ends in September, set start_month to 10 and end_month to 9, and set over_year to True.
     dummy_date_index: if True, replace the integer slot index with a dummy DatetimeIndex for plotting multi-year overlays.
-    In this mode, rows where all columns are NaN are trimmed before building the x-axis.
+    In this mode, rows where all columns are NaN are trimmed without shifting the remaining dates.
+    Monthly, weekly, and business-day windows include a month-end boundary, unless it
+    is the next cycle's start. Other end boundaries are exclusive.
     """
     if frequency not in _FRAME_LEN_BY_FREQUENCY:
         supported = ", ".join(_FRAME_LEN_BY_FREQUENCY)
@@ -178,7 +178,7 @@ def ts_by_year(
     if frequency == "W":
         series = _normalize_weekly(series)
 
-    # End boundary is exclusive to keep the one-year default window stable.
+    # Resolve the ending year before adjusting month-end boundaries.
     end_year_offset = 1 if over_year or (end_month, end_day) <= (start_month, start_day) else 0
 
     start_of_first_calendar_year = _timestamp_for_boundary(first_date.year, start_month, start_day, tz)
@@ -199,6 +199,12 @@ def ts_by_year(
         anchor_year = int(anchor_year_raw)
         start_ts = _timestamp_for_boundary(anchor_year, start_month, start_day, tz)
         end_ts = _timestamp_for_boundary(anchor_year + end_year_offset, end_month, end_day, tz)
+        if (
+            frequency in {"M", "W", "B"}
+            and end_ts.is_month_end
+            and end_ts != _timestamp_for_boundary(anchor_year + 1, start_month, start_day, tz)
+        ):
+            end_ts += pd.offsets.MonthBegin()
         in_window = series[(series.index >= start_ts) & (series.index < end_ts)]
         if in_window.empty:
             continue
@@ -219,9 +225,9 @@ def ts_by_year(
 
     out = out.dropna(axis=1, how="all")
     if dummy_date_index:
-        out = out.dropna(axis=0, how="all")
         plot_year = pd.Timestamp.today().year
         out.index = _dummy_plot_index(len(out.index), frequency, start_month, start_day, year=plot_year)
+        out = out.dropna(axis=0, how="all")
 
     return out
 

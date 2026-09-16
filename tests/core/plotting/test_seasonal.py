@@ -171,6 +171,55 @@ def test_plot_seasonal_forces_dummy_date_index() -> None:
     assert not isinstance(fig.data[0].x[0], (int, np.integer))
 
 
+@pytest.mark.parametrize("frequency", ["ME", "MS"])
+def test_plot_seasonal_monthly_keeps_december_and_partial_years(frequency: str) -> None:
+    dates = pd.date_range("2026-07-01", periods=24, freq=frequency)
+    df = pd.DataFrame({"value": np.arange(len(dates), dtype=float)}, index=dates)
+
+    fig = plot_seasonal(df, frequency="M", current_year=2026, show_legend=True)
+
+    assert {trace.name for trace in fig.data} == {"2026", "2027", "2028"}
+    for trace in fig.data:
+        expected = df.loc[df.index.year == int(trace.name), "value"]
+        plotted = pd.Series(trace.y, index=pd.DatetimeIndex(trace.x)).dropna()
+        assert pd.DatetimeIndex(trace.x).month.tolist() == list(range(1, 13))
+        assert plotted.index.month.tolist() == expected.index.month.tolist()
+        np.testing.assert_array_equal(plotted.to_numpy(), expected.to_numpy())
+
+
+@pytest.mark.parametrize(
+    ("frequency", "sample_frequency", "boundaries", "expected_start", "expected_end"),
+    [
+        ("M", "MS", {"end_month": 6}, "2024-01-01", "2024-06-30"),
+        ("M", "MS", {"end_day": 15}, "2024-01-01", "2024-12-15"),
+        ("M", "MS", {"start_month": 10, "over_year": True}, "2024-10-01", "2025-10-01"),
+        (
+            "M",
+            "MS",
+            {"start_month": 10, "end_month": 5, "end_day": 1, "over_year": True},
+            "2024-10-01",
+            "2025-05-01",
+        ),
+        ("D", "D", {}, "2024-01-01", "2024-12-31"),
+        ("W", "W-TUE", {}, "2024-01-01", "2025-01-01"),
+        ("B", "B", {}, "2024-01-01", "2025-01-01"),
+        ("W", "W-TUE", {"end_day": 1, "end_month": 7}, "2024-01-01", "2024-07-01"),
+        ("B", "B", {"end_day": 15, "end_month": 7}, "2024-01-01", "2024-07-15"),
+    ],
+)
+def test_plot_seasonal_preserves_custom_windows_and_other_frequencies(
+    frequency, sample_frequency, boundaries, expected_start, expected_end
+) -> None:
+    dates = pd.date_range("2024-01-01", "2025-12-31", freq=sample_frequency)
+    df = pd.DataFrame({"value": np.arange(len(dates), dtype=float)}, index=dates)
+
+    fig = plot_seasonal(df, frequency=frequency, current_year=2024, vs_average=False, **boundaries)
+
+    trace = next(trace for trace in fig.data if trace.name == "2024")
+    expected = df.loc[(df.index >= expected_start) & (df.index < expected_end), "value"]
+    np.testing.assert_array_equal(pd.Series(trace.y).dropna().to_numpy(), expected.to_numpy())
+
+
 @pytest.mark.parametrize("year", [2022, 2024, 2025])
 def test_plot_seasonal_forecast_matches_historical_color(year: int) -> None:
     fig = plot_seasonal(
@@ -188,6 +237,150 @@ def test_plot_seasonal_forecast_matches_historical_color(year: int) -> None:
         future = next(trace for trace in fig.data if trace.name == f"{year + 1}_Projection")
         assert future.line.color == "red"
         assert future.line.dash == "dash"
+
+
+@pytest.mark.parametrize("start_month", [7, 10])
+@pytest.mark.parametrize("sample_frequency", ["ME", "MS"])
+@pytest.mark.parametrize("forecast_offset", [-24, 2, 8, 36])
+def test_plot_seasonal_contract_cycle_splits_forecast_on_actual_dates(
+    start_month, sample_frequency, forecast_offset
+) -> None:
+    start = pd.Timestamp(2024, start_month, 1)
+    dates = pd.date_range(start, periods=36, freq=sample_frequency)
+    df = pd.DataFrame({"value": np.arange(36, dtype=float)}, index=dates)
+    cutoff = start + pd.DateOffset(years=1, months=forecast_offset, days=14)
+    fig = plot_seasonal(
+        df,
+        frequency="M",
+        start_month=start_month,
+        end_month=start_month - 1,
+        over_year=True,
+        dash_from=cutoff,
+        current_year=2025,
+        ytd=True,
+        ytd_cum_sum=True,
+    )
+
+    traces = {trace.name: trace for trace in fig.data}
+    expected_names = set()
+    months = [(start_month - 1 + offset) % 12 + 1 for offset in range(12)]
+    for year in (2024, 2025, 2026):
+        cycle_start = pd.Timestamp(year, start_month, 1)
+        cycle = df.loc[(df.index >= cycle_start) & (df.index < cycle_start + pd.DateOffset(years=1)), "value"]
+        for name, expected in (
+            (str(year), cycle.loc[cycle.index < cutoff]),
+            (f"{year}_Forecast", cycle.loc[cycle.index >= cutoff]),
+        ):
+            if expected.empty:
+                continue
+            expected_names.add(name)
+            assert name in traces
+            trace = traces[name]
+            plotted = pd.Series(trace.y, index=pd.DatetimeIndex(trace.x)).dropna()
+            assert pd.DatetimeIndex(trace.x).month.tolist() == months
+            assert plotted.index.month.tolist() == expected.index.month.tolist()
+            np.testing.assert_array_equal(plotted.to_numpy(), expected.to_numpy())
+            if name.endswith("_Forecast"):
+                assert trace.line.dash == "dash"
+                if str(year) in traces:
+                    assert trace.line.color == traces[str(year)].line.color
+    assert {trace.name for trace in fig.data if trace.xaxis == "x"} == expected_names
+    np.testing.assert_array_equal(traces["YTD cumulative change"].y, np.arange(12, 24).cumsum())
+    np.testing.assert_array_equal(traces["Cur Yr vs Y-1"].y, np.full(12, 12))
+    np.testing.assert_array_equal(traces["Cum Cur Yr vs Y-1"].y, 12 * np.arange(1, 13))
+
+
+@pytest.mark.parametrize("tz", [None, "Europe/London"])
+def test_plot_seasonal_partial_contract_forecast_keeps_its_months(tz) -> None:
+    dates = pd.date_range("2024-07-01", periods=23, freq="ME", tz=tz)
+    df = pd.DataFrame({"value": np.arange(23, dtype=float)}, index=dates)
+    fig = plot_seasonal(
+        df,
+        frequency="M",
+        start_month=7,
+        end_month=6,
+        over_year=True,
+        dash_from=pd.Timestamp("2026-03-15"),
+        current_year=2025,
+        vs_average=False,
+    )
+
+    trace = next(trace for trace in fig.data if trace.name == "2025_Forecast")
+    plotted = pd.Series(trace.y, index=pd.DatetimeIndex(trace.x)).dropna()
+    assert plotted.index.month.tolist() == [3, 4, 5]
+    assert plotted.tolist() == [20, 21, 22]
+
+
+@pytest.mark.parametrize(("frequency", "sample_frequency"), [("B", "B"), ("W", "W-FRI")])
+@pytest.mark.parametrize("start_month", [1, 7, 10])
+@pytest.mark.parametrize("tz", [None, "Europe/London"])
+@pytest.mark.parametrize(
+    "cutoff_date", ["2022-01-01", "2024-02-29", "2025-03-15", "2025-07-01", "2025-12-31", "2026-03-30", "2028-01-01"]
+)
+def test_plot_seasonal_business_observations_and_forecasts_are_preserved(
+    frequency, sample_frequency, start_month, tz, cutoff_date
+) -> None:
+    start = pd.Timestamp(2023, start_month, 1, tz=tz)
+    end = start + pd.DateOffset(years=3, months=3)
+    dates = pd.date_range(start, end, freq=sample_frequency, inclusive="left")
+    df = pd.DataFrame({"value": np.arange(len(dates), dtype=float)}, index=dates)
+    df = df.drop(df.index[7::23])
+    df.iloc[11::29, 0] = np.nan
+    cutoff = pd.Timestamp(cutoff_date, tz=tz)
+    fig = plot_seasonal(
+        df,
+        frequency=frequency,
+        start_month=start_month,
+        end_month=(start_month - 2) % 12 + 1,
+        over_year=start_month != 1,
+        dash_from=pd.Timestamp(cutoff_date),
+        current_year=2024,
+        ytd=True,
+        ytd_cum_sum=True,
+    )
+
+    traces = {trace.name: trace for trace in fig.data if trace.xaxis == "x"}
+    expected_names = set()
+    for year in (2023, 2024, 2025, 2026):
+        cycle_start = pd.Timestamp(year, start_month, 1, tz=tz)
+        cycle = df.loc[(df.index >= cycle_start) & (df.index < cycle_start + pd.DateOffset(years=1)), "value"].dropna()
+        if year == 2024:
+            cumulative = next(trace for trace in fig.data if trace.name == "YTD cumulative change")
+            np.testing.assert_allclose(pd.Series(cumulative.y).dropna().to_numpy(), cycle.cumsum().to_numpy())
+        for name, expected in (
+            (str(year), cycle.loc[cycle.index < cutoff]),
+            (f"{year}_Forecast", cycle.loc[cycle.index >= cutoff]),
+        ):
+            if expected.empty:
+                continue
+            expected_names.add(name)
+            assert name in traces
+            np.testing.assert_array_equal(pd.Series(traces[name].y).dropna().to_numpy(), expected.to_numpy())
+            if name.endswith("_Forecast"):
+                assert traces[name].line.dash == "dash"
+    assert traces.keys() == expected_names
+    for axis in fig.select_xaxes():
+        assert not any(br.values for br in axis.rangebreaks)
+        if frequency == "W":
+            assert not axis.rangebreaks
+
+
+def test_plot_seasonal_weekly_dummy_weekends_remain_visible() -> None:
+    plot_year = pd.Timestamp.today().year
+    start_month = next(month for month in range(1, 13) if pd.Timestamp(plot_year, month, 1).dayofweek >= 5)
+    dates = pd.date_range(pd.Timestamp(2024, start_month, 1), periods=53, freq="W-FRI")
+    fig = plot_seasonal(
+        pd.DataFrame({"value": np.arange(len(dates), dtype=float)}, index=dates),
+        frequency="W",
+        start_month=start_month,
+        end_month=start_month,
+        end_day=1,
+        over_year=True,
+        vs_average=False,
+    )
+
+    assert pd.Timestamp(fig.data[0].x[0]).dayofweek >= 5
+    assert not fig.layout.xaxis.rangebreaks
 
 
 def test_plot_cot_builds_two_by_three_layout_with_secondary_axes() -> None:

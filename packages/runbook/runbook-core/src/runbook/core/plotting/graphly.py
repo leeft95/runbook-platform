@@ -616,7 +616,7 @@ class GraphlyPlotter:
             return None
 
         try:
-            return str(pd.tseries.frequencies.to_offset(freq).name)
+            return str(pd.tseries.frequencies.to_offset(freq).freqstr)
         except (TypeError, ValueError):
             return None
 

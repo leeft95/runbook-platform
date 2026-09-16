@@ -2,7 +2,73 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 from runbook.core.timeseries.transforms import ts_by_year
+
+
+@pytest.mark.parametrize(("start_month", "end_month", "end_day"), [(1, 12, 31), (7, 6, 31), (7, 6, 30), (10, 9, 30)])
+def test_ts_by_year_monthly_keeps_last_month_of_each_cycle(start_month, end_month, end_day) -> None:
+    dates = pd.date_range(pd.Timestamp(2024, start_month, 1), periods=36, freq="ME")
+    df = pd.DataFrame({"value": np.arange(36, dtype=float)}, index=dates)
+
+    result = ts_by_year(df, frequency="M", start_month=start_month, start_day=1, end_month=end_month, end_day=end_day)
+
+    assert list(result.columns) == [2024, 2025, 2026]
+    np.testing.assert_array_equal(result.to_numpy(), np.arange(36).reshape(3, 12).T)
+
+
+def test_ts_by_year_dummy_dates_preserve_missing_month_positions() -> None:
+    dates = pd.to_datetime(["2025-11-30", "2026-01-31", "2026-06-30"])
+    result = ts_by_year(
+        pd.Series([1.0, 2.0, 3.0], index=dates),
+        frequency="M",
+        start_month=7,
+        start_day=1,
+        end_month=7,
+        end_day=1,
+        dummy_date_index=True,
+    )
+
+    assert result.index.month.tolist() == [11, 1, 6]
+    assert result.index.year.tolist() == [result.index[0].year, result.index[0].year + 1, result.index[0].year + 1]
+    assert result[2025].tolist() == [1.0, 2.0, 3.0]
+
+
+@pytest.mark.parametrize(("frequency", "sample_frequency"), [("B", "B"), ("W", "W-FRI")])
+@pytest.mark.parametrize("start_month", [1, 7, 10])
+@pytest.mark.parametrize("tz", [None, "Europe/London"])
+def test_ts_by_year_business_cycles_keep_the_final_observation(frequency, sample_frequency, start_month, tz) -> None:
+    start = pd.Timestamp(2019, start_month, 1, tz=tz)
+    dates = pd.date_range(start, start + pd.DateOffset(years=9), freq=sample_frequency, inclusive="left")
+    series = pd.Series(np.arange(len(dates), dtype=float), index=dates)
+    result = ts_by_year(
+        series,
+        frequency=frequency,
+        start_month=start_month,
+        start_day=1,
+        end_month=(start_month - 2) % 12 + 1,
+        end_day=31,
+    )
+
+    for year in range(2019, 2028):
+        cycle_start = pd.Timestamp(year, start_month, 1, tz=tz)
+        expected = series.loc[(series.index >= cycle_start) & (series.index < cycle_start + pd.DateOffset(years=1))]
+        np.testing.assert_array_equal(result[year].dropna().to_numpy(), expected.to_numpy())
+    assert result.count().sum() == len(series)
+
+
+@pytest.mark.parametrize("month", [1, 2])
+def test_ts_by_year_business_month_end_anniversaries_do_not_overlap(month) -> None:
+    dates = pd.bdate_range("2019-01-01", "2028-12-31")
+    series = pd.Series(np.arange(len(dates), dtype=float), index=dates)
+    result = ts_by_year(series, frequency="B", start_month=month, start_day=31)
+
+    for year in result.columns:
+        start = pd.Timestamp(year, month, 1) + pd.offsets.MonthEnd()
+        end = pd.Timestamp(year + 1, month, 1) + pd.offsets.MonthEnd()
+        expected = series.loc[(series.index >= start) & (series.index < end)]
+        np.testing.assert_array_equal(result[year].dropna().to_numpy(), expected.to_numpy())
+    assert result.count().sum() == len(series)
 
 
 def test_ts_by_year_daily_window_includes_start_boundary() -> None:
