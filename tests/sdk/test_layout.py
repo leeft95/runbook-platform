@@ -495,7 +495,7 @@ def test_stack_table_content_width_survives_compilation_without_changing_occupan
     assert (table_block.row, table_block.col, table_block.col_span) == (1, 1, manifest.page.columns)
 
 
-def test_stack_table_defaults_to_fill_and_pdl_01() -> None:
+def test_stack_table_defaults_to_content_and_pdl_02() -> None:
     ref = TableArtifactRef(data_ref="tables/prices.parquet")
     layout = Report("Test")
     with layout.stack() as report_stack:
@@ -504,8 +504,22 @@ def test_stack_table_defaults_to_fill_and_pdl_01() -> None:
     manifest = compile_layout(_ctx(), layout)
     table_block = next(block for block in manifest.page.blocks if isinstance(block, PDLTableBlock))
 
+    assert table_block.width == "content"
+    assert manifest.schema_version == "pdl-core/0.2"
+
+
+def test_stack_table_explicit_fill_keeps_pdl_01_wire_default() -> None:
+    ref = TableArtifactRef(data_ref="tables/prices.parquet")
+    layout = Report("Test")
+    with layout.stack() as report_stack:
+        report_stack.table(ref, name="prices", width="fill")
+
+    manifest = compile_layout(_ctx(), layout)
+    table_block = next(block for block in manifest.page.blocks if isinstance(block, PDLTableBlock))
+
     assert table_block.width == "fill"
     assert manifest.schema_version == "pdl-core/0.1"
+    assert "width" not in manifest.model_dump(mode="json")["page"]["blocks"][0]
 
 
 def test_table_artifact_style_links_flow_through_report_compilation() -> None:
@@ -591,12 +605,12 @@ def test_market_dashboard_golden_executes_and_uses_renderer_extension(tmp_path, 
     manifest = PDLPage.model_validate(store.get_json(result.stage3_ref).get("page"))
     assert len(manifest.blocks) >= 100
     stage3 = store.get_json(result.stage3_ref)
-    assert stage3["schema_version"] == "pdl-core/0.1"
-    assert all("width" not in block for block in stage3["page"]["blocks"] if block["type"] == "table")
-    legacy_schema = json.loads(
-        Path("packages/runbook/runbook-core/src/runbook/core/pdl/spec.json").read_text(encoding="utf-8")
+    assert stage3["schema_version"] == "pdl-core/0.2"
+    assert all(block.get("width") == "content" for block in stage3["page"]["blocks"] if block["type"] == "table")
+    current_schema = json.loads(
+        Path("packages/runbook/runbook-core/src/runbook/core/pdl/spec-0.2.json").read_text(encoding="utf-8")
     )
-    jsonschema.Draft202012Validator(legacy_schema).validate(stage3)
+    jsonschema.Draft202012Validator(current_schema).validate(stage3)
     html = store.get(result.html_ref).decode()
     assert "Market Dashboard" in html and "Price Markets" in html
 

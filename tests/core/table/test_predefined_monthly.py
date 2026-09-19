@@ -31,13 +31,13 @@ def test_table_with_linked_plots_monthly_applies_column_overrides_and_row_suffix
     )
     table_df = out["Commodity"]["data"]
 
-    assert table_df.index.name == "Commodity"
-    assert not isinstance(table_df.index, pd.RangeIndex)
+    assert isinstance(table_df.index, pd.RangeIndex)
+    assert list(table_df["Commodity"]) == ["Brent [MA]", "WTI [Sum]"]
     assert all(item["label"] != "Commodity" for item in out["Commodity"]["style"]["sizing"]["columns"])
     assert "10d Change" in table_df.columns
     assert "20d Change" in table_df.columns
-    assert "Brent [MA]" in set(table_df.index.astype(str))
-    assert "WTI [Sum]" in set(table_df.index.astype(str))
+    assert "Brent [MA]" in set(table_df["Commodity"])
+    assert "WTI [Sum]" in set(table_df["Commodity"])
 
 
 def test_table_with_linked_plots_monthly_uses_moving_average_type_for_ma_mode() -> None:
@@ -52,7 +52,7 @@ def test_table_with_linked_plots_monthly_uses_moving_average_type_for_ma_mode() 
     )
     table_df = out["Asset"]["data"]
 
-    actual_10d = float(table_df.loc[table_df.index == "x", "10d MA"].iloc[0])
+    actual_10d = float(table_df.loc[table_df["Asset"] == "x", "10d MA"].iloc[0])
     expected_10d = float(
         pd.Series(calculate_moving_average(raw_df["x"], window=10, kind=MovingAvgModes.EXPONENTIAL)).iloc[-1]
     )
@@ -74,7 +74,7 @@ def test_table_with_linked_plots_monthly_window_highlighting_routes_to_window_mo
     )
     table_df = out["Asset"]["data"]
 
-    row = table_df.loc[table_df.index == "x"].iloc[0]
+    row = table_df.loc[table_df["Asset"] == "x"].iloc[0]
     expected_mean = float(raw_df["x"].rolling(5).mean().iloc[-2])
     expected_std = float(raw_df["x"].rolling(5).std().iloc[-2])
 
@@ -103,3 +103,19 @@ def test_table_with_linked_plots_monthly_hides_helper_columns_in_rendered_html()
     assert "_std" not in html
     assert "_mean1" not in html
     assert "_std1" not in html
+
+
+def test_table_with_linked_plots_monthly_label_column_is_formatted_and_helper_hidden() -> None:
+    idx = pd.date_range("2024-01-01", periods=260, freq="D")
+    raw_df = pd.DataFrame({"x": np.linspace(1.0, 260.0, num=len(idx))}, index=idx)
+
+    out = table_with_linked_plots_monthly(raw_df, header="Asset", row_plot_links=True)
+    table_df = out["Asset"]["data"]
+    html = render_table_html(table_df, out["Asset"]["style"])
+
+    assert table_df.columns[0] == "Asset"
+    assert out["Asset"]["style"]["options"]["show_index"] is False
+    assert out["Asset"]["style"]["options"]["hidden_columns"] == ["_plot_link"]
+    assert ">x</a>" in html
+    assert "_plot_link" not in html
+    assert ">260<" in html

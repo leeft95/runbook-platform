@@ -163,7 +163,7 @@ class PDLBlockBase(BaseModel):
 class PDLTableBlock(PDLBlockBase, TableArtifactRef):
     type: Literal["table"] = "table"
     columns: list[PDLColumn] | None = None
-    width: PDLTableWidth = Field(default="fill", exclude_if=lambda value: value == "fill")
+    width: PDLTableWidth = Field(default="content", exclude_if=lambda value: value == "fill")
 
     @field_validator("columns")
     @classmethod
@@ -264,6 +264,34 @@ class PDLManifest(BaseModel):
     # e.g. plotly dash with a specific component/styling system.
     extensions: dict[str, dict[str, Any]] | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_table_width(cls, value: Any) -> Any:
+        """Keep omitted widths in persisted manifests on the legacy fill default."""
+        if not isinstance(value, dict):
+            return value
+        page = value.get("page")
+        if not isinstance(page, dict) or not isinstance(page.get("blocks"), list):
+            return value
+        blocks = page["blocks"]
+        normalized_blocks: list[Any] = []
+        changed = False
+        for block in blocks:
+            if isinstance(block, dict) and block.get("type") == "table" and "width" not in block:
+                normalized_block = dict(block)
+                normalized_block["width"] = "fill"
+                normalized_blocks.append(normalized_block)
+                changed = True
+            else:
+                normalized_blocks.append(block)
+        if not changed:
+            return value
+        normalized_page = dict(page)
+        normalized_page["blocks"] = normalized_blocks
+        normalized = dict(value)
+        normalized["page"] = normalized_page
+        return normalized
+
     @model_validator(mode="after")
     def validate_schema_version_features(self) -> "PDLManifest":
         requires_v02 = any(
@@ -273,7 +301,7 @@ class PDLManifest(BaseModel):
         )
 
         if requires_v02 and self.schema_version == "pdl-core/0.1":
-            raise ValueError("pdl-core/0.1 does not support linked or content-width table blocks; use pdl-core/0.2")
+            raise ValueError("pdl-core/0.1 does not support linked or explicitly sized table blocks; use pdl-core/0.2")
 
         return self
 

@@ -30,6 +30,79 @@ _CURRENCY_SYMBOLS = {
     "JPY": "¥",
 }
 
+_AG_GRID_COMPONENTS_MARKER = "runbook-ag-grid-components-v1"
+_AG_GRID_COMPONENTS_SCRIPT = r"""<script id="runbook-ag-grid-components-v1">
+(function () {
+    "use strict";
+
+    const components = window.dashAgGridComponentFunctions =
+        window.dashAgGridComponentFunctions || {};
+
+    function textValue(params) {
+        if (params.valueFormatted != null) {
+            return String(params.valueFormatted);
+        }
+        return params.value == null ? "" : String(params.value);
+    }
+
+    function link(href, text, kind) {
+        if (!href) {
+            return text;
+        }
+        return React.createElement(
+            "a",
+            {
+                href: String(href),
+                "data-runbook-link-kind": kind || "",
+                onClick: function (event) {
+                    event.stopPropagation();
+                },
+            },
+            text,
+        );
+    }
+
+    components.runbookCellLinkRenderer = function (params) {
+        const field = params.runbookLinksField;
+        const links = field && params.data && params.data[field];
+        const linkField = params.runbookLinkField;
+        const href = links && links[linkField];
+        return link(href, textValue(params), params.runbookLinkKind);
+    };
+
+    components.runbookIndexLinkRenderer = function (params) {
+        const field = params.runbookIndexLinksField;
+        const target = field && params.data && params.data[field];
+        return link(target && target.href, textValue(params), target && target.kind);
+    };
+
+    components.runbookHeaderLinkRenderer = function (params) {
+        const text = params.displayName || "";
+        return link(
+            params.runbookHeaderLink,
+            text,
+            params.runbookHeaderLinkKind,
+        );
+    };
+})();
+</script>"""
+
+
+def register_ag_grid_components(app: Any) -> None:
+    """Register SDK-owned AG Grid components on a host Dash app.
+
+    Dash AG Grid resolves named renderers from this browser global. Injecting
+    the tiny registry into the host's normal index keeps it available to
+    embedded pages and to layouts that are created after app startup.
+    """
+    index_string = getattr(app, "index_string", None)
+    if not isinstance(index_string, str) or _AG_GRID_COMPONENTS_MARKER in index_string:
+        return
+    if "</head>" in index_string:
+        app.index_string = index_string.replace("</head>", f"{_AG_GRID_COMPONENTS_SCRIPT}</head>", 1)
+    else:
+        app.index_string = f"{_AG_GRID_COMPONENTS_SCRIPT}{index_string}"
+
 
 def ag_grid_default_col_def() -> dict[str, Any]:
     """Return renderer defaults for client-side analytical table behaviour."""
@@ -71,13 +144,17 @@ def build_ag_grid_column_defs(
             href, kind = index_header_link
             index_definition.update(
                 {
-                    "headerLink": href,
-                    "headerLinkKind": kind,
-                    "headerComponent": {"function": _header_link_renderer()},
+                    "headerComponentParams": {"runbookHeaderLink": href, "runbookHeaderLinkKind": kind},
+                    "headerComponent": "runbookHeaderLinkRenderer",
                 }
             )
         if index_links_field is not None:
-            index_definition["cellRenderer"] = {"function": _index_link_renderer(index_links_field)}
+            index_definition.update(
+                {
+                    "cellRendererParams": {"runbookIndexLinksField": index_links_field},
+                    "cellRenderer": "runbookIndexLinkRenderer",
+                }
+            )
         definitions.append(index_definition)
     for semantic in merge_columns(schema, columns):
         role = semantic.role
@@ -131,18 +208,31 @@ def build_ag_grid_column_defs(
                 thousands_separator=resolved.thousands,
             )
         if cell_style_field is not None:
-            definition["cellStyle"] = {"function": _cell_style_function(cell_style_field)}
+            definition.update(
+                {
+                    "cellStyle": {
+                        "function": "(params.data && params.data["
+                        f"{json.dumps(cell_style_field)}] && params.data[{json.dumps(cell_style_field)}][params.colDef.field]) || null"
+                    },
+                }
+            )
         if cell_links_field is not None and cell_link_kinds and semantic.field in cell_link_kinds:
-            definition["cellRenderer"] = {
-                "function": _cell_link_renderer(cell_links_field, semantic.field, cell_link_kinds[semantic.field])
-            }
+            definition.update(
+                {
+                    "cellRendererParams": {
+                        "runbookLinksField": cell_links_field,
+                        "runbookLinkField": semantic.field,
+                        "runbookLinkKind": cell_link_kinds[semantic.field],
+                    },
+                    "cellRenderer": "runbookCellLinkRenderer",
+                }
+            )
         if header_links is not None and semantic.field in header_links:
             href, kind = header_links[semantic.field]
             definition.update(
                 {
-                    "headerLink": href,
-                    "headerLinkKind": kind,
-                    "headerComponent": {"function": _header_link_renderer()},
+                    "headerComponentParams": {"runbookHeaderLink": href, "runbookHeaderLinkKind": kind},
+                    "headerComponent": "runbookHeaderLinkRenderer",
                 }
             )
         definitions.append(definition)
@@ -160,52 +250,6 @@ def _header_style(resolved: ResolvedTableStyle | None) -> dict[str, str]:
         "fontSize": global_style.font_size,
         "textAlign": global_style.header_text_align,
     }
-
-
-def _cell_style_function(style_field: str) -> str:
-    """Read pre-resolved per-row style metadata without analyst JavaScript."""
-    return (
-        "function(params) { const styles = params.data && params.data["
-        f"{json.dumps(style_field)}] || {{}}; return styles[params.colDef.field] || null; }}"
-    )
-
-
-def _cell_link_renderer(links_field: str, field: str, kind: str) -> str:
-    """Render a semantic body link from renderer-owned row metadata."""
-    return (
-        "function(params) { "
-        f"const links = params.data && params.data[{json.dumps(links_field)}] || {{}}; "
-        f"const href = links[{json.dumps(field)}]; "
-        "const text = params.valueFormatted ?? (params.value == null ? '' : params.value); "
-        "if (!href) return text; "
-        "const anchor = document.createElement('a'); anchor.href = href; anchor.textContent = text; "
-        f"anchor.dataset.runbookLinkKind = {json.dumps(kind)}; "
-        "anchor.addEventListener('click', event => event.stopPropagation()); return anchor; }"
-    )
-
-
-def _index_link_renderer(links_field: str) -> str:
-    """Render a semantic index link from renderer-owned row metadata."""
-    return (
-        "function(params) { "
-        f"const link = params.data && params.data[{json.dumps(links_field)}]; "
-        "const text = params.valueFormatted ?? (params.value == null ? '' : params.value); "
-        "if (!link || !link.href) return text; "
-        "const anchor = document.createElement('a'); anchor.href = link.href; anchor.textContent = text; "
-        "anchor.dataset.runbookLinkKind = link.kind; "
-        "anchor.addEventListener('click', event => event.stopPropagation()); return anchor; }"
-    )
-
-
-def _header_link_renderer() -> str:
-    """Render a semantic header link from a column definition."""
-    return (
-        "function(params) { const definition = params.column.getColDef(); "
-        "const text = params.displayName || ''; const href = definition.headerLink; "
-        "if (!href) return text; const anchor = document.createElement('a'); anchor.href = href; "
-        "anchor.textContent = text; anchor.dataset.runbookLinkKind = definition.headerLinkKind || ''; "
-        "anchor.addEventListener('click', event => event.stopPropagation()); return anchor; }"
-    )
 
 
 def _formatter(
@@ -265,4 +309,4 @@ def _formatter(
     return {"function": source}
 
 
-__all__ = ["ag_grid_default_col_def", "build_ag_grid_column_defs"]
+__all__ = ["ag_grid_default_col_def", "build_ag_grid_column_defs", "register_ag_grid_components"]

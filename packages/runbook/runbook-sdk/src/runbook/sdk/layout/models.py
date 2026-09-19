@@ -22,7 +22,7 @@ class LayoutBlock:
     col_span: int = 1
     row_span: int = 1
     columns: list[PDLColumn] | None = None
-    table_width: PDLTableWidth = "fill"
+    table_width: PDLTableWidth = "content"
     extensions: dict[str, dict[str, Any]] | None = None
     label: str | None = None
     generated_name: bool = field(default=False, repr=False)

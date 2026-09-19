@@ -32,7 +32,7 @@ def _table_frame(ctx: SimpleNamespace) -> None:
 
 def _manifest(*links: TableLink, plots: list[str] | None = None) -> PDLManifest:
     return PDLManifest(
-        schema_version="pdl-core/0.2" if links else "pdl-core/0.1",
+        schema_version="pdl-core/0.2",
         title="Report",
         snapshot_id="snapshot",
         as_of="2026-01-01T00:00:00Z",
@@ -91,13 +91,16 @@ def test_default_routes_reject_dot_segments() -> None:
     assert table.children[0].children.children[1].children.role == "alert"
 
 
-def test_native_table_width_maps_fill_to_full_and_content_to_auto() -> None:
+def test_native_table_width_defaults_to_content_and_preserves_explicit_fill() -> None:
     frame = pd.DataFrame({"value": [1]})
-    fill = PDLTableBlock(name="fill", data_ref="table.parquet", row=1, col=1)
+    fill = PDLTableBlock(name="fill", data_ref="table.parquet", row=1, col=1, width="fill")
     content = PDLTableBlock(name="content", data_ref="table.parquet", row=1, col=1, width="content")
     explicit = PDLTableBlock(name="explicit", data_ref="table.parquet", row=1, col=1, width="6.5in")
 
+    assert fill.width == "fill"
     assert _build_native_table(frame, fill, "fill", SimpleNamespace()).style["width"] == "100%"
+    omitted = PDLTableBlock(name="omitted", data_ref="table.parquet", row=1, col=1)
+    assert _build_native_table(frame, omitted, "omitted", SimpleNamespace()).style["width"] == "auto"
     assert _build_native_table(frame, content, "content", SimpleNamespace()).style["width"] == "auto"
     assert _build_native_table(frame, explicit, "explicit", SimpleNamespace()).style["width"] == "6.5in"
 

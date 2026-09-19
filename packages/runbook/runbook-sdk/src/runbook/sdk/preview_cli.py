@@ -15,6 +15,7 @@ from runbook.sdk.context import Ctx
 from runbook.sdk.discovery import discover_report_definition
 from runbook.sdk.execution import ReportResult, execute_report, load_report_module, resolve_code_version
 from runbook.sdk.extensions.dash import DashPage, RouteResolver, render_dash_page
+from runbook.sdk.extensions.dash.tables import register_ag_grid_components
 from runbook.sdk.live import LiveDataResolver
 from runbook.sdk.live_sqlite import build_demo_live_provider
 from runbook.sdk.logging import configure_logging
@@ -124,6 +125,7 @@ def compose_dash_app(
         def resolve_preview_route(pathname: str | None) -> Any:
             return _preview_layout(page, pathname)
 
+    register_ag_grid_components(app)
     page.register_callbacks(app)
     return app, result, page
 

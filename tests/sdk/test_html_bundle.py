@@ -227,6 +227,7 @@ def test_style_ref_only_html_tables_keep_persisted_style(tmp_path) -> None:
         },
     )
     manifest = PDLManifest(
+        schema_version="pdl-core/0.2",
         title="Style-only table",
         snapshot_id="snapshot",
         as_of="2026-01-01T00:00:00Z",

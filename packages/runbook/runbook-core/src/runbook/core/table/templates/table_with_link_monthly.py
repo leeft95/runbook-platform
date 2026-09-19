@@ -16,8 +16,11 @@ from ..models import (
     TableColumnSizing,
     TableFormatNumber,
     TableFormatSpec,
+    TableFormatString,
     TableGlobalStyle,
     TableLink,
+    TableLinkDestination,
+    TableLinkKind,
     TableRule,
     TableSizing,
     TableStyleFormat,
@@ -319,16 +322,20 @@ def _build_monthly_style(
     ret_df: pd.DataFrame,
     *,
     na_rep: str | None,
+    label_column: str,
+    plot_target_column: str | None = None,
     links: list[TableLink] | None = None,
 ) -> dict[str, tp.Any]:
     """Build monthly style."""
-    value_cols = [str(col) for col in ret_df.columns[:9]]
+    all_columns = [str(col) for col in ret_df.columns]
+    value_cols = [col for col in all_columns if col != label_column and not col.startswith("_")][:9]
     data_cols = [col for col in value_cols if col in ret_df.columns]
     first_row_label = str(ret_df.index[0]) if not ret_df.empty else "0"
 
     format_columns: dict[str, TableFormatSpec] = {
         col: TableFormatNumber(digits=0, thousands=False) for col in data_cols
     }
+    format_columns[label_column] = TableFormatString()
     sizing_cols = [TableColumnSizing(label=col, width_px=80) for col in data_cols]
 
     rules: list[TableRule] = [
@@ -346,13 +353,14 @@ def _build_monthly_style(
                 action=TableAction(text_align="center"),
             )
         )
-        data_col_positions = [idx for idx, col in enumerate(ret_df.columns) if col in data_cols]
+        data_col_positions = [idx for idx, col in enumerate(all_columns) if col in data_cols]
         rules.extend(color_negative_red(list(ret_df.columns), [(pos, pos) for pos in data_col_positions]))
 
-    rules.extend(highlight_zscore(list(ret_df.columns), [(0, "_mean", "_std"), (1, "_mean1", "_std1")]))
+    rules.extend(highlight_zscore(all_columns, [(1, "_mean", "_std"), (2, "_mean1", "_std1")]))
 
     options = TableStyleOptions(
         max_rows=100,
+        show_index=False,
         global_style=TableGlobalStyle(
             background_color="lightblue",
             one_bg_color=False,
@@ -363,7 +371,9 @@ def _build_monthly_style(
             header_text_align="center",
         ),
     )
-    options.hidden_columns = [str(col) for col in ret_df.columns if str(col).startswith("_")]
+    options.hidden_columns = [col for col in all_columns if col != label_column and col.startswith("_")]
+    if plot_target_column is not None and plot_target_column not in options.hidden_columns:
+        options.hidden_columns.append(plot_target_column)
 
     return TableStylePlan(
         format=TableStyleFormat(na_rep=na_rep, precision=1, thousands=",", columns=format_columns),
@@ -372,6 +382,17 @@ def _build_monthly_style(
         options=options,
         links=links,
     ).model_dump(mode="python", exclude_none=True)
+
+
+def _unique_column_name(preferred: str, columns: tp.Iterable[object]) -> str:
+    """Return a stable column name that does not collide with existing columns."""
+    existing = {str(column) for column in columns}
+    candidate = preferred or "index"
+    suffix = 2
+    while candidate in existing:
+        candidate = f"{preferred or 'index'}_{suffix}"
+        suffix += 1
+    return candidate
 
 
 def table_with_linked_plots_monthly(
@@ -426,30 +447,64 @@ def table_with_linked_plots_monthly(
             mode = resolved_mode_by_column.get(col_name, default_agg_type)
             formatted_index.append(f"{col_name} [{_aggregation_suffix(mode)}]")
         table_df.index = pd.Index(formatted_index)
+    table_df.columns = [str(col) for col in table_df.columns]
     rendered_index_by_column = dict(
         zip((str(col) for col in df.columns), (str(label) for label in table_df.index), strict=True)
     )
-    if header is not None:
-        table_df.index.name = header
-
-    table_df.columns = [str(col) for col in table_df.columns]
     links: list[TableLink] | None = None
     plot_names: list[str] | None = None
     all_plots_name: str | None = None
+    selected_plot_targets: dict[str, str] = {}
     if link_requested:
         plot_type = "seasonal-mva" if moving_average_window is not None else "seasonal"
-        plot_names, links, all_plots_name = _build_plot_link_metadata(
+        plot_names, plot_metadata_links, all_plots_name = _build_plot_link_metadata(
             header,
             [(str(col), plot_type) for col in raw_df.columns],
             [str(label) for label in table_df.index],
             column_plot_links=row_plot_links,
             all_plots_link=all_plots_link,
-            link_area="index",
             rendered_link_fields=rendered_index_by_column,
+        )
+        selected_plot_targets = {
+            link.field: link.destination.value
+            for link in plot_metadata_links
+            if link.area == "header" and link.field is not None and link.destination.value is not None
+        }
+
+    label_column = _unique_column_name(str(header) if header is not None else "index", table_df.columns)
+    table_df.index.name = label_column
+    table_df = table_df.reset_index()
+    table_df.columns = [str(col) for col in table_df.columns]
+
+    plot_target_column: str | None = None
+    if selected_plot_targets:
+        plot_target_column = _unique_column_name("_plot_link", table_df.columns)
+        table_df[plot_target_column] = table_df[label_column].map(selected_plot_targets)
+        links = [
+            TableLink(
+                area="cells",
+                field=label_column,
+                destination=TableLinkDestination(kind=TableLinkKind.plot, value_field=plot_target_column),
+            )
+        ]
+    if all_plots_name is not None:
+        links = [*(links or ())]
+        links.append(
+            TableLink(
+                area="header",
+                field=label_column,
+                destination=TableLinkDestination(kind=TableLinkKind.plot, value=all_plots_name),
+            )
         )
     payload: dict[str, tp.Any] = {
         "data": table_df,
-        "style": _build_monthly_style(table_df, na_rep=na_rep, links=links),
+        "style": _build_monthly_style(
+            table_df,
+            na_rep=na_rep,
+            label_column=label_column,
+            plot_target_column=plot_target_column,
+            links=links,
+        ),
         "plots": seasonal_plots,
     }
     if plot_names is not None:

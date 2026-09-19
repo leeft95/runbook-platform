@@ -72,7 +72,7 @@ def test_plot_links_reject_unknown_and_duplicate_normalized_columns() -> None:
         general_table_with_link(_frame("A!", "A?"), header="Asset", column_plot_links=True)
 
 
-def test_monthly_plot_names_follow_raw_plot_order_and_filtered_headers_are_not_linked() -> None:
+def test_monthly_plot_names_follow_raw_plot_order_and_filtered_rows_are_not_linked() -> None:
     output = table_with_linked_plots_monthly(
         _frame("A", "B"),
         header="Monthly / Asset",
@@ -86,15 +86,18 @@ def test_monthly_plot_names_follow_raw_plot_order_and_filtered_headers_are_not_l
         "monthly-asset-b-seasonal-mva",
     ]
     assert output["all_plots_name"] == "monthly-asset-plots"
-    assert output["data"].index.name == "Monthly / Asset"
-    assert not isinstance(output["data"].index, pd.RangeIndex)
-    assert [link["area"] for link in output["style"]["links"]] == ["index", "index_header"]
-    assert output["style"]["links"][0]["field"] == "A"
-    assert output["style"]["links"][0]["destination"]["value"] == "monthly-asset-a-seasonal-mva"
-    assert "field" not in output["style"]["links"][1]
+    assert isinstance(output["data"].index, pd.RangeIndex)
+    assert [link["area"] for link in output["style"]["links"]] == ["cells", "header"]
+    assert output["style"]["links"][0]["field"] == "Monthly / Asset"
+    assert output["style"]["links"][0]["destination"]["value_field"] == "_plot_link"
+    assert output["style"]["links"][1]["field"] == "Monthly / Asset"
     assert output["style"]["links"][1]["destination"]["kind"].value == "plot"
     assert output["style"]["links"][1]["destination"]["value"] == "monthly-asset-plots"
+    assert output["style"]["options"]["show_index"] is False
+    assert output["style"]["options"]["hidden_columns"] == ["_plot_link"]
     html = render_table_html(output["data"], output["style"])
+    assert html.count("<thead>") == 1
+    assert "index_name" not in html
     assert (
         '<a href="plots/monthly-asset-plots.html" data-runbook-link-kind="plot" '
         'data-runbook-plot-name="monthly-asset-plots">Monthly / Asset</a>' in html
@@ -103,6 +106,7 @@ def test_monthly_plot_names_follow_raw_plot_order_and_filtered_headers_are_not_l
         '<a href="plots/monthly-asset-a-seasonal-mva.html" data-runbook-link-kind="plot" '
         'data-runbook-plot-name="monthly-asset-a-seasonal-mva">A</a>' in html
     )
+    assert "monthly-asset-b-seasonal-mva" not in html
 
     with pytest.raises(ValueError):
         table_with_linked_plots_monthly(_frame("A"), header="Monthly", row_plot_links=["Missing"])
@@ -116,12 +120,37 @@ def test_monthly_plot_subset_links_aggregation_label() -> None:
         row_plot_links=["A"],
     )["Monthly"]
 
-    assert [link["field"] for link in output["style"]["links"]] == ["A [MA]"]
+    assert [link["field"] for link in output["style"]["links"]] == ["Monthly"]
+    assert output["style"]["links"][0]["destination"]["value_field"] == "_plot_link"
     html = render_table_html(output["data"], output["style"])
     assert (
         '<a href="plots/monthly-a-seasonal-mva.html" data-runbook-link-kind="plot" '
         'data-runbook-plot-name="monthly-a-seasonal-mva">A [MA]</a>' in html
     )
+
+
+def test_monthly_label_column_name_avoids_period_column_collision() -> None:
+    output = table_with_linked_plots_monthly(
+        _frame("A"),
+        header="10d Level",
+        row_plot_links=True,
+    )["10d Level"]
+
+    assert output["data"].columns[0] == "10d Level_2"
+    assert output["style"]["links"][0]["field"] == "10d Level_2"
+    assert "10d Level_2" not in output["style"]["options"]["hidden_columns"]
+    assert "_plot_link" in output["style"]["options"]["hidden_columns"]
+
+    underscore = table_with_linked_plots_monthly(_frame("A"), header="_Asset", row_plot_links=True)["_Asset"]
+    assert underscore["data"].columns[0] == "_Asset"
+    assert "_Asset" not in underscore["style"]["options"]["hidden_columns"]
+
+    helper_collision = table_with_linked_plots_monthly(_frame("A"), header="_plot_link", row_plot_links=True)[
+        "_plot_link"
+    ]
+    assert helper_collision["data"].columns[0] == "_plot_link"
+    assert helper_collision["style"]["links"][0]["destination"]["value_field"] == "_plot_link_2"
+    assert helper_collision["style"]["options"]["hidden_columns"] == ["_plot_link_2"]
 
 
 def test_monthly_without_moving_average_uses_seasonal_plot_type() -> None:

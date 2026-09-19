@@ -119,12 +119,13 @@ style = {
 
 `general_table_with_link` and `table_with_linked_plots_monthly` can derive
 stable plot names. In the general table, `column_plot_links=True` links
-rendered column headers to individual pages. In either template,
-`all_plots_link=True` links the index header to the deterministic aggregate
-page. For the monthly template, `row_plot_links` selects original input
-series names and links the displayed row labels, even when the table headings
-are periods. A filtered-out series has no row link; aggregation labels such as
-`Brent [MA]` are used as the displayed link field.
+rendered column headers to individual pages, and `all_plots_link=True` links
+the index header to the deterministic aggregate page. The monthly template's
+`row_plot_links` selects original input series names and links the displayed
+label column cells, even when the table headings are periods; its
+`all_plots_link=True` links that label column's header. A filtered-out series
+has no row link; aggregation labels such as `Brent [MA]` are used as the
+displayed cell value.
 
 For example, link every input series or select only one while keeping the
 aggregate link:
@@ -132,19 +133,15 @@ aggregate link:
 ```python
 from runbook.core.table import table_with_linked_plots_monthly
 
-all_series = table_with_linked_plots_monthly(
-    raw_df, header="Monthly", row_plot_links=True, all_plots_link=True
-)
-one_series = table_with_linked_plots_monthly(
-    raw_df, header="Monthly", row_plot_links=["Brent"], all_plots_link=True
-)
+all_series = table_with_linked_plots_monthly(raw_df, header="Monthly", row_plot_links=True, all_plots_link=True)
+one_series = table_with_linked_plots_monthly(raw_df, header="Monthly", row_plot_links=["Brent"], all_plots_link=True)
 ```
 The HTML execution bundle publishes those linked pages under
 `plots/<name>.html`, and the Dash renderer exposes the same logical names to
 the host's route resolver.
 
-For a manually built table, declare an index-label link with the public table
-models and render or store the resulting style plan as usual:
+For a manually built table, declare a cell link on the label column and keep
+the plot destination in a hidden helper column:
 
 ```python
 import pandas as pd
@@ -156,23 +153,30 @@ from runbook.core.table import (
     render_table_html,
 )
 
-frame = pd.DataFrame({"value": [10, 20]}, index=pd.Index(["Brent", "WTI"], name="Asset"))
+frame = pd.DataFrame(
+    {
+        "Asset": ["Brent", "WTI"],
+        "value": [10, 20],
+        "_plot_link": ["asset-brent", None],
+    }
+)
 style = TableStylePlan(
     links=[
         TableLink(
-            area="index",
-            field="Brent",
-            destination=TableLinkDestination(kind=TableLinkKind.plot, value="asset-brent"),
+            area="cells",
+            field="Asset",
+            destination=TableLinkDestination(kind=TableLinkKind.plot, value_field="_plot_link"),
         )
-    ]
+    ],
+    options={"show_index": False, "hidden_columns": ["_plot_link"]},
 )
 html = render_table_html(frame, style)
 ```
 
-The `index` field must match a displayed row label on a single-level index,
-and its destination is a static report, URL, or plot reference. Use
-`area="index_header"` separately when the table's index heading should link
-to an aggregate plot page.
+The cell's `field` is the displayed label and `value_field` points to the
+hidden destination column. Use `area="header"` on `Asset` separately when
+the label-column heading should link to an aggregate plot page. The monthly
+template applies this same cell-link shape automatically.
 
 ## Style helpers
 

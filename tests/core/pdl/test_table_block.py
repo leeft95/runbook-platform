@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 from runbook.core.pdl.models import (
@@ -37,7 +38,7 @@ def test_pdl_table_block_accepts_optional_style_refs() -> None:
     )
 
 
-def test_table_width_defaults_to_fill() -> None:
+def test_table_width_defaults_to_content() -> None:
     block = PDLTableBlock(
         name="prices",
         data_ref="tables/prices.parquet",
@@ -45,7 +46,7 @@ def test_table_width_defaults_to_fill() -> None:
         col=1,
     )
 
-    assert block.width == "fill"
+    assert block.width == "content"
 
 
 @pytest.mark.parametrize("width", ["content", "0in", "0vw", "6in", "6.5in", "40vw", "40.5vw"])
@@ -76,7 +77,7 @@ def test_table_rejects_invalid_width(width: object) -> None:
         )
 
 
-def _manifest_with_table(*, schema_version: str, width: str = "fill") -> PDLManifest:
+def _manifest_with_table(*, schema_version: str, width: str = "content") -> PDLManifest:
     return PDLManifest(
         schema_version=schema_version,
         title="Test",
@@ -105,8 +106,8 @@ def test_pdl_01_rejects_non_fill_width_table(width: str) -> None:
         _manifest_with_table(schema_version="pdl-core/0.1", width=width)
 
 
-@pytest.mark.parametrize("width", ["content", "6in", "40vw"])
-def test_pdl_02_accepts_non_fill_width_table(width: str) -> None:
+@pytest.mark.parametrize("width", ["content", "fill", "6in", "40vw"])
+def test_pdl_02_accepts_width_table(width: str) -> None:
     manifest = _manifest_with_table(schema_version="pdl-core/0.2", width=width)
 
     block = manifest.page.blocks[0]
@@ -114,15 +115,44 @@ def test_pdl_02_accepts_non_fill_width_table(width: str) -> None:
     assert block.width == width
 
 
-def test_default_width_is_implicit_in_serialized_manifest() -> None:
-    manifest = _manifest_with_table(schema_version="pdl-core/0.1")
+def test_new_content_default_is_serialized_for_pdl_02() -> None:
+    manifest = _manifest_with_table(schema_version="pdl-core/0.2")
     payload = manifest.model_dump(mode="json")
 
+    assert manifest.page.blocks[0].width == "content"
+    assert payload["page"]["blocks"][0]["width"] == "content"
+
+
+def test_explicit_fill_keeps_legacy_implicit_wire_default() -> None:
+    manifest = _manifest_with_table(schema_version="pdl-core/0.1", width="fill")
+    payload = manifest.model_dump(mode="json")
+
+    assert manifest.page.blocks[0].width == "fill"
     assert "width" not in payload["page"]["blocks"][0]
 
 
-@pytest.mark.parametrize("width", ["content", "6.5in", "40.5vw"])
-def test_non_fill_width_is_serialized_for_pdl_02(width: str) -> None:
+def test_legacy_raw_manifest_without_width_normalizes_to_fill() -> None:
+    raw: dict[str, Any] = {
+        "schema_version": "pdl-core/0.1",
+        "title": "Legacy",
+        "snapshot_id": "snapshot",
+        "as_of": "2026-01-01T00:00:00Z",
+        "page": {
+            "page_type": "grid",
+            "rows": 1,
+            "columns": 1,
+            "blocks": [{"type": "table", "name": "prices", "data_ref": "prices.parquet", "row": 1, "col": 1}],
+        },
+    }
+
+    manifest = PDLManifest.model_validate(raw)
+
+    assert manifest.page.blocks[0].width == "fill"
+    assert "width" not in raw["page"]["blocks"][0]
+
+
+@pytest.mark.parametrize("width", ["6.5in", "40.5vw"])
+def test_non_default_width_is_serialized_for_pdl_02(width: str) -> None:
     manifest = _manifest_with_table(schema_version="pdl-core/0.2", width=width)
     payload = manifest.model_dump(mode="json")
 

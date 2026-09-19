@@ -35,14 +35,14 @@ The accepted values are deliberately small:
 
 | Value | Meaning | PDL version |
 | --- | --- | --- |
-| `"fill"` | use the allocated slot; this is the default | `pdl-core/0.1` or `pdl-core/0.2` |
-| `"content"` | use the table's natural content width | `pdl-core/0.2` |
+| `"content"` | use the table's natural content width; this is the authoring default | `pdl-core/0.2` |
+| `"fill"` | use the allocated slot; explicit fill keeps the legacy wire default | `pdl-core/0.1` or `pdl-core/0.2` |
 | `"6in"`, `"40vw"`, or another accepted lowercase `in`/`vw` length | use that explicit width | `pdl-core/0.2` |
 
 The completed change must satisfy these checkpoints:
 
-- a default table has `width == "fill"` in Python, but omits `width` from its serialized block;
-- an explicit non-fill value selects `pdl-core/0.2` and is serialized;
+- a new table has `width == "content"` in Python, selects `pdl-core/0.2`, and serializes `width: content`;
+- explicit `width="fill"` keeps `pdl-core/0.1` compatibility and omits `width` from its serialized block;
 - `"content"` selects `pdl-core/0.2` in the layout compiler, without changing the table's position or span;
 - HTML uses a content modifier for `"content"` and an explicit modifier plus `--rb-table-width` for a length;
 - native Dash maps `fill` to `100%`, `content` to `auto`, and leaves `40vw` as `40vw`;
@@ -93,7 +93,7 @@ Make these decisions explicit in the change description:
 
 1. The data artifact owns table data and optional style/link references; it does not own layout width.
 2. `PDLTableBlock.width` owns the persisted table-width meaning.
-3. The existing PDL version gate remains opt-in: omitted/default `fill` stays on `pdl-core/0.1`; any non-fill width uses `pdl-core/0.2`.
+3. New authoring defaults to `content` and selects `pdl-core/0.2`; explicit `fill` remains the legacy `pdl-core/0.1` default.
 4. Layout placement remains unchanged; each renderer decides how to use the width inside its slot.
 5. AG Grid keeps its existing full-slot sizing model; do not add autosizing for this parameter.
 
@@ -150,7 +150,7 @@ PDLTableWidth = Annotated[
 class PDLTableBlock(PDLBlockBase, TableArtifactRef):
     type: Literal["table"] = "table"
     columns: list[PDLColumn] | None = None
-    width: PDLTableWidth = Field(default="fill", exclude_if=lambda value: value == "fill")
+    width: PDLTableWidth = Field(default="content", exclude_if=lambda value: value == "fill")
 ```
 
 The regex permits `fill`, `content`, and non-negative decimal numbers with
@@ -173,8 +173,8 @@ to `spec.json` merely because the Python model has a default.
 
 ### Preserve the old wire contract
 
-`Field(..., exclude_if=lambda value: value == "fill")` makes the Python default
-available to renderers while keeping the default implicit in serialized PDL:
+`Field(..., exclude_if=lambda value: value == "fill")` makes new authoring
+default to `content` and keeps explicit legacy `fill` implicit in serialized PDL:
 
 ```python
 manifest = PDLManifest(..., schema_version="pdl-core/0.1", page=page)
@@ -182,13 +182,17 @@ payload = manifest.model_dump(mode="json")
 assert "width" not in payload["page"]["blocks"][0]
 ```
 
-For an explicit value:
+For a new default/content value:
 
 ```python
 manifest = PDLManifest(..., schema_version="pdl-core/0.2", page=page)
 payload = manifest.model_dump(mode="json")
-assert payload["page"]["blocks"][0]["width"] == "40vw"
+assert payload["page"]["blocks"][0]["width"] == "content"
 ```
+
+For an explicit length, the same v0.2 path serializes that length. When loading
+an older raw manifest whose table block omits `width`, PDL normalizes that
+missing field to `fill` before validation so old reports keep their layout.
 
 Use the actual model dump in the example above. Do not substitute a generic
 `dict()` call or treat JSON Schema validation as a Stage 3 runtime operation.
@@ -213,7 +217,7 @@ raises this exact message when a v0.1 manifest contains a linked or non-fill
 table feature:
 
 ```text
-pdl-core/0.1 does not support linked or content-width table blocks; use pdl-core/0.2
+pdl-core/0.1 does not support linked or explicitly sized table blocks; use pdl-core/0.2
 ```
 
 The wording is historical: the check also covers explicit lengths such as
@@ -221,8 +225,9 @@ The wording is historical: the check also covers explicit lengths such as
 wording; do not infer that only `content` is supported by v0.2. Do not add
 speculative nullable or `allOf` repairs for this feature.
 
-Checkpoint: default `fill` remains compatible with v0.1; `content`, `6in`, and
-`40vw` are rejected under v0.1 and accepted/serialized under v0.2.
+Checkpoint: new `content` authoring defaults to v0.2 and is serialized; explicit
+`fill` remains compatible with v0.1 and is omitted on the wire. Legacy raw
+manifests without a width normalize to `fill`; `6in` and `40vw` use v0.2.
 
 ## 5. Carry the field through layout authoring
 
@@ -250,7 +255,7 @@ class LayoutBlock:
     col_span: int = 1
     row_span: int = 1
     columns: list[PDLColumn] | None = None
-    table_width: PDLTableWidth = "fill"
+    table_width: PDLTableWidth = "content"
     extensions: dict[str, dict[str, Any]] | None = None
     label: str | None = None
     generated_name: bool = field(default=False, repr=False)
@@ -330,7 +335,8 @@ to retain its position and full stack span while selecting `pdl-core/0.2`.
 
 Checkpoint: `width="content"` produces a `PDLTableBlock` with
 `width == "content"`, and `(row, col, col_span)` remains unchanged. A default
-table produces `width == "fill"` and selects `pdl-core/0.1`.
+table produces `width == "content"` and selects `pdl-core/0.2`; explicit
+`width="fill"` selects `pdl-core/0.1`.
 
 ## 7. Follow execution persistence and reload
 
@@ -348,8 +354,8 @@ The Stage 3 serialization is explicitly:
 json.dumps(manifest.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
 ```
 
-That is the point at which default `fill` is omitted from an ordinary table,
-while an explicit `40vw` is present.
+That is the point at which explicit legacy `fill` is omitted, while the new
+default `content` and explicit `40vw` are present.
 
 Stage 4 reloads the persisted JSON through Pydantic before rendering:
 
@@ -480,7 +486,7 @@ The contract coverage is:
 
 - `tests/core/pdl/test_table_block.py`: default, accepted and rejected values, v0.1/v0.2 compatibility, serialization, and packaged JSON Schema guards;
 - `tests/sdk/test_layout.py::test_stack_table_content_width_survives_compilation_without_changing_occupancy`;
-- `tests/sdk/test_layout.py::test_stack_table_defaults_to_fill_and_pdl_01`;
+- `tests/sdk/test_layout.py::test_stack_table_defaults_to_content_and_pdl_02`;
 - `tests/sdk/test_html_bundle.py::test_table_width_modifier_and_css_preserve_fill_behavior`;
 - `tests/sdk/test_dash_navigation.py::test_native_table_width_maps_fill_to_full_and_content_to_auto`;
 - `tests/sdk/test_pdl_interactive.py::test_ag_grid_consumes_resolved_style_and_semantic_links`;
@@ -496,9 +502,10 @@ pixi run pytest tests/core/pdl/test_table_block.py tests/sdk/test_layout.py test
 Expected outcomes include:
 
 ```text
-default model width: fill
-default serialized width: omitted
-explicit serialized width: content / 6in / 40vw
+default model width: content
+default serialized width: content
+explicit fill serialized width: omitted
+explicit serialized width: 6in / 40vw
 content compilation: pdl-core/0.2, same occupancy
 HTML: content modifier or explicit class/custom property
 native Dash: fill 100%, content auto, explicit unchanged
@@ -524,7 +531,7 @@ The examples exercise different contracts:
 
 - `reports/linked_table_report.py` registers a styled/linked table, calls `Grid.table(..., width="40vw")`, and is covered by the linked-table golden test. That test checks Stage 3 persistence, v0.2 JSON Schema validation, Stage 4 reload, HTML explicit-width markup, semantic links, linked plot pages, and native Dash routes.
 - `reports/pnl_explorer.py` is the explicit interactive-output fixture. Its dashboard interaction makes the Dash renderer choose AG Grid; do not use it as evidence that AG Grid should adopt HTML width modifiers.
-- `reports/market_dashboard.py` leaves table width at the default. `tests/sdk/test_layout.py::test_market_dashboard_golden_executes_and_uses_renderer_extension` checks that its Stage 3 manifest remains `pdl-core/0.1`, table `width` keys are omitted, and the v0.1 schema validates.
+- `reports/market_dashboard.py` leaves table width at the new authoring default. `tests/sdk/test_layout.py::test_market_dashboard_golden_executes_and_uses_renderer_extension` checks that its Stage 3 manifest uses `pdl-core/0.2`, serializes table width as `content`, and the v0.2 schema validates.
 - `docs/composable-report-layouts.md` is the public authoring example. Keep analyst-facing prose about `fill`, `content`, and explicit lengths; renderer internals belong in this page.
 
 If adding a new real parameter rather than reviewing this existing slice,
@@ -541,9 +548,10 @@ Check these before asking for help:
 | `40vw` is rejected by the builder | copied an enum-only validation guard | reuse `PDLTableWidth`; explicit `in`/`vw` lengths are valid |
 | artifact code has a width field | layout metadata was put in registration | keep width on `LayoutBlock` → `PDLTableBlock` |
 | `Report.table(...)` or `Section.table(...)` fails | assumed convenience methods that do not exist | use `Grid.table`, `Row.table`, `Stack.table`, or `.add(table(...))` |
-| v0.1 default payload contains `width: fill` | default was serialized unconditionally | keep the Pydantic `exclude_if` behavior and test `model_dump(mode="json")` |
-| v0.1 accepts an explicit width | version gate is missing or only checks links | gate every `block.width != "fill"` and validate in `PDLManifest` |
-| exact validator-message assertion fails | wording was paraphrased | current text is `linked or content-width table blocks`; preserve it when asserting current behavior |
+| explicit fill payload omits `width` | the legacy wire default was not preserved | keep `exclude_if` on explicit `fill` and serialize content |
+| legacy omitted width changes layout | raw payload was parsed with the new authoring default | normalize missing raw table widths to `fill` before validation |
+| v0.1 accepts content or an explicit length | version gate is missing or only checks links | gate every `block.width != "fill"` and validate in `PDLManifest` |
+| exact validator-message assertion fails | wording was paraphrased | current text is `linked or explicitly sized table blocks`; preserve it when asserting current behavior |
 | table moves or changes span after width support | compiler interpreted width as placement | `_lower_block()` forwards `table_width`; placement remains compiler-owned |
 | explicit HTML width renders as auto | treated every non-fill value as content | only `content` gets `width: auto`; lengths use the class/custom property |
 | AG Grid is expected to be `40vw` | copied native HTML/Dash behavior | interactive AG Grid intentionally keeps `width: 100%` in this slice |

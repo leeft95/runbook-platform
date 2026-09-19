@@ -196,7 +196,7 @@ def table(
     row_span: int = 1,
     col_span: int = 1,
     columns: list[PDLColumn] | None = None,
-    width: PDLTableWidth = "fill",
+    width: PDLTableWidth = "content",
     extensions: dict[str, dict[str, Any]] | None = None,
 ) -> PDLTableBlock:
     """Create a positioned table block from an artifact reference."""

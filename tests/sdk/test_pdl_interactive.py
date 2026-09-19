@@ -7,10 +7,11 @@ from types import SimpleNamespace
 import pandas as pd
 import pyarrow as pa
 import pytest
+from dash import Dash
 from runbook.core.data import Snapshot
 from runbook.core.pdl.models import PDLManifest, PDLPage, PDLPageType, PDLTableBlock, PDLTextBlock
 from runbook.core.storage import BlobStore
-from runbook.core.table import TableLink, render_table_html
+from runbook.core.table import TableLink, TableStylePlan, render_table_html, table_with_linked_plots_monthly
 from runbook.sdk import (
     column,
     currency,
@@ -36,6 +37,7 @@ from runbook.sdk.extensions.dash import (
     validate_dash_manifest,
 )
 from runbook.sdk.extensions.dash.renderer import _build_ag_grid, _build_native_table, _convert_output
+from runbook.sdk.extensions.dash.tables import register_ag_grid_components
 from runbook.sdk.table_style import link_column, link_header, link_index_header
 
 
@@ -297,6 +299,7 @@ def test_rendered_static_table_is_native_and_preserves_pdl_formats(tmp_path) -> 
         name="positions",
     )
     manifest = PDLManifest(
+        schema_version="pdl-core/0.2",
         title="Grid",
         snapshot_id="s" * 64,
         as_of="2024-01-01T00:00:00Z",
@@ -377,6 +380,7 @@ def test_interactive_table_stays_ag_grid_when_declared_as_output(tmp_path) -> No
     )
     ref = ctx.artifact.table(pd.DataFrame({"book": ["Alpha"]}), name="positions")
     manifest = PDLManifest(
+        schema_version="pdl-core/0.2",
         title="Grid",
         snapshot_id="s" * 64,
         as_of="2024-01-01T00:00:00Z",
@@ -396,6 +400,70 @@ def test_interactive_table_stays_ag_grid_when_declared_as_output(tmp_path) -> No
     page = render_dash_page(manifest, definition, ctx, namespace="grid")
     table = page.layout().children[2].children[0].children[0]
     assert table.__class__.__name__ == "AgGrid"
+
+
+def test_ag_grid_components_are_registered_once_in_host_index() -> None:
+    app = Dash(__name__ + "_components", use_pages=False)
+    register_ag_grid_components(app)
+    register_ag_grid_components(app)
+
+    assert app.index_string.count('id="runbook-ag-grid-components-v1"') == 1
+    assert "runbookCellLinkRenderer" in app.index_string
+    assert "runbookHeaderLinkRenderer" in app.index_string
+    assert "runbookIndexLinkRenderer" in app.index_string
+
+
+def test_native_monthly_table_uses_label_column_links_and_styles(tmp_path) -> None:
+    index = pd.date_range("2024-01-01", periods=260, freq="D")
+    frame = pd.DataFrame(
+        {
+            "A": pd.Series(range(260), index=index, dtype="float64"),
+            "B": pd.Series(range(100, 360), index=index, dtype="float64"),
+        },
+        index=index,
+    )
+    monthly = table_with_linked_plots_monthly(
+        frame,
+        header="Monthly",
+        moving_average_window=None,
+        row_plot_links=True,
+        all_plots_link=True,
+    )["Monthly"]
+    store = BlobStore(f"file:{tmp_path}")
+    store.put_json("styles/monthly.json", TableStylePlan.model_validate(monthly["style"]).model_dump(mode="json"))
+    for name in monthly["plot_names"]:
+        store.put_json(f"plots/{name}.json", {})
+    block = PDLTableBlock(
+        name="monthly",
+        data_ref="monthly.parquet",
+        style_ref="styles/monthly.json",
+        row=1,
+        col=1,
+        links=monthly["style"]["links"],
+    )
+
+    def route(kind: str, value: str) -> str:
+        return f"/resolved/{kind}/{value}"
+
+    table = _build_native_table(
+        monthly["data"],
+        block,
+        "monthly",
+        SimpleNamespace(_artifact_store=store, _artifact_prefix=""),
+        route,
+        {name: f"plots/{name}.json" for name in monthly["plot_names"]},
+    )
+    headers = table.children[0].children.children
+    rows = table.children[1].children
+    assert headers[0].children.children == "Monthly"
+    assert [header.children for header in headers[1:3]] == ["10d Level", "20d Level"]
+    assert len(headers) == 8
+    assert len(rows[0].children) == len(headers)
+    assert rows[0].children[0].children.href == "/resolved/plot/monthly-a-seasonal"
+    assert rows[0].children[0].children.children == "A"
+    assert headers[0].children.href == "/resolved/plot/monthly-plots"
+    assert rows[0].children[1].children == "259"
+    assert rows[0].children[1].style["fontWeight"] == "bold"
 
 
 def test_ag_grid_consumes_resolved_style_and_semantic_links(tmp_path) -> None:
@@ -481,15 +549,71 @@ def test_ag_grid_consumes_resolved_style_and_semantic_links(tmp_path) -> None:
     assert styles["amount"]["fontWeight"] == "bold"
     assert definitions["label"]["width"] == definitions["label"]["minWidth"] == 140
     assert definitions["helper"]["hide"] is True
-    assert definitions["report"]["cellRenderer"]["function"]
-    assert definitions["label"]["headerLink"] == "/resolved/report/header"
-    assert definitions["label"]["headerComponent"]["function"]
+    assert definitions["report"]["cellRenderer"] == "runbookCellLinkRenderer"
+    assert definitions["report"]["cellRendererParams"]["runbookLinksField"] == "__runbook_links__"
+    assert definitions["label"]["headerComponentParams"]["runbookHeaderLink"] == "/resolved/report/header"
+    assert definitions["label"]["headerComponent"] == "runbookHeaderLinkRenderer"
+    assert definitions["amount"]["cellStyle"]["function"].endswith(") || null")
     assert config.column_defs[0]["headerName"] == "Region"
-    assert config.column_defs[0]["headerLink"] == "/resolved/plot/all-plots"
-    assert config.column_defs[0]["cellRenderer"]["function"]
+    assert config.column_defs[0]["headerComponentParams"]["runbookHeaderLink"] == "/resolved/plot/all-plots"
+    assert config.column_defs[0]["cellRenderer"] == "runbookIndexLinkRenderer"
     assert config.style["border"] == "2px solid black"
     # Interactive AG Grid keeps its own full-slot sizing model in v0.3.2.
     assert config.style["width"] == "100%"
+
+
+def test_ag_grid_consumes_monthly_label_column_links_without_index_column(tmp_path) -> None:
+    index = pd.date_range("2024-01-01", periods=260, freq="D")
+    frame = pd.DataFrame(
+        {
+            "A": pd.Series(range(260), index=index, dtype="float64"),
+            "B": pd.Series(range(100, 360), index=index, dtype="float64"),
+        },
+        index=index,
+    )
+    monthly = table_with_linked_plots_monthly(
+        frame,
+        header="Monthly",
+        moving_average_window=None,
+        row_plot_links=True,
+        all_plots_link=True,
+    )["Monthly"]
+    table = PDLTableBlock(
+        name="monthly",
+        data_ref="monthly.parquet",
+        style_ref="styles/monthly.json",
+        row=1,
+        col=1,
+        links=monthly["style"]["links"],
+    )
+
+    def route(kind: str, value: str) -> str:
+        return f"/resolved/{kind}/{value}"
+
+    store = BlobStore(f"file:{tmp_path}")
+    store.put_json("styles/monthly.json", TableStylePlan.model_validate(monthly["style"]).model_dump(mode="json"))
+    store.put_json("plots/monthly-a-seasonal.json", {})
+    store.put_json("plots/monthly-b-seasonal.json", {})
+
+    config = _build_ag_grid(
+        monthly["data"],
+        table,
+        SimpleNamespace(_artifact_store=store, _artifact_prefix=""),
+        route,
+        {
+            "monthly-a-seasonal": "plots/monthly-a-seasonal.json",
+            "monthly-b-seasonal": "plots/monthly-b-seasonal.json",
+        },
+    )
+    assert config.column_defs[0]["field"] == "Monthly"
+    assert all("__runbook_index__" != definition.get("field") for definition in config.column_defs)
+    label_definition = next(definition for definition in config.column_defs if definition["field"] == "Monthly")
+    assert label_definition["headerComponentParams"]["runbookHeaderLink"] == "/resolved/plot/monthly-plots"
+    assert label_definition["cellRenderer"] == "runbookCellLinkRenderer"
+    helper_definition = next(definition for definition in config.column_defs if definition["field"] == "_plot_link")
+    assert helper_definition["hide"] is True
+    assert config.row_data[0]["__runbook_links__"]["Monthly"] == "/resolved/plot/monthly-a-seasonal"
+    assert config.row_data[1]["__runbook_links__"]["Monthly"] == "/resolved/plot/monthly-b-seasonal"
 
 
 def test_native_table_consumes_persisted_style_resolution(tmp_path) -> None:
@@ -575,6 +699,7 @@ def test_native_table_consumes_persisted_style_resolution(tmp_path) -> None:
         ],
     )
     manifest = PDLManifest(
+        schema_version="pdl-core/0.2",
         title="Styled",
         snapshot_id="s" * 64,
         as_of="2024-01-01T00:00:00Z",

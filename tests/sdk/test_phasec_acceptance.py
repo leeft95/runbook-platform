@@ -41,6 +41,7 @@ def _imports(root: Path) -> set[str]:
 
 def _manifest() -> PDLManifest:
     return PDLManifest(
+        schema_version="pdl-core/0.2",
         title="Acceptance",
         snapshot_id="snapshot",
         as_of="2024-01-01T00:00:00Z",

@@ -14,6 +14,13 @@ links are resolved by the public renderer and the host's route resolver; an
 extension should not rewrite links or introduce an iframe, `srcDoc`, or
 `postMessage` bridge.
 
+Interactive AG Grid links use the SDK's registered named components. A page
+registers them idempotently when `DashPage.register_callbacks(app)` runs; a
+host that creates AG Grid layouts directly should call
+`register_ag_grid_components(app)` during startup, before the first page load.
+Hosts that add `render_dash_page` reports dynamically should do the same at
+startup so those reports have the components available when they are opened.
+
 This is deliberately separate from `OperationsBrand`: branding customises the
 control-plane Operations UI, while a `DashRendererExtension` customises report
 presentation. Deployment wiring for both seams is in [Deployment](deployment.md).

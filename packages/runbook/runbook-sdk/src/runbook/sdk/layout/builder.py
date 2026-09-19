@@ -112,7 +112,7 @@ def table(
     col_span: int = 1,
     row_span: int = 1,
     columns: list[PDLColumn] | None = None,
-    width: PDLTableWidth = "fill",
+    width: PDLTableWidth = "content",
     extensions: dict[str, dict[str, Any]] | None = None,
 ) -> LayoutBlock:
     """Create a thin table block from an existing artifact reference."""
