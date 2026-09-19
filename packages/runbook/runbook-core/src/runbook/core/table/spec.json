@@ -395,6 +395,7 @@
               "enum": [
                 "cells",
                 "header",
+                "index",
                 "index_header"
               ],
               "title": "Area",
@@ -840,6 +841,7 @@
               "enum": [
                 "cells",
                 "header",
+                "index",
                 "index_header"
               ],
               "title": "Area",

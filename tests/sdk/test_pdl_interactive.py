@@ -10,7 +10,7 @@ import pytest
 from runbook.core.data import Snapshot
 from runbook.core.pdl.models import PDLManifest, PDLPage, PDLPageType, PDLTableBlock, PDLTextBlock
 from runbook.core.storage import BlobStore
-from runbook.core.table import render_table_html
+from runbook.core.table import TableLink, render_table_html
 from runbook.sdk import (
     column,
     currency,
@@ -441,6 +441,7 @@ def test_ag_grid_consumes_resolved_style_and_semantic_links(tmp_path) -> None:
             {"area": "cells", "field": "report", "destination": {"kind": "url", "value_field": "url"}},
             {"area": "cells", "field": "plot", "destination": {"kind": "plot", "value_field": "plot"}},
             {"area": "header", "field": "label", "destination": {"kind": "report", "value": "header"}},
+            {"area": "index", "field": "row-a", "destination": {"kind": "report", "value": "detail/row-a"}},
             {"area": "index_header", "destination": {"kind": "plot", "value": "all-plots"}},
         ],
         columns=[
@@ -471,6 +472,10 @@ def test_ag_grid_consumes_resolved_style_and_semantic_links(tmp_path) -> None:
         "plot": "/resolved/plot/plot-one",
     }
     assert config.row_data[1]["__runbook_links__"] == {}
+    assert config.row_data[0]["__runbook_index_links__"] == {
+        "href": "/resolved/report/detail/row-a",
+        "kind": "report",
+    }
     styles = config.row_data[0]["__runbook_styles__"]
     assert styles["amount"]["backgroundColor"] == "#fee2e2"
     assert styles["amount"]["fontWeight"] == "bold"
@@ -481,6 +486,7 @@ def test_ag_grid_consumes_resolved_style_and_semantic_links(tmp_path) -> None:
     assert definitions["label"]["headerComponent"]["function"]
     assert config.column_defs[0]["headerName"] == "Region"
     assert config.column_defs[0]["headerLink"] == "/resolved/plot/all-plots"
+    assert config.column_defs[0]["cellRenderer"]["function"]
     assert config.style["border"] == "2px solid black"
     # Interactive AG Grid keeps its own full-slot sizing model in v0.3.2.
     assert config.style["width"] == "100%"
@@ -634,6 +640,7 @@ def test_native_table_renders_report_url_and_header_links_without_html_parsing()
             link_column("report_id", url_from="url"),
             link_header("label", report_id="summary/x"),
             link_index_header(url="https://example.test/all"),
+            TableLink(area="index", field="b", destination={"kind": "report", "value": "detail/b"}),
         ],
     )
 
@@ -648,6 +655,7 @@ def test_native_table_renders_report_url_and_header_links_without_html_parsing()
     assert rows[0].children[1].children.__class__.__name__ == "Link"
     assert rows[0].children[1].children.href == "/report/us/inventories"
     assert rows[1].children[1].children.__class__.__name__ == "str"
+    assert rows[1].children[0].children.href == "/report/detail/b"
     assert rows[0].children[2].children.__class__.__name__ == "A"
     assert rows[0].children[2].children.href == "https://example.test/us"
 

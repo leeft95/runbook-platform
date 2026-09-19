@@ -177,7 +177,10 @@ table_ref = ctx.artifact.table(frame, name="prices", style=style)
 The same semantic link becomes an HTML anchor or a native Dash link. Plot-link
 templates derive deterministic names from the table header, column, and plot
 mode. Column headers can point to individual generated plot pages and the
-index/header link can point to an aggregate page containing all table plots.
+index-label links can point individual displayed rows to generated plot pages;
+the separate index/header link can point to an aggregate page containing all
+table plots. The monthly template's `row_plot_links` selects original input
+series while applying these links to the corresponding displayed row labels.
 The HTML bundle publishes these pages automatically. In Dash, the report host
 owns `/report/...` and `/plot/...` navigation and may provide a route resolver.
 

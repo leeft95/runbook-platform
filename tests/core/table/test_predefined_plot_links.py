@@ -78,7 +78,7 @@ def test_monthly_plot_names_follow_raw_plot_order_and_filtered_headers_are_not_l
         header="Monthly / Asset",
         columns_filter=["A"],
         all_plots_link=True,
-        column_plot_links=True,
+        row_plot_links=True,
     )["Monthly / Asset"]
 
     assert output["plot_names"] == [
@@ -88,19 +88,40 @@ def test_monthly_plot_names_follow_raw_plot_order_and_filtered_headers_are_not_l
     assert output["all_plots_name"] == "monthly-asset-plots"
     assert output["data"].index.name == "Monthly / Asset"
     assert not isinstance(output["data"].index, pd.RangeIndex)
-    assert len(output["style"]["links"]) == 1
-    assert output["style"]["links"][0]["area"] == "index_header"
-    assert "field" not in output["style"]["links"][0]
-    assert output["style"]["links"][0]["destination"]["kind"].value == "plot"
-    assert output["style"]["links"][0]["destination"]["value"] == "monthly-asset-plots"
+    assert [link["area"] for link in output["style"]["links"]] == ["index", "index_header"]
+    assert output["style"]["links"][0]["field"] == "A"
+    assert output["style"]["links"][0]["destination"]["value"] == "monthly-asset-a-seasonal-mva"
+    assert "field" not in output["style"]["links"][1]
+    assert output["style"]["links"][1]["destination"]["kind"].value == "plot"
+    assert output["style"]["links"][1]["destination"]["value"] == "monthly-asset-plots"
+    html = render_table_html(output["data"], output["style"])
     assert (
         '<a href="plots/monthly-asset-plots.html" data-runbook-link-kind="plot" '
-        'data-runbook-plot-name="monthly-asset-plots">Monthly / Asset</a>'
-        in render_table_html(output["data"], output["style"])
+        'data-runbook-plot-name="monthly-asset-plots">Monthly / Asset</a>' in html
+    )
+    assert (
+        '<a href="plots/monthly-asset-a-seasonal-mva.html" data-runbook-link-kind="plot" '
+        'data-runbook-plot-name="monthly-asset-a-seasonal-mva">A</a>' in html
     )
 
     with pytest.raises(ValueError):
-        table_with_linked_plots_monthly(_frame("A"), header="Monthly", column_plot_links=["A"])
+        table_with_linked_plots_monthly(_frame("A"), header="Monthly", row_plot_links=["Missing"])
+
+
+def test_monthly_plot_subset_links_aggregation_label() -> None:
+    output = table_with_linked_plots_monthly(
+        _frame("A", "B"),
+        header="Monthly",
+        aggregation_columns={"A": "MovingAverage"},
+        row_plot_links=["A"],
+    )["Monthly"]
+
+    assert [link["field"] for link in output["style"]["links"]] == ["A [MA]"]
+    html = render_table_html(output["data"], output["style"])
+    assert (
+        '<a href="plots/monthly-a-seasonal-mva.html" data-runbook-link-kind="plot" '
+        'data-runbook-plot-name="monthly-a-seasonal-mva">A [MA]</a>' in html
+    )
 
 
 def test_monthly_without_moving_average_uses_seasonal_plot_type() -> None:
@@ -108,3 +129,8 @@ def test_monthly_without_moving_average_uses_seasonal_plot_type() -> None:
         _frame("A"), header="Monthly", moving_average_window=None, all_plots_link=True
     )["Monthly"]
     assert output["plot_names"] == ["monthly-a-seasonal"]
+
+
+def test_monthly_row_plot_links_are_disabled_by_default() -> None:
+    output = table_with_linked_plots_monthly(_frame("A"), header="Monthly")["Monthly"]
+    assert "links" not in output["style"]

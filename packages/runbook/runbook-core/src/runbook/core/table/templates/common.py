@@ -35,6 +35,8 @@ def _build_plot_link_metadata(
     *,
     column_plot_links: bool | list[str],
     all_plots_link: bool,
+    link_area: tp.Literal["header", "index"] = "header",
+    rendered_link_fields: tp.Mapping[str, str] | None = None,
 ) -> tuple[list[str], list[TableLink], str | None]:
     """Build deterministic plot names and semantic table links."""
     table_slug = _slugify_link_part(table_name)
@@ -57,8 +59,12 @@ def _build_plot_link_metadata(
         plot_names.append(name)
         plot_columns_by_name[column_name] = name
 
-    rendered = {str(column) for column in rendered_columns}
-    eligible = [column for column, _ in plot_columns if str(column) in rendered]
+    link_fields = (
+        {str(column): str(column) for column in rendered_columns}
+        if rendered_link_fields is None
+        else rendered_link_fields
+    )
+    eligible = [column for column, _ in plot_columns if str(column) in link_fields]
     if column_plot_links is True:
         selected = set(eligible)
     elif isinstance(column_plot_links, list):
@@ -67,16 +73,16 @@ def _build_plot_link_metadata(
         for column in column_plot_links:
             if not isinstance(column, str) or column not in known:
                 raise ValueError(f"Column '{column}' is unknown or has no generated plot")
-            if column not in rendered:
-                raise ValueError(f"Column '{column}' cannot be linked as a rendered header")
+            if column not in link_fields:
+                raise ValueError(f"Column '{column}' cannot be linked as a rendered table label")
             selected.add(column)
     else:
         selected = set()
 
     links = [
         TableLink(
-            area="header",
-            field=column,
+            area=link_area,
+            field=link_fields[column],
             destination=TableLinkDestination(kind=TableLinkKind.plot, value=plot_columns_by_name[column]),
         )
         for column in eligible

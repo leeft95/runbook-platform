@@ -426,7 +426,11 @@ def _build_native_table(
             index_cell_style: dict[str, Any] = {}
             _apply_base_row_style(index_cell_style, row_pos, global_style.one_bg_color, global_style.background_color)
             _apply_width(index_cell_style, row_style)
-            row_cells.append(html.Th(_display_scalar(index_value), style=index_cell_style))
+            index_value_display: Any = _display_scalar(index_value)
+            destination = resolved.index_links.get(row_pos)
+            if destination is not None:
+                index_value_display = _dash_link(index_value_display, destination, route_resolver, ctx, plot_refs)
+            row_cells.append(html.Th(index_value_display, style=index_cell_style))
         values = dict(zip((str(column) for column in visible.columns), row, strict=True))
         for field in fields:
             cell_style: dict[str, Any] = {}
@@ -481,9 +485,10 @@ def _build_ag_grid(
     links_field = _metadata_field("__runbook_links__", frame) if resolved.links else None
     index_field = (
         _metadata_field("__runbook_index__", frame)
-        if resolved.show_index and resolved.index_header_link is not None
+        if resolved.show_index and (resolved.index_header_link is not None or resolved.index_links)
         else None
     )
+    index_links_field = _metadata_field("__runbook_index_links__", frame) if resolved.index_links else None
     header_links: dict[str, tuple[str, str]] = {}
     for field, destination in resolved.header_links.items():
         href = _destination_href(destination, route_resolver, ctx, plot_refs)
@@ -506,6 +511,7 @@ def _build_ag_grid(
         styles_field=styles_field,
         links_field=links_field,
         index_field=index_field,
+        index_links_field=index_links_field,
         route_resolver=route_resolver,
         ctx=ctx,
         plot_refs=plot_refs,
@@ -520,6 +526,7 @@ def _build_ag_grid(
         header_links=header_links,
         index_field=index_field,
         index_header_link=index_header_link,
+        index_links_field=index_links_field,
         index_header_name="" if frame.index.name is None else str(frame.index.name),
         na_rep=resolved.na_rep,
     )
@@ -985,6 +992,7 @@ def _records(
     styles_field: str | None = None,
     links_field: str | None = None,
     index_field: str | None = None,
+    index_links_field: str | None = None,
     route_resolver: RouteResolver | None = None,
     ctx: Any | None = None,
     plot_refs: Mapping[str, str] | None = None,
@@ -1014,6 +1022,12 @@ def _records(
             continue
         if index_field is not None:
             record[index_field] = _display_scalar(index_value)
+        if index_links_field is not None:
+            destination = resolved.index_links.get(row_pos)
+            if destination is not None:
+                href = _destination_href(destination, route_resolver, ctx, plot_refs)
+                if href is not None:
+                    record[index_links_field] = {"href": href, "kind": destination.kind.value}
         if styles_field is not None:
             record[styles_field] = {
                 semantic.field: _ag_cell_style(resolved, row_pos, semantic.field) for semantic in semantics

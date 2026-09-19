@@ -87,7 +87,7 @@ table_with_linked_plots_monthly(
     benchmark_quarter=None,
     fill_na=None,
     na_rep="-",
-    column_plot_links=True,
+    row_plot_links=True,
     all_plots_link=True,
 )
 ```
@@ -118,11 +118,61 @@ style = {
 ```
 
 `general_table_with_link` and `table_with_linked_plots_monthly` can derive
-stable plot names. `column_plot_links=True` links rendered column headers to
-individual pages; `all_plots_link=True` links the index header to the
-deterministic aggregate page. The HTML execution bundle publishes those
-linked pages under `plots/<name>.html`, and the Dash renderer exposes the same
-logical names to the host's route resolver.
+stable plot names. In the general table, `column_plot_links=True` links
+rendered column headers to individual pages. In either template,
+`all_plots_link=True` links the index header to the deterministic aggregate
+page. For the monthly template, `row_plot_links` selects original input
+series names and links the displayed row labels, even when the table headings
+are periods. A filtered-out series has no row link; aggregation labels such as
+`Brent [MA]` are used as the displayed link field.
+
+For example, link every input series or select only one while keeping the
+aggregate link:
+
+```python
+from runbook.core.table import table_with_linked_plots_monthly
+
+all_series = table_with_linked_plots_monthly(
+    raw_df, header="Monthly", row_plot_links=True, all_plots_link=True
+)
+one_series = table_with_linked_plots_monthly(
+    raw_df, header="Monthly", row_plot_links=["Brent"], all_plots_link=True
+)
+```
+The HTML execution bundle publishes those linked pages under
+`plots/<name>.html`, and the Dash renderer exposes the same logical names to
+the host's route resolver.
+
+For a manually built table, declare an index-label link with the public table
+models and render or store the resulting style plan as usual:
+
+```python
+import pandas as pd
+from runbook.core.table import (
+    TableLink,
+    TableLinkDestination,
+    TableLinkKind,
+    TableStylePlan,
+    render_table_html,
+)
+
+frame = pd.DataFrame({"value": [10, 20]}, index=pd.Index(["Brent", "WTI"], name="Asset"))
+style = TableStylePlan(
+    links=[
+        TableLink(
+            area="index",
+            field="Brent",
+            destination=TableLinkDestination(kind=TableLinkKind.plot, value="asset-brent"),
+        )
+    ]
+)
+html = render_table_html(frame, style)
+```
+
+The `index` field must match a displayed row label on a single-level index,
+and its destination is a static report, URL, or plot reference. Use
+`area="index_header"` separately when the table's index heading should link
+to an aggregate plot page.
 
 ## Style helpers
 

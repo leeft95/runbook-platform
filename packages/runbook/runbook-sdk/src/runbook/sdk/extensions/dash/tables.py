@@ -47,6 +47,7 @@ def build_ag_grid_column_defs(
     header_links: dict[str, tuple[str, str]] | None = None,
     index_field: str | None = None,
     index_header_link: tuple[str, str] | None = None,
+    index_links_field: str | None = None,
     index_header_name: str = "",
     na_rep: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -75,6 +76,8 @@ def build_ag_grid_column_defs(
                     "headerComponent": {"function": _header_link_renderer()},
                 }
             )
+        if index_links_field is not None:
+            index_definition["cellRenderer"] = {"function": _index_link_renderer(index_links_field)}
         definitions.append(index_definition)
     for semantic in merge_columns(schema, columns):
         role = semantic.role
@@ -177,6 +180,19 @@ def _cell_link_renderer(links_field: str, field: str, kind: str) -> str:
         "if (!href) return text; "
         "const anchor = document.createElement('a'); anchor.href = href; anchor.textContent = text; "
         f"anchor.dataset.runbookLinkKind = {json.dumps(kind)}; "
+        "anchor.addEventListener('click', event => event.stopPropagation()); return anchor; }"
+    )
+
+
+def _index_link_renderer(links_field: str) -> str:
+    """Render a semantic index link from renderer-owned row metadata."""
+    return (
+        "function(params) { "
+        f"const link = params.data && params.data[{json.dumps(links_field)}]; "
+        "const text = params.valueFormatted ?? (params.value == null ? '' : params.value); "
+        "if (!link || !link.href) return text; "
+        "const anchor = document.createElement('a'); anchor.href = link.href; anchor.textContent = text; "
+        "anchor.dataset.runbookLinkKind = link.kind; "
         "anchor.addEventListener('click', event => event.stopPropagation()); return anchor; }"
     )
 

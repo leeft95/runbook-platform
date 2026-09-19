@@ -57,13 +57,13 @@ class TableLinkDestination(BaseModel):
 class TableLink(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    area: Literal["cells", "header", "index_header"]
+    area: Literal["cells", "header", "index", "index_header"]
     field: NonEmptyRef | None = Field(default=None, exclude_if=lambda value: value is None)
     destination: TableLinkDestination
 
     @model_validator(mode="after")
     def validate_area(self) -> "TableLink":
-        if self.area in {"cells", "header"} and self.field is None:
+        if self.area in {"cells", "header", "index"} and self.field is None:
             raise ValueError(f"link field is required for area='{self.area}'")
         if self.area == "index_header" and self.field is not None:
             raise ValueError("link field must be omitted for area='index_header'")
@@ -504,6 +504,7 @@ class ResolvedTableStyle:
     links: tuple[TableLink, ...]
     cell_links: dict[tuple[int, str], TableLinkDestination]
     header_links: dict[str, TableLinkDestination]
+    index_links: dict[int, TableLinkDestination]
     index_header_link: TableLinkDestination | None
 
     @property

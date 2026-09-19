@@ -175,6 +175,41 @@ def test_render_table_html_renders_escaped_semantic_links_and_hides_dynamic_help
     assert ">url<" not in html
 
 
+def test_index_links_resolve_row_labels_and_render_index_anchors() -> None:
+    df = pd.DataFrame({"value": [1, 2]}, index=pd.Index(["A", "B"], name="Asset"))
+    style = TableStylePlan(links=[TableLink(area="index", field="B", destination={"kind": "plot", "value": "asset-b"})])
+
+    resolved = resolve_table_style(df, style)
+    assert resolved.index_links[1].value == "asset-b"
+    html = render_table_html(df, style)
+    assert '<a href="plots/asset-b.html" data-runbook-link-kind="plot" data-runbook-plot-name="asset-b">B</a>' in html
+
+
+def test_index_links_require_a_static_destination_and_known_row_label() -> None:
+    df = pd.DataFrame({"value": [1]}, index=pd.Index(["A"], name="Asset"))
+
+    with pytest.raises(ValueError):
+        TableLink(area="index", field="A", destination={"kind": "plot", "value_field": "value"})
+    with pytest.raises(ValueError, match="index label"):
+        resolve_table_style(
+            df,
+            TableStylePlan(
+                links=[TableLink(area="index", field="Missing", destination={"kind": "plot", "value": "x"})]
+            ),
+        )
+
+
+def test_index_links_validate_against_full_frame_when_row_is_beyond_max_rows() -> None:
+    df = pd.DataFrame({"value": [1, 2]}, index=pd.Index(["A", "B"], name="Asset"))
+    style = TableStylePlan(
+        options={"max_rows": 1},
+        links=[TableLink(area="index", field="B", destination={"kind": "plot", "value": "asset-b"})],
+    )
+
+    resolved = resolve_table_style(df, style)
+    assert resolved.index_links == {}
+
+
 def test_linked_html_keeps_typed_numeric_header_formatting() -> None:
     df = pd.DataFrame({"value": [1.23456789]})
 

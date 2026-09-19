@@ -51,7 +51,9 @@ flowchart TB
 valid for no-link payloads and rejects links. Formats include number, percent,
 date, and string; rules target all/columns/rows and resolve against the
 concrete frame. `ResolvedTableStyle` is the renderer-neutral result: visible
-fields/rows, CSS, formats, sizing, and semantic cell/header/index links.
+fields/rows, CSS, formats, sizing, and semantic cell/header/index links. An
+`index` link targets a displayed row label with `field`; `index_header` remains
+the separate link for the index heading.
 
 `TableArtifactRef` carries immutable data/style/HTML refs into `PDLTableBlock`.
 Report/URL/plot links are resolved semantically: HTML uses `/report/<id>`, a
@@ -86,4 +88,3 @@ Dash consume them. Golden reports include `reports/vol_report.py` and
 - Storing `<a>` tags in DataFrames instead of declaring `TableLink`.
 - Forgetting that `0.1` cannot carry links.
 - Assuming native Dash tables are AG Grid; interactivity is explicit opt-in.
-

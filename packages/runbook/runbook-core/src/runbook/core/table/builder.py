@@ -445,10 +445,13 @@ def _resolved_destination(destination: TableLinkDestination, value: Any = None) 
 def _resolve_links(
     visible_df: pd.DataFrame,
     links: Sequence[TableLink] | None,
+    *,
+    index_df: pd.DataFrame | None = None,
 ) -> tuple[
     tuple[TableLink, ...],
     dict[tuple[int, str], TableLinkDestination],
     dict[str, TableLinkDestination],
+    dict[int, TableLinkDestination],
     TableLinkDestination | None,
 ]:
     """Resolve table link declarations against a concrete dataframe."""
@@ -456,11 +459,13 @@ def _resolve_links(
     column_lookup = _column_lookup(visible_df)
     cell_links: dict[tuple[int, str], TableLinkDestination] = {}
     header_links: dict[str, TableLinkDestination] = {}
+    index_links: dict[int, TableLinkDestination] = {}
     index_header_link: TableLinkDestination | None = None
+    index_source = visible_df if index_df is None else index_df
 
     for link in normalized_links:
         field = link.field
-        if field is not None and field not in column_lookup:
+        if link.area in {"cells", "header"} and field is not None and field not in column_lookup:
             raise ValueError(f"link field label not found: {field!r}")
         destination_field = link.destination.value_field
         if destination_field is not None and destination_field not in column_lookup:
@@ -480,10 +485,22 @@ def _resolve_links(
             resolved = _resolved_destination(link.destination)
             if resolved is not None:
                 header_links[field] = resolved
+        elif link.area == "index":
+            assert field is not None
+            if index_source.index.nlevels != 1:
+                raise ValueError("index links require a single-level dataframe index")
+            if not any(str(value) == field for value in index_source.index):
+                raise ValueError(f"link index label not found: {field!r}")
+            resolved = _resolved_destination(link.destination)
+            if resolved is not None:
+                for row_pos, value in enumerate(visible_df.index):
+                    if str(value) != field:
+                        continue
+                    index_links[row_pos] = resolved
         else:
             index_header_link = _resolved_destination(link.destination)
 
-    return normalized_links, cell_links, header_links, index_header_link
+    return normalized_links, cell_links, header_links, index_links, index_header_link
 
 
 def resolve_table_style(
@@ -506,7 +523,11 @@ def resolve_table_style(
         raise ValueError("style_df must align to visible df rows")
 
     maps = _resolve_style_maps_for_frames(visible_df, plan, style_df=visible_style_df)
-    links, cell_links, header_links, index_header_link = _resolve_links(visible_df, plan.links)
+    links, cell_links, header_links, index_links, index_header_link = _resolve_links(
+        visible_df,
+        plan.links,
+        index_df=df,
+    )
     visible_labels = tuple(str(col) for col in visible_df.columns)
     hidden_columns = frozenset(col for col in plan.options.hidden_columns if col in visible_df.columns)
     hidden_rows = frozenset(
@@ -533,6 +554,7 @@ def resolve_table_style(
         links=links,
         cell_links=cell_links,
         header_links=header_links,
+        index_links=index_links,
         index_header_link=index_header_link,
     )
 
@@ -684,6 +706,16 @@ def _inject_link_anchors(
         if col_pos is None:
             continue
         pattern = rf'(<th\b[^>]*\bid="{re.escape(table_id)}_level0_col{col_pos}"[^>]*>)(.*?)(</th>)'
+        html_output = re.sub(
+            pattern,
+            lambda match: f"{match.group(1)}{link_anchor(match.group(2), destination)}{match.group(3)}",
+            html_output,
+            count=1,
+            flags=re.DOTALL,
+        )
+
+    for row_pos, destination in resolved.index_links.items():
+        pattern = rf'(<th\b[^>]*\bid="{re.escape(table_id)}_level0_row{row_pos}"[^>]*>)(.*?)(</th>)'
         html_output = re.sub(
             pattern,
             lambda match: f"{match.group(1)}{link_anchor(match.group(2), destination)}{match.group(3)}",

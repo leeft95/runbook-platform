@@ -265,6 +265,11 @@ def _linked_table_block() -> PDLTableBlock:
                 destination=PDLLinkDestination(kind=PDLLinkKind.plot, value="plots/month"),
             ),
             PDLTableLink(
+                area="index",
+                field="Brent [MA]",
+                destination=PDLLinkDestination(kind=PDLLinkKind.plot, value="plots/brent"),
+            ),
+            PDLTableLink(
                 area="index_header",
                 destination=PDLLinkDestination(kind=PDLLinkKind.url, value="https://example.test/all"),
             ),
@@ -287,6 +292,7 @@ def test_pdl_table_links_cover_static_dynamic_and_areas() -> None:
         destination={"kind": "url", "value_field": "url"},
     )
     assert TableLink(area="header", field="month", destination={"kind": "plot", "value": "plots/month"})
+    assert TableLink(area="index", field="Brent", destination={"kind": "plot", "value": "plots/brent"})
     assert TableLink(area="index_header", destination={"kind": "report", "value": "reports/all"})
 
 

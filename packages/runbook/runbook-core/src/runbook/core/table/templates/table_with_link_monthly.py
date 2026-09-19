@@ -387,17 +387,19 @@ def table_with_linked_plots_monthly(
     benchmark_quarter: tp.Any = None,
     fill_na: str | None = None,
     na_rep: str | None = "-",
-    column_plot_links: bool | list[str] = False,
+    row_plot_links: bool | list[str] = False,
     all_plots_link: bool = False,
 ) -> dict[str, dict[str, tp.Any]]:
     """Build the predefined monthly summary table with linked seasonal plots.
 
     The helper computes monthly summary columns plus optional historical
     highlight statistics, returns the styled table payload, and emits one
-    seasonal plot per selected input series. Auxiliary ``_mean``/``_std``
-    columns are retained for rule evaluation and hidden at render time.
+    seasonal plot per selected input series. ``row_plot_links`` selects the
+    input series whose displayed row labels receive those plot links.
+    Auxiliary ``_mean``/``_std`` columns are retained for rule evaluation and
+    hidden at render time.
     """
-    link_requested = bool(column_plot_links or all_plots_link)
+    link_requested = bool(row_plot_links or all_plots_link)
     if link_requested and (header is None or not str(header).strip()):
         raise ValueError("table/header name must not be blank when plot links are requested")
 
@@ -424,6 +426,9 @@ def table_with_linked_plots_monthly(
             mode = resolved_mode_by_column.get(col_name, default_agg_type)
             formatted_index.append(f"{col_name} [{_aggregation_suffix(mode)}]")
         table_df.index = pd.Index(formatted_index)
+    rendered_index_by_column = dict(
+        zip((str(col) for col in df.columns), (str(label) for label in table_df.index), strict=True)
+    )
     if header is not None:
         table_df.index.name = header
 
@@ -436,9 +441,11 @@ def table_with_linked_plots_monthly(
         plot_names, links, all_plots_name = _build_plot_link_metadata(
             header,
             [(str(col), plot_type) for col in raw_df.columns],
-            [str(col) for col in table_df.columns],
-            column_plot_links=column_plot_links,
+            [str(label) for label in table_df.index],
+            column_plot_links=row_plot_links,
             all_plots_link=all_plots_link,
+            link_area="index",
+            rendered_link_fields=rendered_index_by_column,
         )
     payload: dict[str, tp.Any] = {
         "data": table_df,
