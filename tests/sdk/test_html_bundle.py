@@ -7,7 +7,7 @@ import pytest
 from plotly.offline import get_plotlyjs_version
 from runbook.core.pdl.models import PDLManifest, PDLPage, PDLPageType, PDLTableBlock
 from runbook.core.storage import BlobStore
-from runbook.core.table import TableLink, TableStylePlan, render_table_html
+from runbook.core.table import TableLink, TableStylePlan, render_table_html, table_with_linked_plots_monthly
 from runbook.sdk.html import DEFAULT_GRID_CSS, render_html, render_html_bundle
 
 PLOTLY_CDN_URL = f"https://cdn.plot.ly/plotly-{get_plotlyjs_version()}.min.js"
@@ -206,6 +206,121 @@ def test_missing_aggregate_group_fails(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="no matching registered members"):
         render_html_bundle(store, manifest, "reports/report", {"plots/other-line.json": _plot_payload("other")})
+
+
+def _monthly_bundle_fixture(tmp_path, *, html_ref: bool, selected: list[str] | bool = True):
+    frame = pd.DataFrame(
+        {
+            "Brent": [10.0, 11.0, 12.0, 13.0],
+            "WTI": [20.0, 21.0, 22.0, 23.0],
+            "Natural gas": [30.0, 31.0, 32.0, 33.0],
+        },
+        index=pd.date_range("2024-01-01", periods=4, freq="D"),
+    )
+    payload = table_with_linked_plots_monthly(
+        frame,
+        header="Energy",
+        moving_average_window=None,
+        row_plot_links=selected,
+        all_plots_link=True,
+    )["Energy"]
+    table_frame = payload["data"]
+    style = TableStylePlan.model_validate(payload["style"])
+    store = BlobStore(f"file:{tmp_path}")
+    parquet = io.BytesIO()
+    table_frame.to_parquet(parquet, index=False)
+    store.put("reports/energy/tables/energy.parquet", parquet.getvalue())
+    store.put_json("reports/energy/styles/energy.json", style.model_dump(mode="json"))
+    if html_ref:
+        store.put(
+            "reports/energy/tables/energy.html",
+            render_table_html(table_frame, style).encode("utf-8"),
+        )
+    block = PDLTableBlock(
+        name="energy",
+        data_ref="tables/energy.parquet",
+        style_ref="styles/energy.json",
+        html_ref="tables/energy.html" if html_ref else None,
+        links=list(style.links or ()) if html_ref else None,
+        row=1,
+        col=1,
+    )
+    manifest = PDLManifest(
+        schema_version="pdl-core/0.2",
+        title="Energy",
+        snapshot_id="snapshot",
+        as_of="2026-01-01T00:00:00Z",
+        page=PDLPage(page_type=PDLPageType.grid, rows=1, columns=1, blocks=[block]),
+    )
+    plot_jsons = {
+        name: figure.to_plotly_json() for name, figure in zip(payload["plot_names"], payload["plots"], strict=True)
+    }
+    return store, manifest, plot_jsons
+
+
+def test_monthly_dynamic_links_resolve_from_style_ref_and_publish_pages(tmp_path) -> None:
+    store, manifest, plot_jsons = _monthly_bundle_fixture(tmp_path, html_ref=False)
+
+    rendered = render_html_bundle(store, manifest, "reports/energy", plot_jsons)
+
+    assert 'href="plots/energy-brent-seasonal.html"' in rendered.main
+    assert 'href="plots/energy-wti-seasonal.html"' in rendered.main
+    assert 'href="plots/energy-natural-gas-seasonal.html"' in rendered.main
+    assert 'href="plots/energy-plots.html"' in rendered.main
+    assert "_plot_link" not in rendered.main
+    assert set(rendered.linked_pages) == {
+        "energy-brent-seasonal",
+        "energy-wti-seasonal",
+        "energy-natural-gas-seasonal",
+        "energy-plots",
+    }
+    assert all("<h1>energy-" in page for page in rendered.linked_pages.values())
+
+
+def test_monthly_prerendered_artifact_links_handle_subset_and_null_targets(tmp_path) -> None:
+    store, manifest, plot_jsons = _monthly_bundle_fixture(tmp_path, html_ref=True, selected=["Brent"])
+
+    rendered = render_html_bundle(store, manifest, "reports/energy", plot_jsons)
+
+    assert 'href="plots/energy-brent-seasonal.html"' in rendered.main
+    assert 'href="plots/energy-wti-seasonal.html"' not in rendered.main
+    assert 'href="plots/energy-natural-gas-seasonal.html"' not in rendered.main
+    assert 'href="plots/energy-plots.html"' in rendered.main
+    assert set(rendered.linked_pages) == {"energy-brent-seasonal", "energy-plots"}
+
+
+def test_static_style_ref_link_on_prerendered_table_does_not_read_parquet(tmp_path) -> None:
+    store = BlobStore(f"file:{tmp_path}")
+    link = TableLink(area="header", field="value", destination={"kind": "plot", "value": "value-plot"})
+    unrelated_dynamic_link = TableLink(
+        area="cells",
+        field="value",
+        destination={"kind": "report", "value_field": "missing_report"},
+    )
+    store.put(
+        "reports/report/table.html",
+        b'<table class="runbook-table"><th><a href="plots/value-plot.html">value</a></th></table>',
+    )
+    store.put_json(
+        "reports/report/styles/table.json",
+        TableStylePlan(links=[link, unrelated_dynamic_link]).model_dump(mode="json"),
+    )
+    manifest = _manifest()
+    block = manifest.page.blocks[0]
+    assert isinstance(block, PDLTableBlock)
+    block.style_ref = "styles/table.json"
+    block.html_ref = "table.html"
+    block.links = None
+
+    rendered = render_html_bundle(
+        store,
+        manifest,
+        "reports/report",
+        {"plots/value-plot.json": _plot_payload("value")},
+    )
+
+    assert 'href="plots/value-plot.html"' in rendered.main
+    assert set(rendered.linked_pages) == {"value-plot"}
 
 
 def test_style_ref_only_html_tables_keep_persisted_style(tmp_path) -> None:

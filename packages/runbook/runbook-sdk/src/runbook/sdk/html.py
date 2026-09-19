@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import re
 from collections.abc import Mapping
@@ -11,7 +12,7 @@ import plotly.io as pio
 from plotly.utils import PlotlyJSONEncoder
 from runbook.core import BlobStore
 from runbook.core.pdl.models import PDLLinkBlock, PDLManifest, PDLTableBlock
-from runbook.core.table import TableStylePlan, link_anchor, render_table_html
+from runbook.core.table import TableLinkDestination, TableStylePlan, link_anchor, render_table_html, resolve_table_style
 from runbook.core.table.models import TableLinkKind
 
 DEFAULT_GRID_CSS_REF = "styles/grid.css"
@@ -87,25 +88,9 @@ def render_html(store: BlobStore, manifest: PDLManifest, prefix: str) -> str:
                 body = store.get(_key(prefix, block.html_ref)).decode("utf-8")
             else:
                 data_ref = _key(prefix, block.data_ref)
-                import io
-
                 frame = pd.read_parquet(io.BytesIO(store.get(data_ref)))
-                style_plan = (
-                    TableStylePlan.model_validate(store.get_json(_key(prefix, block.style_ref)))
-                    if block.style_ref
-                    else None
-                )
-                if style_plan is not None or block.links:
-                    plan = style_plan or TableStylePlan()
-                    by_target = {(link.area, link.field): link for link in plan.links or ()}
-                    for link in block.links or ():
-                        by_target[(link.area, link.field)] = link
-                    style_payload = plan.model_dump(mode="python", exclude_none=True)
-                    style_payload["schema_version"] = "table-style/0.2"
-                    style_payload["links"] = [
-                        link.model_dump(mode="python", exclude_none=True) for link in by_target.values()
-                    ]
-                    plan = TableStylePlan.model_validate(style_payload)
+                plan = _effective_table_style(store, prefix, block)
+                if plan is not None:
                     body = render_table_html(frame, plan, table_class="runbook-table")
                 else:
                     body = frame.to_html(index=True, border=0, classes="runbook-table")
@@ -193,7 +178,55 @@ def _named_plot_jsons(plot_jsons: Mapping[str, object] | object) -> dict[str, ob
     return result
 
 
-def _linked_plot_targets(manifest: PDLManifest) -> tuple[set[str], set[str]]:
+def _effective_table_style(store: BlobStore, prefix: str, block: PDLTableBlock) -> TableStylePlan | None:
+    """Merge persisted style links with links promoted onto the PDL block."""
+    style_plan = (
+        TableStylePlan.model_validate(store.get_json(_key(prefix, block.style_ref))) if block.style_ref else None
+    )
+    if style_plan is None and not block.links:
+        return None
+    plan = style_plan or TableStylePlan()
+    by_target = {(link.area, link.field): link for link in plan.links or ()}
+    for link in block.links or ():
+        by_target[(link.area, link.field)] = link
+    style_payload = plan.model_dump(mode="python", exclude_none=True)
+    style_payload["schema_version"] = "table-style/0.2"
+    style_payload["links"] = [link.model_dump(mode="python", exclude_none=True) for link in by_target.values()]
+    return TableStylePlan.model_validate(style_payload)
+
+
+def _plot_destinations(
+    store: BlobStore,
+    prefix: str,
+    block: PDLTableBlock,
+    plan: TableStylePlan,
+) -> list[TableLinkDestination]:
+    """Resolve table plot destinations, loading table data only for dynamic links."""
+    links = tuple(link for link in plan.links or () if link.destination.kind == TableLinkKind.plot)
+    if not links:
+        return []
+    if not any(link.destination.value_field is not None for link in links):
+        return [link.destination for link in links]
+
+    frame = pd.read_parquet(io.BytesIO(store.get(_key(prefix, block.data_ref))))
+    resolved = resolve_table_style(frame, plan.model_copy(update={"links": list(links)}))
+    return [
+        *(
+            destination
+            for (row_pos, field), destination in resolved.cell_links.items()
+            if row_pos not in resolved.hidden_rows and field in resolved.visible_columns
+        ),
+        *(destination for field, destination in resolved.header_links.items() if field in resolved.visible_columns),
+        *(
+            destination
+            for row_pos, destination in resolved.index_links.items()
+            if resolved.show_index and row_pos not in resolved.hidden_rows
+        ),
+        *([resolved.index_header_link] if resolved.show_index and resolved.index_header_link is not None else []),
+    ]
+
+
+def _linked_plot_targets(store: BlobStore, manifest: PDLManifest, prefix: str) -> tuple[set[str], set[str]]:
     """Collect individual and aggregate plot destinations from report links."""
     individual: set[str] = set()
     aggregates: set[str] = set()
@@ -207,13 +240,16 @@ def _linked_plot_targets(manifest: PDLManifest) -> tuple[set[str], set[str]]:
             continue
         if not isinstance(block, PDLTableBlock):
             continue
-        for link in block.links or ():
-            destination = link.destination
+        plan = _effective_table_style(store, prefix, block)
+        if plan is None:
+            continue
+        for destination in _plot_destinations(store, prefix, block, plan):
             if destination.kind != TableLinkKind.plot:
                 continue
-            assert destination.value is not None
+            if destination.value is None:
+                continue
             target = _plot_name(destination.value)
-            if link.area == "index_header" and target.endswith("-plots"):
+            if target.endswith("-plots"):
                 aggregates.add(target)
             else:
                 individual.add(target)
@@ -254,7 +290,7 @@ def render_html_bundle(
 ) -> RenderedHtmlReport:
     """Render the main report and linked plot documents."""
     named_plot_jsons = _named_plot_jsons(plot_jsons)
-    individual, aggregates = _linked_plot_targets(manifest)
+    individual, aggregates = _linked_plot_targets(store, manifest, prefix)
     linked_pages: dict[str, str] = {}
 
     for target in sorted(individual):
