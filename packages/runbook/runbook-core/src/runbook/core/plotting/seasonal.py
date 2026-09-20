@@ -34,7 +34,7 @@ def plot_seasonal(
     title: str | None = None,
     width: int = 900,
     height: int = 600,
-    show_legend: bool = False,
+    show_legend: bool = True,
     hovertemplate: str | None = None,
     dash_from: dt.datetime | None = None,
     dash_name: str = "Forecast",

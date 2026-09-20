@@ -227,6 +227,58 @@ def test_graphly_groups_legend_by_series_name_in_single_row_multi_col() -> None:
     assert fig.data[1].showlegend is False
 
 
+@pytest.mark.parametrize("plot_type", list(PlotType))
+@pytest.mark.parametrize("legend_groups", [False, True])
+@pytest.mark.parametrize("flags", [(False, True), (True, False), (False, False), (True, True)])
+def test_plot_mixed_honors_each_specs_legend_visibility(plot_type, legend_groups, flags) -> None:
+    data = pd.DataFrame(
+        {"series": [1.0, 2.0], "open": [1.0, 2.0], "high": [2.0, 3.0], "low": [0.0, 1.0], "close": [1.5, 2.5]}
+    )
+    columns = ["open", "high", "low", "close"] if plot_type == PlotType.OHLC else ["series"]
+    fig = plot_mixed(
+        data=data,
+        traces=[
+            GraphlyTraceSpec(plot_type=plot_type, columns=columns, title="series", col=col, show_legend=show)
+            for col, show in enumerate(flags, start=1)
+        ],
+        n_cols=2,
+        legend_groups=legend_groups,
+    )
+
+    expected = [True, False] if legend_groups and all(flags) else list(flags)
+    assert [trace.showlegend for trace in fig.data] == expected
+    assert fig.layout.showlegend is any(flags)
+    assert all(trace.visible is None for trace in fig.data)
+    if legend_groups:
+        assert [trace.legendgroup for trace in fig.data] == ["series", "series"]
+
+
+@pytest.mark.parametrize(
+    ("show_legend", "trace_showlegend", "series_showlegend", "expected"),
+    [(True, False, None, False), (True, False, True, True), (False, True, True, False), (True, True, False, False)],
+)
+def test_plot_mixed_legend_styles_do_not_override_disabled_spec(
+    show_legend, trace_showlegend, series_showlegend, expected
+) -> None:
+    fig = plot_mixed(
+        data=pd.DataFrame({"series": [1.0, 2.0]}),
+        traces=[
+            GraphlyTraceSpec(
+                plot_type="line",
+                show_legend=show_legend,
+                trace_style={"showlegend": trace_showlegend},
+                series_styles={"series": {"showlegend": series_showlegend}} if series_showlegend is not None else None,
+            ),
+            GraphlyTraceSpec(plot_type="bar"),
+        ],
+        legend_groups=True,
+    )
+
+    assert [trace.showlegend for trace in fig.data] == [expected, not expected]
+    assert [trace.legendgroup for trace in fig.data] == ["series", "series"]
+    assert fig.layout.showlegend is True
+
+
 def test_graphly_allows_multiple_plot_defs_in_same_subplot() -> None:
     idx = pd.date_range("2025-01-01", periods=3, freq="D")
     line_def = PlotlyPlotDef(

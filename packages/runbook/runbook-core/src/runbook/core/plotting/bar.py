@@ -81,7 +81,7 @@ def plot_bar(
     title: str | None = None,
     width: int = 600,
     height: int = 400,
-    show_legend: bool = False,
+    show_legend: bool = True,
     hovertemplate: str | None = None,
     rows: int = 1,
     cols: int = 1,

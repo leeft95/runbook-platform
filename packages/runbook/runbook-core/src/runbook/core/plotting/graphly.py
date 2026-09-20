@@ -694,6 +694,8 @@ class GraphlyPlotter:
             return
 
         trace.legendgroup = name
+        if trace.showlegend is False:
+            return
         if name in legend_seen_names:
             trace.showlegend = False
             return
@@ -805,6 +807,7 @@ class GraphlyPlotter:
             style: dict[str, tp.Any] = dict(plot_def.trace_style or {})
             if series_name is not None and plot_def.series_styles:
                 style = _merge_style(style, plot_def.series_styles.get(series_name, {}))
+            style["showlegend"] = plot_def.show_legend and style.get("showlegend", True)
             return style
 
         if plot_def.plot_type == PlotType.pie:
