@@ -60,6 +60,24 @@ with layout.section("Market") as section:
         grid.plot(bars_ref)
 ```
 
+Line, scatter, seasonal, COT, and mixed line/bar charts let Plotly choose
+datetime tick spacing and formatting from the date range and available axis
+width. Narrow plots can show fewer labels, and zooming recalculates the spacing.
+There is no fixed daily-tick override or point-count cutoff. Overlaid traces
+and shared x-axes use their combined date range; independent subplots adapt
+separately. Pass `dtick` and/or `tickformat`
+in any helper to override these defaults. For example, `dtick="M1", tickformat="%b"`
+requests monthly ticks with month-name labels.
+Bar-only datetime axes instead label each distinct bar timestamp, including
+forecast bars. Labels use month/year for inferred monthly or quarterly data,
+years for yearly data, and dates for daily or weekly data. Missing bars do not
+add ticks. Shared bar-only axes combine their dates; mixed line/bar axes retain
+automatic ticks across the full timeline. Bars and points at the same timestamp
+share the same position on the datetime axis. An explicit `dtick` overrides the
+per-bar ticks, and `tickformat` overrides their formatting.
+To include weekends and holidays on calendar-day charts, use
+`use_rangebreaks=False`.
+
 Use `plot_bar_forecast` when one monotonically indexed single-series DataFrame
 must be split at a date or other comparable `forecast_from` value:
 

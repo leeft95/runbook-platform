@@ -44,8 +44,8 @@ def plot_seasonal(
     ytd_diff: bool = False,
     ytd_cum_sum: bool = False,
     shared_xaxes: bool = True,
-    tickformat: str | None = "%b",
-    dtick: str | int | float | None = "M1",
+    tickformat: str | None = None,
+    dtick: str | int | float | None = None,
     use_rangebreaks: bool = True,
     holiday_countries: list[str] | None = None,
     exclude_years: tp.List[int] | None = None,
@@ -276,6 +276,8 @@ def plot_cot(
     freq: str = "W",
     start: dt.datetime | None = None,
     exclude_years: tp.List[int] | None = None,
+    tickformat: str | None = None,
+    dtick: str | int | float | None = None,
 ) -> plotly.graph_objs._figure.Figure:
     """Build a 2x3 COT figure:
     - Top row: seasonal position overlays + current-year price (secondary y)
@@ -400,8 +402,6 @@ def plot_cot(
                 col=panel_i + 1,
                 plot_type=PlotType.line,
                 show_legend=True,
-                tickformat="%b",
-                dtick="M1",
                 use_rangebreaks=False,
                 series_styles=series_styles,
             )
@@ -413,8 +413,6 @@ def plot_cot(
                 col=panel_i + 1,
                 plot_type=PlotType.line,
                 show_legend=True,
-                tickformat="%b",
-                dtick="M1",
                 use_rangebreaks=False,
                 series_styles=series_styles,
             )
@@ -429,8 +427,8 @@ def plot_cot(
         shared_xaxes=True,
         vertical_spacing=0.02,
         horizontal_spacing=0.08,
-        tickformat="%b",
-        dtick="M1",
+        tickformat=tickformat,
+        dtick=dtick,
         use_rangebreaks=False,
         legend_groups=True,
     ).plot(plot_defs, title=title)

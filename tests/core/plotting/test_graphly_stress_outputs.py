@@ -24,7 +24,8 @@ def test_graphly_stress_ohlc_output_contract() -> None:
     assert len(fig.data) == 1
     assert fig.data[0].type in {"ohlc", "candlestick"}
     assert fig.layout.xaxis.title.text == "Time"
-    assert fig.layout.xaxis.tickformat in {"%b %d\n%H:%M", "%b %d"}
+    assert fig.layout.xaxis.tickformat is None
+    assert fig.layout.xaxis.dtick is None
 
 
 def test_graphly_stress_grouped_legend_output_contract() -> None:

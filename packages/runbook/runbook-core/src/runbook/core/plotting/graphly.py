@@ -61,8 +61,8 @@ class GraphlyFigureSpec(BaseModel):
     horizontal_spacing: float | None = None
     vertical_spacing: float | None = None
     show_rangeslider: bool = False
-    tickformat: str | None = "%b"
-    dtick: str | int | float | None = "M1"
+    tickformat: str | None = None
+    dtick: str | int | float | None = None
     use_rangebreaks: bool = True
     holiday_countries: list[str] | None = None
     legend_groups: bool = False
@@ -163,8 +163,8 @@ class GraphlyPlotter:
         shared_yaxes: bool = False,
         horizontal_spacing: float | None = 0.08,
         vertical_spacing: float | None = 0.02,
-        dtick: str | int | float | None = "M1",
-        tickformat: str | None = "%b",
+        dtick: str | int | float | None = None,
+        tickformat: str | None = None,
         show_rangeslider: bool = False,
         use_rangebreaks: bool = True,
         holiday_countries: list[str] | None = None,
@@ -270,6 +270,7 @@ class GraphlyPlotter:
         legend_seen_names: set[str] = set()
         legend_group_colors: dict[str, str] = {}
         color_index_state = [0]
+        plots_by_xaxis: dict[str, list[PlotlyPlotDef]] = {}
 
         for i, plot_def in enumerate(fig_def.plots):
             if explicit_positions:
@@ -311,6 +312,13 @@ class GraphlyPlotter:
                 col=col,
                 secondary_y=plot_def.secondary_y,
             )
+            for axis in fig.select_xaxes(row=row, col=col):
+                key = axis.matches or axis.plotly_name.replace("axis", "")
+                plots_by_xaxis.setdefault(key, []).append(plot_def)
+
+        for axis in fig.select_xaxes():
+            key = axis.matches or axis.plotly_name.replace("axis", "")
+            axis.update(self._bar_x_tick_settings(plots_by_xaxis.get(key, []), axis.tickformat))
 
         showlegend = any(p.show_legend for p in fig_def.plots)
         fig.update_layout(
@@ -544,65 +552,37 @@ class GraphlyPlotter:
         return False
 
     def _resolved_x_tick_settings(self, plot_def: PlotlyPlotDef) -> tuple[str | None, str | int | float | None]:
-        """Handle resolved x tick settings."""
+        """Apply explicit overrides; otherwise leave tick selection to Plotly."""
         tickformat = plot_def.tickformat if plot_def.tickformat is not None else self.tickformat
         dtick = plot_def.dtick if plot_def.dtick is not None else self.dtick
-
-        # For OHLC, choose sensible x-axis defaults by index frequency when not explicitly set.
-        if plot_def.plot_type != PlotType.OHLC:
-            return tickformat, dtick
-        if plot_def.tickformat is not None and plot_def.dtick is not None:
-            return tickformat, dtick
-        if not isinstance(plot_def.data.index, pd.DatetimeIndex):
-            return tickformat, dtick
-
-        freq_name = self._infer_freq_name(plot_def.data.index)
-        if freq_name is None:
-            median_seconds = self._infer_median_step_seconds(plot_def.data.index)
-            if median_seconds is None:
-                return tickformat, dtick
-            if plot_def.tickformat is None:
-                tickformat = "%b %d\n%H:%M"
-            if plot_def.dtick is None:
-                if median_seconds <= 5 * 60:
-                    dtick = 12 * 60 * 60 * 1000
-                elif median_seconds <= 60 * 60:
-                    dtick = 24 * 60 * 60 * 1000
-                else:
-                    dtick = "M1"
-            return tickformat, dtick
-
-        if plot_def.tickformat is None:
-            if freq_name in {"T", "min", "5min", "15min", "30min", "H"}:
-                tickformat = "%b %d\n%H:%M"
-            elif freq_name in {"B", "D"}:
-                tickformat = "%b %d"
-            elif freq_name.startswith("W"):
-                tickformat = "%b %d\n%Y"
-            elif freq_name.startswith("M"):
-                tickformat = "%b\n%Y"
-            else:
-                tickformat = "%b %d\n%Y"
-
-        if plot_def.dtick is None:
-            if freq_name in {"T", "min"}:
-                dtick = 6 * 60 * 60 * 1000
-            elif freq_name == "5min":
-                dtick = 12 * 60 * 60 * 1000
-            elif freq_name in {"15min", "30min"}:
-                dtick = 24 * 60 * 60 * 1000
-            elif freq_name == "H":
-                dtick = 24 * 60 * 60 * 1000
-            elif freq_name in {"B", "D"}:
-                dtick = "M1"
-            elif freq_name.startswith("W"):
-                dtick = "M1"
-            elif freq_name.startswith("M"):
-                dtick = "M3"
-            else:
-                dtick = "M1"
-
         return tickformat, dtick
+
+    def _bar_x_tick_settings(self, plots: list[PlotlyPlotDef], tickformat: str | None) -> dict[str, tp.Any]:
+        """Label actual bar dates on bar-only axes, including matched subplots."""
+        plots = [plot for plot in plots if not plot.data.empty]
+        if not plots or any(
+            plot.plot_type != PlotType.bar
+            or not isinstance(plot.data.index, pd.DatetimeIndex)
+            or self._resolved_x_tick_settings(plot)[1] is not None
+            for plot in plots
+        ):
+            return {}
+
+        dates = list(
+            dict.fromkeys(date for plot in plots for date in plot.data.index[plot.data.notna().any(axis=1)].dropna())
+        )
+        if not dates:
+            return {}
+        if tickformat is None:
+            frequencies = [self._infer_freq_name(tp.cast(pd.DatetimeIndex, plot.data.index)) for plot in plots]
+            names = [pd.tseries.frequencies.to_offset(freq).name if freq else "" for freq in frequencies]
+            if all(name.startswith(("Y", "BY", "A", "BA")) for name in names):
+                tickformat = "%Y"
+            elif all(name.startswith(("M", "BM", "CBM", "Q", "BQ", "Y", "BY", "A", "BA")) for name in names):
+                tickformat = "%b\n%Y"
+            elif all(date == date.normalize() for date in dates):
+                tickformat = "%b %d\n%Y"
+        return {"tickmode": "array", "tickvals": dates, "tickformat": tickformat}
 
     def _infer_freq_name(self, index: pd.DatetimeIndex) -> str | None:
         """Handle infer freq name."""
@@ -619,21 +599,6 @@ class GraphlyPlotter:
             return str(pd.tseries.frequencies.to_offset(freq).freqstr)
         except (TypeError, ValueError):
             return None
-
-    def _infer_median_step_seconds(self, index: pd.DatetimeIndex) -> float | None:
-        """Handle infer median step seconds."""
-        if len(index) < 2:
-            return None
-        idx = index
-        if idx.tz is not None:
-            idx = idx.tz_localize(None)
-        diffs = idx.to_series().diff().dropna()
-        if diffs.empty:
-            return None
-        seconds = diffs.dt.total_seconds()
-        if seconds.empty:
-            return None
-        return float(seconds.median())
 
     def _resolved_rangebreaks(self, plot_def: PlotlyPlotDef) -> list[dict[str, tp.Any]] | None:
         """Handle resolved rangebreaks."""

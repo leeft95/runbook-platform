@@ -383,13 +383,17 @@ def test_plot_seasonal_weekly_dummy_weekends_remain_visible() -> None:
     assert not fig.layout.xaxis.rangebreaks
 
 
-def test_plot_cot_builds_two_by_three_layout_with_secondary_axes() -> None:
+@pytest.mark.parametrize(
+    "tick_settings", [{}, {"dtick": "M1"}, {"tickformat": "%b"}, {"dtick": "M1", "tickformat": "%b"}]
+)
+def test_plot_cot_builds_two_by_three_layout_with_secondary_axes(tick_settings) -> None:
     fig = plot_cot(
         data=_cot_fixture_df(),
         columns=None,
         title="COT",
         plot_titles=["Net", "Long", "Short"],
         freq="W",
+        **tick_settings,
     )
 
     xaxes = {trace.xaxis for trace in fig.data}
@@ -397,3 +401,6 @@ def test_plot_cot_builds_two_by_three_layout_with_secondary_axes() -> None:
     assert {"x", "x2", "x3", "x4", "x5", "x6"}.issubset(xaxes)
     assert "y2" in yaxes
     assert "y8" in yaxes
+    for axis in fig.select_xaxes():
+        assert axis.dtick == tick_settings.get("dtick")
+        assert axis.tickformat == tick_settings.get("tickformat")
