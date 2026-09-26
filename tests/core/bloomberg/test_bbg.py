@@ -1,4 +1,4 @@
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import numpy as np
 import pandas as pd
@@ -103,3 +103,80 @@ def test_bdh_wrapper_normalizes_inputs_and_output(monkeypatch, ticker, field):
 
     connection.bdh.assert_called_once_with(tickers, fields, "20260701", "20260702", overrides, options)
     pd.testing.assert_frame_equal(result, bbg._normalise_bdh(raw, tickers, fields))
+
+
+def test_bdh_reuses_supplied_session_without_owning_lifecycle(monkeypatch):
+    raw = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-01"]),
+            "security": ["A"],
+            "PX_LAST": [1.0],
+        }
+    )
+    session = Mock()
+    connection = Mock()
+    connection.bdh.return_value = raw
+    query = Mock(return_value=connection)
+    monkeypatch.setattr(bbg, "_blp_types", lambda: (None, query))
+    monkeypatch.setattr(bbg, "_custom_api_parser", lambda: None)
+
+    result = bbg.bdh("A", "PX_LAST", "2026-07-01", "2026-07-02", session=session)
+
+    assert connection.session is session
+    connection.start.assert_called_once_with()
+    session.start.assert_not_called()
+    session.stop.assert_not_called()
+    connection.bdh.assert_called_once_with(["A"], ["PX_LAST"], "20260701", "20260702", None, None)
+    pd.testing.assert_frame_equal(result, bbg._normalise_bdh(raw, ["A"], ["PX_LAST"]))
+
+
+def test_supplied_session_is_not_stopped_when_query_fails(monkeypatch):
+    session = Mock()
+    connection = Mock()
+    connection.bdh.side_effect = RuntimeError("request failed")
+    query = Mock(return_value=connection)
+    monkeypatch.setattr(bbg, "_blp_types", lambda: (None, query))
+    monkeypatch.setattr(bbg, "_custom_api_parser", lambda: None)
+
+    with pytest.raises(RuntimeError, match="request failed"):
+        bbg.bdh("A", "PX_LAST", "2026-07-01", "2026-07-02", session=session)
+
+    connection.start.assert_called_once_with()
+    session.start.assert_not_called()
+    session.stop.assert_not_called()
+
+
+def test_bdib_serializes_requests_on_supplied_session(monkeypatch):
+    session = Mock()
+    connection = Mock()
+    query = Mock(return_value=connection)
+    active = 0
+    max_active = 0
+
+    def fetch(ticker, *_args):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            return pd.DataFrame({"time": [pd.Timestamp("2026-07-01 10:00")], "close": [1.0]})
+        finally:
+            active -= 1
+
+    connection.bdib.side_effect = fetch
+    monkeypatch.setattr(bbg, "_blp_types", lambda: (None, query))
+    monkeypatch.setattr(bbg, "_custom_api_parser", lambda: None)
+
+    result = bbg.bdib(
+        ["A", "B"],
+        "2026-07-01 10:00",
+        "2026-07-01 10:01",
+        session=session,
+    )
+
+    assert max_active == 1
+    assert [call.args[0] for call in connection.bdib.call_args_list] == ["A", "B"]
+    assert query.call_args_list == [call(timeout=30000), call(timeout=30000)]
+    assert connection.start.call_count == 2
+    session.start.assert_not_called()
+    session.stop.assert_not_called()
+    assert list(result["security"]) == ["A", "B"]

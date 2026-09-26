@@ -1,6 +1,7 @@
 import datetime as dt
 import typing as tp
 from concurrent.futures import ThreadPoolExecutor as tp_exec
+from contextlib import contextmanager
 from enum import Enum
 
 import numpy as np
@@ -88,6 +89,26 @@ def _custom_api_parser() -> tp.Any:
     """Create a Bloomberg parser that preserves partial security results."""
     BlpParser, _ = _blp_types()
     return BlpParser(processor_steps=[_log_api_errors_processor])
+
+
+@contextmanager
+def _blp_connection(BlpQuery, *, timeout: int, parser, session):
+    """Yield a query connection, reusing a caller-owned started session when supplied."""
+    if parser is None:
+        conn = BlpQuery(timeout=timeout)
+    else:
+        conn = BlpQuery(timeout=timeout, parser=parser)
+    if session is None:
+        with conn as started_conn:
+            yield started_conn
+        return
+
+    # blp.BlpQuery 0.0.4 always creates its own session and its context manager
+    # always stops it. Replacing that session lets the caller own its lifecycle.
+    conn.session = session
+    conn._started = True
+    conn.start()
+    yield conn
 
 
 def _to_yyyymmdd(value: dt.datetime | str) -> str:
@@ -193,6 +214,7 @@ def bdh(
     end_date: dt.datetime | str | None = None,
     overrides: tp.Sequence[tuple[str, str]] | None = None,
     options: dict | None = None,
+    session: tp.Any = None,
 ):
     """
     Query Bloomberg history with analyst-friendly columns.
@@ -200,6 +222,9 @@ def bdh(
     A single ticker returns field columns. Multiple tickers with one field
     return ticker columns. Multiple tickers and fields return a
     ``(field, ticker)`` MultiIndex.
+
+    ``session`` may be a started synchronous ``blpapi.Session``. The caller
+    owns its lifecycle when it is supplied.
     """
     _, BlpQuery = _blp_types()
     # normalise all inputs
@@ -225,7 +250,12 @@ def bdh(
         overrides,
         options,
     )
-    with BlpQuery(timeout=30000, parser=_custom_api_parser()) as conn:
+    with _blp_connection(
+        BlpQuery,
+        timeout=30000,
+        parser=_custom_api_parser(),
+        session=session,
+    ) as conn:
         try:
             raw_data = conn.bdh(ticker, field, start_date_str, end_date_str, overrides, options)  # type: ignore
         except Exception:
@@ -271,10 +301,14 @@ def bref(
     overrides: tp.Sequence[tuple[str, str]] | None = None,
     options: dict[str, str] | None = None,
     allow_partial_errors: bool = True,
+    session: tp.Any = None,
 ):
     """
     Query wrapper around the bdp (Bloomberg data point)
     single refrence data point for a ticker, i.e contract expirty date
+
+    ``session`` may be a started synchronous ``blpapi.Session``. The caller
+    owns its lifecycle when it is supplied.
     """
     _, BlpQuery = _blp_types()
     if isinstance(ticker, str):
@@ -292,7 +326,7 @@ def bref(
         overrides,
         options,
     )
-    with BlpQuery(timeout=30000, parser=parser) as conn:
+    with _blp_connection(BlpQuery, timeout=30000, parser=parser, session=session) as conn:
         try:
             raw_data = conn.bdp(ticker, field, overrides, options)
         except Exception:
@@ -342,6 +376,7 @@ def _bdib_query(
     interval,
     overrides,
     options,
+    session=None,
 ):
     """Fetch one ticker's intraday bars and attach its security when absent."""
     _, BlpQuery = _blp_types()
@@ -358,7 +393,12 @@ def _bdib_query(
         overrides,
         options,
     )
-    with BlpQuery(timeout=30000, parser=_custom_api_parser()) as conn:
+    with _blp_connection(
+        BlpQuery,
+        timeout=30000,
+        parser=_custom_api_parser(),
+        session=session,
+    ) as conn:
         try:
             resp = conn.bdib(
                 ticker,
@@ -404,9 +444,14 @@ def bdib(
     interval: int = 1,
     overrides: tp.Sequence[tuple[str, str]] | None = None,
     options: dict[str, str] | None = None,
+    session: tp.Any = None,
 ):
     """
     wrapper around bdib, and make it parallised on ticker
+
+    ``session`` may be a started synchronous ``blpapi.Session``. The caller
+    owns its lifecycle when it is supplied; requests then run serially because
+    synchronous Bloomberg sessions consume events from a shared stream.
     """
     #  convert to start and end pd.timestamp and then into the right string format
     start_datetime_pd = pd.to_datetime(start_datetime)
@@ -440,12 +485,19 @@ def bdib(
         for x in ticker
     ]
     ret_frame = pd.DataFrame()
-    # run the query in a threadpool to allow for multiple tickers
-    with tp_exec(5) as pool:
-        futures = [pool.submit(_bdib_query, *x) for x in args]
-        # collect the responses
-        for fut in futures:
-            resp = fut.result()
+    if session is None:
+        # run the query in a threadpool to allow for multiple tickers
+        with tp_exec(5) as pool:
+            futures = [pool.submit(_bdib_query, *x) for x in args]
+            # collect the responses
+            for fut in futures:
+                resp = fut.result()
+                if resp is not None and not resp.empty:
+                    ret_frame = pd.concat([ret_frame, resp])
+    else:
+        # A synchronous blpapi.Session consumes events from a shared stream.
+        for query_args in args:
+            resp = _bdib_query(*query_args, session=session)
             if resp is not None and not resp.empty:
                 ret_frame = pd.concat([ret_frame, resp])
     # process the response
@@ -471,10 +523,14 @@ def bbulkref(
     field: list[str],
     overrides: tp.Sequence[tuple[str, str]] | None = None,
     options: dict[str, str] | None = None,
+    session: tp.Any = None,
 ):
     """
     Wrapper around the BDS endpoint
     allows for multiple fields and tickers to be queried at once
+
+    ``session`` may be a started synchronous ``blpapi.Session``. The caller
+    owns its lifecycle when it is supplied.
     """
     _, BlpQuery = _blp_types()
     if isinstance(ticker, str):
@@ -491,7 +547,12 @@ def bbulkref(
         overrides,
         options,
     )
-    with BlpQuery(timeout=30000, parser=_custom_api_parser()) as conn:
+    with _blp_connection(
+        BlpQuery,
+        timeout=30000,
+        parser=_custom_api_parser(),
+        session=session,
+    ) as conn:
         try:
             # grouped by (ticker, field)
             responses = {(x, y): conn.bds(x, y, overrides, options) for x in ticker for y in field}
@@ -521,8 +582,12 @@ def bbulkref(
     return df
 
 
-def bql(query: str, pivot: bool = True):
-    """Run a BQL query and optionally return its normalized DataFrame."""
+def bql(query: str, pivot: bool = True, session: tp.Any = None):
+    """Run a BQL query and optionally return its normalized DataFrame.
+
+    ``session`` may be a started synchronous ``blpapi.Session``. The caller
+    owns its lifecycle when it is supplied.
+    """
     _, BlpQuery = _blp_types()
     log.info(
         "query start source=bloomberg operation=bql query_length={} pivot={}",
@@ -530,7 +595,7 @@ def bql(query: str, pivot: bool = True):
         pivot,
     )
     log.debug("query detail source=bloomberg operation=bql query={!r}", query)
-    with BlpQuery(timeout=30000) as conn:
+    with _blp_connection(BlpQuery, timeout=30000, parser=None, session=session) as conn:
         try:
             raw_data = conn.bql(query)
         except Exception:
