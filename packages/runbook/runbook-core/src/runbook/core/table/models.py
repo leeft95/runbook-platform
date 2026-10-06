@@ -9,6 +9,8 @@ from enum import Enum
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+import numpy as np
+
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -130,6 +132,18 @@ class TableRowRef(BaseModel):
 
     mode: RowRefMode
     value: Any
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def normalize_scalar_labels(cls, value: Any) -> Any:
+        """Keep labels JSON-serializable when pandas supplies NumPy scalars."""
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, tuple):
+            return tuple(cls.normalize_scalar_labels(item) for item in value)
+        if isinstance(value, list):
+            return [cls.normalize_scalar_labels(item) for item in value]
+        return value
 
     @model_validator(mode="after")
     def validate_position(self) -> "TableRowRef":
@@ -257,8 +271,29 @@ class TableCondition(BaseModel):
         return self
 
 
+class TableDataBar(BaseModel):
+    """Column-scaled bars; omitted bounds are inferred from finite target values."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    vmin: float | None = Field(default=None, allow_inf_nan=False)
+    vmax: float | None = Field(default=None, allow_inf_nan=False)
+    align: Literal["mid", "zero", "left", "right"] = "mid"
+    negative_color: str = "#d65f5f"
+    positive_color: str = "#5fba7d"
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "TableDataBar":
+        """Require increasing explicit bounds."""
+        if self.vmin is not None and self.vmax is not None and self.vmin >= self.vmax:
+            raise ValueError("data bar vmin must be less than vmax")
+        return self
+
+
 class TableAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    data_bar: TableDataBar | None = Field(default=None, exclude_if=lambda value: value is None)
 
     background_color: str | None = None
     text_color: str | None = None
@@ -285,6 +320,7 @@ class TableAction(BaseModel):
                 self.border_right is not None,
                 self.border_bottom is not None,
                 self.border_left is not None,
+                self.data_bar is not None,
             ]
         ):
             raise ValueError("action must set at least one style property")
@@ -362,6 +398,10 @@ _NUMBER_FMT_RE = re.compile(r"^(?P<thousands>,)?(?:\.(?P<digits>\d+))?(?P<kind>[
 
 def parse_python_format_string(format_spec: str) -> TableFormatSpec:
     """Parse a supported python format string into canonical format spec."""
+    if format_spec.startswith("{0:"):
+        format_spec = "{:" + format_spec[3:]
+    elif format_spec == "{0}":
+        format_spec = "{}"
     if format_spec == "{}":
         return TableFormatString()
 
@@ -391,6 +431,30 @@ def parse_python_format_string(format_spec: str) -> TableFormatSpec:
     raise ValueError(f"Unsupported python format string: {format_spec!r}")
 
 
+class TableRowFormat(BaseModel):
+    """Override a row's display format, optionally within selected columns."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    row_ref: TableRowRef
+    spec: TableFormatSpec
+    columns: list[str] | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("spec", mode="before")
+    @classmethod
+    def normalize_spec(cls, value: Any) -> Any:
+        """Accept the same Python format strings as column formats."""
+        return parse_python_format_string(value) if isinstance(value, str) else value
+
+    @field_validator("columns")
+    @classmethod
+    def validate_columns(cls, value: list[str] | None) -> list[str] | None:
+        """Reject empty selections that would silently format nothing."""
+        if value is not None and (not value or any(not label for label in value)):
+            raise ValueError("row format columns must contain non-empty labels")
+        return value
+
+
 class TableStyleFormat(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -398,6 +462,7 @@ class TableStyleFormat(BaseModel):
     precision: int | None = Field(default=None, ge=0)
     thousands: str | None = None
     columns: dict[str, TableFormatSpec] = Field(default_factory=dict)
+    rows: list[TableRowFormat] = Field(default_factory=list, exclude_if=lambda value: not value)
 
     @field_validator("columns", mode="before")
     @classmethod
@@ -437,6 +502,7 @@ class TableSizing(BaseModel):
 
     columns: list[TableColumnSizing] = Field(default_factory=list)
     rows: list[TableRowSizing] = Field(default_factory=list)
+    index_width_px: int | None = Field(default=None, gt=0, exclude_if=lambda value: value is None)
 
 
 class TableGlobalStyle(BaseModel):
@@ -459,6 +525,7 @@ class TableStyleOptions(BaseModel):
     show_index: bool = True
     hidden_columns: list[str] = Field(default_factory=list)
     hidden_rows: list[TableRowRef] = Field(default_factory=list)
+    footer: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TableStylePlan(BaseModel):
@@ -476,6 +543,14 @@ class TableStylePlan(BaseModel):
     def validate_links_version(self) -> "TableStylePlan":
         if self.schema_version == "table-style/0.1" and self.links:
             raise ValueError("table-style/0.1 does not support table links")
+        if self.schema_version == "table-style/0.1" and self.format.rows:
+            raise ValueError("table-style/0.1 does not support row formats")
+        if self.schema_version == "table-style/0.1" and any(rule.action.data_bar for rule in self.rules):
+            raise ValueError("table-style/0.1 does not support data bars")
+        if self.schema_version == "table-style/0.1" and (
+            self.sizing.index_width_px is not None or self.options.footer is not None
+        ):
+            raise ValueError("table-style/0.1 does not support index width or footer")
         return self
 
 
@@ -495,6 +570,7 @@ class ResolvedTableStyle:
     row_width_px: dict[int, int]
     cell_css: dict[tuple[int, str], dict[str, str]]
     formats: dict[str, TableFormatSpec]
+    cell_formats: dict[tuple[int, str], TableFormatSpec]
     na_rep: str | None
     precision: int | None
     thousands: str | None
@@ -506,6 +582,8 @@ class ResolvedTableStyle:
     header_links: dict[str, TableLinkDestination]
     index_links: dict[int, TableLinkDestination]
     index_header_link: TableLinkDestination | None
+    index_width_px: int | None
+    footer: str | None
 
     @property
     def format(self) -> TableStyleFormat:
@@ -515,6 +593,10 @@ class ResolvedTableStyle:
             precision=self.precision,
             thousands=self.thousands,
             columns=dict(self.formats),
+            rows=[
+                TableRowFormat(row_ref=TableRowRef(mode=RowRefMode.position, value=row), spec=spec, columns=[column])
+                for (row, column), spec in self.cell_formats.items()
+            ],
         )
 
 
@@ -534,6 +616,7 @@ __all__ = [
     "TableLinkDestination",
     "TableLinkKind",
     "TableAction",
+    "TableDataBar",
     "TableColumnRHS",
     "TableColumnSizing",
     "TableCondition",
@@ -546,6 +629,7 @@ __all__ = [
     "TableGlobalStyle",
     "TableLiteralRHS",
     "TableRowRef",
+    "TableRowFormat",
     "TableRowRHS",
     "TableRowSizing",
     "TableRule",

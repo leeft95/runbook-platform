@@ -553,7 +553,7 @@ def test_ag_grid_consumes_resolved_style_and_semantic_links(tmp_path) -> None:
     assert definitions["report"]["cellRendererParams"]["runbookLinksField"] == "__runbook_links__"
     assert definitions["label"]["headerComponentParams"]["runbookHeaderLink"] == "/resolved/report/header"
     assert definitions["label"]["headerComponent"] == "runbookHeaderLinkRenderer"
-    assert definitions["amount"]["cellStyle"]["function"].endswith(") || null")
+    assert definitions["amount"]["cellStyle"]["function"].endswith(') || {"textAlign": "center"}')
     assert config.column_defs[0]["headerName"] == "Region"
     assert config.column_defs[0]["headerComponentParams"]["runbookHeaderLink"] == "/resolved/plot/all-plots"
     assert config.column_defs[0]["cellRenderer"] == "runbookIndexLinkRenderer"

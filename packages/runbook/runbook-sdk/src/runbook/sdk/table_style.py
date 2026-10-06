@@ -19,9 +19,11 @@ from runbook.core.table.models import (
     TableAction,
     TableColumnSizing,
     TableCondition,
+    TableDataBar,
     TableFormatSpec,
     TableLink,
     TableRowRef,
+    TableRowFormat,
     TableRowSizing,
     TableRule,
     TableTarget,
@@ -115,6 +117,18 @@ def format_date(column: str, pattern: str) -> TableFormatEntry:
             "pattern": pattern,
         },
     }
+
+
+def format_row(
+    row_ref: TableRowRef | TableRowRefInput,
+    spec: FormatSpecInput | str,
+    *,
+    columns: Sequence[str] | None = None,
+) -> TableRowFormat:
+    """Format one row or selected cells; later overrides take precedence."""
+    return TableRowFormat.model_validate(
+        {"row_ref": row_ref, "spec": spec, "columns": None if columns is None else list(columns)}
+    )
 
 
 def _link_destination(
@@ -299,6 +313,7 @@ def action(
     border_right: str | None = None,
     border_bottom: str | None = None,
     border_left: str | None = None,
+    data_bar: TableDataBar | Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Handle action."""
     payload: dict[str, Any] = {}
@@ -322,6 +337,12 @@ def action(
         payload["border_bottom"] = border_bottom
     if border_left is not None:
         payload["border_left"] = border_left
+    if data_bar is not None:
+        payload["data_bar"] = (
+            data_bar.model_dump(mode="python", exclude_none=True)
+            if isinstance(data_bar, TableDataBar)
+            else dict(data_bar)
+        )
     return payload
 
 
@@ -431,13 +452,15 @@ def legacy_zscore_band_rules(
 def table_style(
     *,
     key: str | None = None,
-    formats: Sequence[TableFormatEntry] | None = None,
+    formats: Sequence[TableFormatEntry | TableRowFormat] | None = None,
     sizing: Sequence[TableSizingEntry] | None = None,
     rules: Sequence[TableRuleInput] | None = None,
     max_rows: int = 100,
     na_rep: str | None = None,
     show_index: bool = True,
     links: Sequence[TableLinkInput] | None = None,
+    index_width_px: int | None = None,
+    footer: str | None = None,
 ) -> dict[str, Any]:
     """Handle table style."""
     payload: dict[str, Any] = {
@@ -446,22 +469,32 @@ def table_style(
     }
     if key is not None:
         payload["style_key"] = key
+    if footer is not None:
+        payload["options"]["footer"] = footer
 
     format_columns: dict[str, Any] = {}
+    format_rows: list[dict[str, Any]] = []
     for fmt in formats or []:
+        if isinstance(fmt, TableRowFormat):
+            format_rows.append(fmt.model_dump(mode="python", exclude_none=True))
+            continue
         column = fmt.get("column")
-        spec = fmt.get("spec")
+        spec: Any = fmt.get("spec")
         if not isinstance(column, str) or not column:
             raise ValueError("format entry must include non-empty 'column'")
+        if hasattr(spec, "model_dump"):
+            spec = spec.model_dump(mode="python", exclude_none=True)
         if not isinstance(spec, Mapping):
             raise ValueError(f"format entry for column={column!r} must include 'spec' mapping")
         format_columns[column] = dict(spec)
-    if format_columns or na_rep is not None:
+    if format_columns or format_rows or na_rep is not None:
         format_payload: dict[str, Any] = {}
         if na_rep is not None:
             format_payload["na_rep"] = na_rep
         if format_columns:
             format_payload["columns"] = format_columns
+        if format_rows:
+            format_payload["rows"] = format_rows
         payload["format"] = format_payload
 
     column_sizes: list[dict[str, Any]] = []
@@ -489,6 +522,8 @@ def table_style(
         raise ValueError(f"unsupported sizing kind: {kind!r}")
     if column_sizes or row_sizes:
         payload["sizing"] = {"columns": column_sizes, "rows": row_sizes}
+    if index_width_px is not None:
+        payload.setdefault("sizing", {})["index_width_px"] = index_width_px
 
     if rules:
         payload["rules"] = [dict(r) for r in rules]
@@ -548,6 +583,7 @@ __all__ = [
     "format_date",
     "format_number",
     "format_percent",
+    "format_row",
     "link_column",
     "link_column_header",
     "link_header",

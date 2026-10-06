@@ -115,7 +115,13 @@ while a host-owned Dash route resolver handles the same logical destinations.
    :members: plot_mixed
 
 .. automodule:: runbook.core.plotting.seasonal
-   :members: plot_seasonal, plot_cot
+   :members: plot_seasonal, plot_cot, plot_seasonal_grid
+
+.. automodule:: runbook.core.plotting.cot
+   :members: plot_cot_market
+
+.. automodule:: runbook.core.plotting.regression
+   :members: plot_regression, plot_price_vs_position
 ```
 
 ```{eval-rst}

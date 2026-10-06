@@ -3,13 +3,14 @@ from __future__ import annotations
 import typing as tp
 
 import pandas as pd
+import plotly.graph_objects as go
 
 from ...plotting.seasonal import plot_seasonal
 from ...timeseries.analysis import (
     AggregationModes,
     MovingAvgModes,
+    _get_historical_data_on_date,
     calculate_historical_mean_std_for_date,
-    calculate_moving_average,
 )
 from ..models import (
     TableAction,
@@ -29,17 +30,12 @@ from ..models import (
     TableTarget,
     TargetScope,
 )
-from .common import _build_plot_link_metadata, color_negative_red, highlight_zscore
+from .common import _aligned_moving_average, _build_plot_link_metadata, color_negative_red, highlight_zscore
 
 
 def _month_end(ts: pd.Timestamp) -> pd.Timestamp:
     """Handle month end."""
     return ts + pd.offsets.MonthEnd(0)
-
-
-def _as_single_column_df(series: pd.Series, column_name: str) -> pd.DataFrame:
-    """Handle as single column df."""
-    return pd.DataFrame({column_name: series})
 
 
 def _parse_aggregation_mode(
@@ -51,6 +47,8 @@ def _parse_aggregation_mode(
     if isinstance(mode, AggregationModes):
         return mode
     if isinstance(mode, str):
+        if mode.strip().lower() in {"last", "level"}:
+            return None
         try:
             return AggregationModes(mode)
         except ValueError as exc:
@@ -71,12 +69,16 @@ def _aggregation_suffix(mode: AggregationModes | None) -> str:
     raise ValueError(f"{mode} is unknown")
 
 
-def _aligned_moving_average(series: pd.Series, window: int, kind: MovingAvgModes | str) -> pd.Series:
-    """Handle aligned moving average."""
-    aligned = pd.Series(index=series.index, dtype="float64")
-    ma_values = tp.cast(pd.Series, calculate_moving_average(series, window=window, kind=kind))
-    aligned.loc[ma_values.index] = ma_values.to_numpy()
-    return aligned
+def _period_aggregate(series: pd.Series, mode: AggregationModes | None, frequency: str) -> pd.Series:
+    """Aggregate calendar periods without turning wholly missing periods into zero."""
+    periods = series.resample(frequency)
+    if mode == AggregationModes.DIFF:
+        return periods.last().diff()
+    if mode == AggregationModes.SUM:
+        return periods.sum(min_count=1)
+    if mode == AggregationModes.MA:
+        return periods.mean()
+    return periods.last()
 
 
 def _aggregate_series(
@@ -84,39 +86,31 @@ def _aggregate_series(
     mode: AggregationModes | None,
     *,
     moving_average_type: MovingAvgModes | str,
-) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
-    """Handle aggregate series."""
-    monthly_freq = "ME"
-    quarterly_freq = "QE"
-    if mode is None:
-        return (
-            series,
-            series,
-            series.resample(monthly_freq).last(),
-            series.resample(quarterly_freq).last(),
-        )
-    if mode == AggregationModes.DIFF:
-        return (
-            series.diff(periods=10),
-            series.diff(periods=20),
-            series.resample(monthly_freq).last().diff(),
-            series.resample(quarterly_freq).last().diff(),
-        )
-    if mode == AggregationModes.SUM:
-        return (
-            series.rolling(10).sum(),
-            series.rolling(20).sum(),
-            series.resample(monthly_freq).sum(),
-            series.resample(quarterly_freq).sum(),
-        )
-    if mode == AggregationModes.MA:
-        return (
-            _aligned_moving_average(series, 10, moving_average_type),
-            _aligned_moving_average(series, 20, moving_average_type),
-            series.resample(monthly_freq).mean(),
-            series.resample(quarterly_freq).mean(),
-        )
-    raise ValueError(f"{mode} is unknown")
+    windows: tuple[int, ...],
+    smooth: int | None,
+    mtd: bool,
+) -> tuple[dict[int, pd.Series], pd.Series, pd.Series]:
+    """Compute rolling measures and calendar summaries for one input series."""
+    measures = {}
+    for window in windows:
+        if mode == AggregationModes.DIFF:
+            if mtd:
+                # Shift by calendar period before aligning: a stale series must
+                # not use its current-month observation as the prior month-end.
+                monthly_last = series.resample("ME").last()
+                prior = monthly_last.shift().reindex(series.index.normalize() + pd.offsets.MonthEnd(0))
+                prior.index = series.index
+                measures[window] = _aligned_moving_average(series, window, moving_average_type) - prior
+            else:
+                source = series.rolling(smooth).mean() if smooth is not None else series
+                measures[window] = source.diff(window)
+        elif mode == AggregationModes.SUM:
+            measures[window] = series.rolling(window).sum()
+        elif mode == AggregationModes.MA:
+            measures[window] = _aligned_moving_average(series, window, moving_average_type)
+        else:
+            measures[window] = series
+    return measures, _period_aggregate(series, mode, "ME"), _period_aggregate(series, mode, "QE")
 
 
 def _seasonal_plots_for_columns(
@@ -124,24 +118,36 @@ def _seasonal_plots_for_columns(
     *,
     moving_average_window: int | None,
     moving_average_type: MovingAvgModes,
+    input_frequency: str,
+    exclude_years: list[int] | None,
 ) -> list[tp.Any]:
     """Handle seasonal plots for columns."""
     seasonal_plots: list[tp.Any] = []
     for col in raw_df.columns:
         raw_plot_series = tp.cast(pd.Series, raw_df[col])
         plot_series = (
-            tp.cast(
-                pd.Series,
-                calculate_moving_average(raw_plot_series, moving_average_window, moving_average_type),
-            )
+            _aligned_moving_average(raw_plot_series, moving_average_window, moving_average_type)
             if moving_average_window is not None
             else raw_plot_series
         )
+        unit = "m" if input_frequency == "M" else "d"
+        title = str(col) if moving_average_window is None else f"{col} - {moving_average_window}{unit} mva"
+        if plot_series.dropna().empty:
+            seasonal_plots.append(
+                go.Figure().update_layout(
+                    title=title, annotations=[{"text": "Insufficient observations", "showarrow": False}]
+                )
+            )
+            continue
+        current_year = int(plot_series.dropna().index[-1].year)
         seasonal_plots.append(
             plot_seasonal(
                 plot_series.to_frame(col),
-                title=f"{col} - {moving_average_window}d mva",
+                title=title,
                 ytd_cum_sum=True,
+                frequency=input_frequency,
+                current_year=current_year,
+                exclude_years=[year for year in exclude_years or [] if year != current_year],
             )
         )
     return seasonal_plots
@@ -152,11 +158,27 @@ def _normalize_input_frame(
     *,
     columns_filter: list[str] | None,
     fill_na: str | None,
+    as_of: str | pd.Timestamp | None = None,
 ) -> pd.DataFrame:
     """Normalize input frame."""
-    df = raw_df.copy()
+    if not isinstance(raw_df, pd.DataFrame):
+        raise TypeError("raw_df must be a pandas DataFrame")
+    if not isinstance(raw_df.index, pd.DatetimeIndex):
+        raise TypeError("raw_df index must be a pandas DatetimeIndex")
+    if not raw_df.index.is_unique or raw_df.index.hasnans:
+        raise ValueError("raw_df index must contain unique timestamps without NaT")
+    if not raw_df.columns.is_unique or not all(isinstance(col, str) for col in raw_df.columns):
+        raise ValueError("raw_df requires unique string column names")
+    df = raw_df.sort_index().copy()
+    if as_of is not None:
+        cutoff = pd.Timestamp(as_of)
+        if df.index.tz is not None and cutoff.tzinfo is None:
+            cutoff = cutoff.tz_localize(df.index.tz)
+        df = df.loc[df.index <= cutoff]
     if columns_filter is not None:
         df = df[columns_filter]
+    if df.empty:
+        raise ValueError("No data available after filtering")
     if fill_na is None:
         return df
     if fill_na == "ffill":
@@ -171,151 +193,109 @@ def _build_monthly_table(
     *,
     moving_average_type: MovingAvgModes,
     aggregation_type: AggregationModes | str | None,
-    aggregation_columns: dict[str, AggregationModes] | None,
+    aggregation_columns: dict[str, AggregationModes | str | None] | None,
     highlighting_rules: dict[str, tp.Any] | None,
     benchmark_month: tp.Any,
     benchmark_quarter: tp.Any,
-) -> tuple[pd.DataFrame, AggregationModes | None, dict[str, AggregationModes | None]]:
-    """Build monthly table."""
-    default_agg_type = _parse_aggregation_mode(aggregation_type)
-    if aggregation_columns is not None:
-        unknown_cols = [col for col in aggregation_columns if col not in df.columns]
-        if unknown_cols:
-            raise ValueError(f"Column '{unknown_cols[0]}' not found in dataframe")
-
-    resolved_mode_by_column: dict[str, AggregationModes | None] = {}
-    window_change_parts: list[pd.Series] = []
-    window_change1_parts: list[pd.Series] = []
-    monthly_parts: list[pd.Series] = []
-    for col in df.columns:
-        mode = default_agg_type
-        if aggregation_columns is not None and col in aggregation_columns:
-            mode = _parse_aggregation_mode(aggregation_columns[col])
-        resolved_mode_by_column[str(col)] = mode
-        col_series = tp.cast(pd.Series, df[col])
-        col_window_change, col_window_change1, col_monthly, _ = _aggregate_series(
-            col_series,
-            mode,
+    windows: tuple[int, ...],
+    history_months: int,
+    history_quarters: int,
+    include_qtd: bool,
+    comparison_years: int | None,
+    exclude_years: list[int] | None,
+    input_frequency: str,
+    smooth: int | None,
+    mtd: bool,
+) -> tuple[pd.DataFrame, AggregationModes | None, dict[str, AggregationModes | None], list[str]]:
+    """Build both inventory and flow summaries from the same period calculations."""
+    default_mode = _parse_aggregation_mode(aggregation_type)
+    unknown = set(aggregation_columns or {}) - set(df.columns)
+    if unknown:
+        raise ValueError(f"Column '{sorted(unknown)[0]}' not found in dataframe")
+    modes = {col: _parse_aggregation_mode((aggregation_columns or {}).get(col, default_mode)) for col in df}
+    rolling_parts: dict[int, list[pd.Series]] = {window: [] for window in windows}
+    monthly_parts, quarterly_parts = [], []
+    for col in df:
+        measures, monthly, quarterly = _aggregate_series(
+            df[col],
+            modes[col],
             moving_average_type=moving_average_type,
+            windows=windows,
+            smooth=smooth,
+            mtd=mtd,
         )
-        window_change_parts.append(col_window_change.rename(col))
-        window_change1_parts.append(col_window_change1.rename(col))
-        monthly_parts.append(col_monthly.rename(col))
-
-    window_change = pd.concat(window_change_parts, axis=1).loc[:, list(df.columns)]
-    window_change1 = pd.concat(window_change1_parts, axis=1).loc[:, list(df.columns)]
-    monthly = pd.concat(monthly_parts, axis=1).loc[:, list(df.columns)]
-
-    column_suffix = _aggregation_suffix(default_agg_type)
-    window_change_last = _as_single_column_df(tp.cast(pd.Series, window_change.iloc[-1, :]), f"10d {column_suffix}")
-    window_change_last1 = _as_single_column_df(tp.cast(pd.Series, window_change1.iloc[-1, :]), f"20d {column_suffix}")
-    last_5_months = monthly.iloc[-6:-1, :].sort_index(ascending=False).T
-    last_5_months.columns = [pd.to_datetime(x).strftime("%Y-%m") for x in last_5_months.columns]
-
+        for window, values in measures.items():
+            rolling_parts[window].append(values.rename(col))
+        monthly_parts.append(monthly.rename(col))
+        quarterly_parts.append(quarterly.rename(col))
+    rolling = {window: pd.concat(parts, axis=1) for window, parts in rolling_parts.items()}
+    monthly = pd.concat(monthly_parts, axis=1)
+    quarterly = pd.concat(quarterly_parts, axis=1)
+    unit = "m" if input_frequency == "M" else "d"
+    suffix = _aggregation_suffix(default_mode)
+    window_labels = [f"{window}{unit} {suffix}" for window in windows]
+    if mtd:
+        window_labels = [label + " (MTD basis)" for label in window_labels]
+    parts = [rolling[window].iloc[-1].to_frame(label) for window, label in zip(windows, window_labels, strict=True)]
+    if history_months:
+        months = monthly.iloc[-history_months - 1 : -1].iloc[::-1].T
+        months.columns = months.columns.strftime("%Y-%m")
+        parts.append(months)
+    if include_qtd:
+        parts.append(quarterly.iloc[-1].to_frame("QTD"))
+    if history_quarters:
+        quarters = quarterly.iloc[-history_quarters - 1 : -1].iloc[::-1].T
+        quarters.columns = [f"{value.year}Q{value.quarter}" for value in quarters.columns]
+        parts.append(quarters)
+    if comparison_years is not None:
+        for window, label in zip(windows, window_labels, strict=True):
+            history = _get_historical_data_on_date(rolling[window], df.index[-1])
+            history = history.loc[
+                (history.index.year < df.index[-1].year) & ~history.index.year.isin(exclude_years or [])
+            ]
+            prior_year = history.loc[history.index.year == df.index[-1].year - 1].reindex(columns=df.columns)
+            previous = prior_year.iloc[-1] if len(prior_year) else pd.Series(float("nan"), index=df.columns)
+            parts.extend(
+                [
+                    previous.to_frame(f"Y-1 {label}"),
+                    history.tail(comparison_years).mean().to_frame(f"{comparison_years}Y {label}"),
+                ]
+            )
+    if benchmark_month is not None or benchmark_quarter is not None:
+        date = (
+            pd.Timestamp(benchmark_month)
+            if benchmark_month is not None
+            else pd.Period(benchmark_quarter, freq="Q").start_time
+        )
+        if df.index.tz is not None and date.tzinfo is None:
+            date = date.tz_localize(df.index.tz)
+        if benchmark_month is not None:
+            reference = monthly.reindex([_month_end(date.normalize())]).iloc[0]
+            parts.append((rolling[windows[0]].iloc[-1] - reference).to_frame(f"{window_labels[0]} vs {date:%b%Y}"))
+        else:
+            dates = [_month_end(date + pd.DateOffset(months=i)) for i in range(3)]
+            reference = monthly.reindex(dates).mean(skipna=False)
+            parts.append(
+                (rolling[windows[-1]].iloc[-1] - reference).to_frame(f"{window_labels[-1]} vs {benchmark_quarter}")
+            )
     if highlighting_rules is not None:
         if "seasonal" in highlighting_rules:
-            mean_std = tp.cast(
-                pd.DataFrame,
-                calculate_historical_mean_std_for_date(window_change, seasonal=highlighting_rules["seasonal"]),
-            )
-            mean_std1 = tp.cast(
-                pd.DataFrame,
-                calculate_historical_mean_std_for_date(window_change1, seasonal=highlighting_rules["seasonal"]),
-            )
+            seasonal, window_history = highlighting_rules["seasonal"], None
         elif "window" in highlighting_rules:
-            mean_std = tp.cast(
-                pd.DataFrame,
-                calculate_historical_mean_std_for_date(
-                    window_change, seasonal=None, window=highlighting_rules["window"]
-                ),
-            )
-            mean_std1 = tp.cast(
-                pd.DataFrame,
-                calculate_historical_mean_std_for_date(
-                    window_change1, seasonal=None, window=highlighting_rules["window"]
-                ),
-            )
+            seasonal, window_history = None, highlighting_rules["window"]
         else:
             raise ValueError("highlighting_rules must include either 'seasonal' or 'window'")
-        mean_std.columns = ["_mean", "_std"]
-        mean_std1.columns = ["_mean1", "_std1"]
-        if benchmark_month is not None:
-            benchmark_month_ts = tp.cast(pd.Timestamp, pd.Timestamp(benchmark_month))
-            benchmark_month_delta = tp.cast(
-                pd.Series,
-                window_change_last.iloc[:, 0] - monthly.loc[_month_end(benchmark_month_ts), :],
+        for i, window in enumerate(windows):
+            stats = calculate_historical_mean_std_for_date(
+                rolling[window],
+                seasonal=seasonal,
+                window=window_history,
+                excluded_years=exclude_years,
             )
-            benchmark_month_df = _as_single_column_df(
-                benchmark_month_delta,
-                f"10d MA vs {benchmark_month_ts.strftime('%b%Y')}",
-            )
-            table_df = pd.concat(
-                [
-                    window_change_last,
-                    window_change_last1,
-                    last_5_months,
-                    benchmark_month_df,
-                    mean_std,
-                    mean_std1,
-                ],
-                axis=1,
-            )
-        elif benchmark_quarter is not None:
-            benchmark_month_ts = tp.cast(pd.Timestamp, pd.Timestamp(benchmark_quarter))
-            benchmark_months = [
-                _month_end(benchmark_month_ts),
-                _month_end(benchmark_month_ts + pd.DateOffset(months=1)),
-                _month_end(benchmark_month_ts + pd.DateOffset(months=2)),
-            ]
-            benchmark_month_delta = tp.cast(
-                pd.Series,
-                window_change_last1.iloc[:, 0] - monthly.loc[benchmark_months, :].mean(),
-            )
-            benchmark_month_df = _as_single_column_df(benchmark_month_delta, f"20dMA vs {benchmark_quarter}")
-            table_df = pd.concat(
-                [
-                    window_change_last,
-                    window_change_last1,
-                    last_5_months,
-                    benchmark_month_df,
-                    mean_std,
-                    mean_std1,
-                ],
-                axis=1,
-            )
-        else:
-            table_df = pd.concat(
-                [
-                    window_change_last,
-                    window_change_last1,
-                    last_5_months,
-                    mean_std,
-                    mean_std1,
-                ],
-                axis=1,
-            )
-    elif benchmark_month is not None:
-        benchmark_month_ts = tp.cast(pd.Timestamp, pd.Timestamp(benchmark_month))
-        benchmark_month_delta = tp.cast(
-            pd.Series,
-            window_change_last.iloc[:, 0] - monthly.loc[_month_end(benchmark_month_ts), :],
-        )
-        benchmark_month_df = _as_single_column_df(
-            benchmark_month_delta, f"10dMA vs {benchmark_month_ts.strftime('%b%Y')}"
-        )
-        table_df = pd.concat(
-            [
-                window_change_last,
-                window_change_last1,
-                last_5_months,
-                benchmark_month_df,
-            ],
-            axis=1,
-        )
-    else:
-        table_df = pd.concat([window_change_last, window_change_last1, last_5_months], axis=1)
-
-    return table_df, default_agg_type, resolved_mode_by_column
+            number = str(i) if i else ""
+            stats.columns = [f"_mean{number}", f"_std{number}"]
+            parts.append(stats)
+    return pd.concat(parts, axis=1), default_mode, modes, window_labels
 
 
 def _build_monthly_style(
@@ -323,12 +303,13 @@ def _build_monthly_style(
     *,
     na_rep: str | None,
     label_column: str,
+    window_columns: list[str],
     plot_target_column: str | None = None,
     links: list[TableLink] | None = None,
 ) -> dict[str, tp.Any]:
     """Build monthly style."""
     all_columns = [str(col) for col in ret_df.columns]
-    value_cols = [col for col in all_columns if col != label_column and not col.startswith("_")][:9]
+    value_cols = [col for col in all_columns if col != label_column and not col.startswith("_")]
     data_cols = [col for col in value_cols if col in ret_df.columns]
     first_row_label = str(ret_df.index[0]) if not ret_df.empty else "0"
 
@@ -356,10 +337,15 @@ def _build_monthly_style(
         data_col_positions = [idx for idx, col in enumerate(all_columns) if col in data_cols]
         rules.extend(color_negative_red(list(ret_df.columns), [(pos, pos) for pos in data_col_positions]))
 
-    rules.extend(highlight_zscore(all_columns, [(1, "_mean", "_std"), (2, "_mean1", "_std1")]))
+    rules.extend(
+        highlight_zscore(
+            all_columns,
+            [(col, f"_mean{i if i else ''}", f"_std{i if i else ''}") for i, col in enumerate(window_columns)],
+        )
+    )
 
     options = TableStyleOptions(
-        max_rows=100,
+        max_rows=max(1, len(ret_df)),
         show_index=False,
         global_style=TableGlobalStyle(
             background_color="lightblue",
@@ -402,7 +388,7 @@ def table_with_linked_plots_monthly(
     moving_average_type: MovingAvgModes = MovingAvgModes.SIMPLE,
     aggregation_type: AggregationModes | str | None = None,
     columns_filter: list[str] | None = None,
-    aggregation_columns: dict[str, AggregationModes] | None = None,
+    aggregation_columns: dict[str, AggregationModes | str | None] | None = None,
     highlighting_rules: dict[str, tp.Any] | None = None,
     benchmark_month: tp.Any = None,
     benchmark_quarter: tp.Any = None,
@@ -410,6 +396,17 @@ def table_with_linked_plots_monthly(
     na_rep: str | None = "-",
     row_plot_links: bool | list[str] = False,
     all_plots_link: bool = False,
+    *,
+    windows: tuple[int, ...] = (10, 20),
+    history_months: int = 5,
+    history_quarters: int = 0,
+    include_qtd: bool = False,
+    comparison_years: int | None = None,
+    exclude_years: list[int] | None = None,
+    input_frequency: tp.Literal["D", "M"] = "D",
+    as_of: str | pd.Timestamp | None = None,
+    smooth: int | None = None,
+    mtd: bool = False,
 ) -> dict[str, dict[str, tp.Any]]:
     """Build the predefined monthly summary table with linked seasonal plots.
 
@@ -419,18 +416,62 @@ def table_with_linked_plots_monthly(
     input series whose displayed row labels receive those plot links.
     Auxiliary ``_mean``/``_std`` columns are retained for rule evaluation and
     hidden at render time.
+
+    ``windows`` counts observations for daily inputs and calendar months for
+    monthly inputs. Use ``windows=(20,), history_months=3, comparison_years=5``
+    for the inventory/table_format1 shape. ``history_quarters`` and ``include_qtd``
+    append calendar aggregates. ``mtd`` measures each DIFF rolling average from
+    the previous month-end; other aggregation modes are unchanged. ``smooth``
+    smooths DIFF inputs before computing rolling changes, not calendar totals.
+    ``as_of`` cuts inputs before filling, calculations and plots. Metadata in
+    an input ``_last_update`` column is retained as a hidden output helper.
     """
+    if (
+        not windows
+        or any(not isinstance(value, int) or isinstance(value, bool) or value < 1 for value in windows)
+        or len(set(windows)) != len(windows)
+    ):
+        raise ValueError("windows must contain distinct positive integers")
+    for name, value, minimum in (
+        ("history_months", history_months, 0),
+        ("history_quarters", history_quarters, 0),
+        ("comparison_years", comparison_years, 1),
+        ("smooth", smooth, 1),
+        ("moving_average_window", moving_average_window, 1),
+    ):
+        if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < minimum):
+            raise ValueError(f"{name} must be an integer >= {minimum}")
+    if input_frequency not in {"D", "M"}:
+        raise ValueError("input_frequency must be 'D' or 'M'")
+    if benchmark_month is not None and benchmark_quarter is not None:
+        raise ValueError("Choose either benchmark_month or benchmark_quarter")
+    if mtd and smooth is not None:
+        raise ValueError("mtd and smooth cannot be combined")
+    moving_average_type = MovingAvgModes(moving_average_type)
     link_requested = bool(row_plot_links or all_plots_link)
     if link_requested and (header is None or not str(header).strip()):
         raise ValueError("table/header name must not be blank when plot links are requested")
 
+    raw_df = _normalize_input_frame(raw_df, columns_filter=None, fill_na=None, as_of=as_of)
+    last_update = raw_df.pop("_last_update").iloc[-1] if "_last_update" in raw_df else None
+    if columns_filter is not None:
+        columns_filter = [col for col in columns_filter if col != "_last_update"]
+    if input_frequency == "M":
+        month_dates = raw_df.index.normalize() + pd.offsets.MonthEnd(0)
+        if not month_dates.is_unique:
+            raise ValueError("Monthly input requires one observation per calendar month")
+        raw_df.index = month_dates
+        raw_df = raw_df.asfreq("ME")
+    raw_df = _normalize_input_frame(raw_df, columns_filter=None, fill_na=fill_na).apply(pd.to_numeric, errors="raise")
+    df = _normalize_input_frame(raw_df, columns_filter=columns_filter, fill_na=None)
     seasonal_plots = _seasonal_plots_for_columns(
         raw_df,
         moving_average_window=moving_average_window,
         moving_average_type=moving_average_type,
+        input_frequency=input_frequency,
+        exclude_years=exclude_years,
     )
-    df = _normalize_input_frame(raw_df, columns_filter=columns_filter, fill_na=fill_na)
-    table_df, default_agg_type, resolved_mode_by_column = _build_monthly_table(
+    table_df, default_agg_type, resolved_mode_by_column, window_columns = _build_monthly_table(
         df,
         moving_average_type=moving_average_type,
         aggregation_type=aggregation_type,
@@ -438,7 +479,18 @@ def table_with_linked_plots_monthly(
         highlighting_rules=highlighting_rules,
         benchmark_month=benchmark_month,
         benchmark_quarter=benchmark_quarter,
+        windows=windows,
+        history_months=history_months,
+        history_quarters=history_quarters,
+        include_qtd=include_qtd,
+        comparison_years=comparison_years,
+        exclude_years=exclude_years,
+        input_frequency=input_frequency,
+        smooth=smooth,
+        mtd=mtd,
     )
+    if last_update is not None:
+        table_df["_last_update"] = last_update
 
     if aggregation_columns is not None:
         formatted_index: list[str] = []
@@ -502,6 +554,7 @@ def table_with_linked_plots_monthly(
             table_df,
             na_rep=na_rep,
             label_column=label_column,
+            window_columns=window_columns,
             plot_target_column=plot_target_column,
             links=links,
         ),

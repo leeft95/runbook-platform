@@ -2,12 +2,42 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 from runbook.core.table import render_table_html, table_with_linked_plots_monthly
 from runbook.core.timeseries.analysis import (
     AggregationModes,
     MovingAvgModes,
     calculate_moving_average,
 )
+
+
+@pytest.mark.parametrize("highlighting", [None, {"window": 20}])
+def test_quarter_benchmark_is_independent_of_highlighting(highlighting) -> None:
+    data = pd.DataFrame({"x": np.arange(260.0)}, index=pd.date_range("2024-01-01", periods=260))
+    out = table_with_linked_plots_monthly(
+        data,
+        "Asset",
+        aggregation_type=AggregationModes.MA,
+        benchmark_quarter="2024-01-01",
+        highlighting_rules=highlighting,
+    )["Asset"]["data"]
+    expected = data["x"].rolling(20).mean().iloc[-1] - data["x"].resample("ME").mean().iloc[:3].mean()
+    assert out.loc[0, "20d MA vs 2024-01-01"] == pytest.approx(expected)
+
+
+def test_monthly_sorts_before_calculations_filling_and_companion_plots() -> None:
+    data = pd.DataFrame({"x": np.arange(260.0)}, index=pd.date_range("2024-01-01", periods=260))
+    data.iloc[-2] = np.nan
+    original = data.copy()
+    ascending = table_with_linked_plots_monthly(data, "Asset", aggregation_type=AggregationModes.DIFF, fill_na="ffill")[
+        "Asset"
+    ]
+    descending = table_with_linked_plots_monthly(
+        data.iloc[::-1], "Asset", aggregation_type=AggregationModes.DIFF, fill_na="ffill"
+    )["Asset"]
+    pd.testing.assert_frame_equal(ascending["data"], descending["data"])
+    assert ascending["plots"][0].to_json() == descending["plots"][0].to_json()
+    pd.testing.assert_frame_equal(data, original)
 
 
 def test_table_with_linked_plots_monthly_applies_column_overrides_and_row_suffixes() -> None:

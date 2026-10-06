@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from runbook.core.plotting.seasonal import plot_cot, plot_seasonal
+from runbook.core.timeseries.transforms import ts_by_year
 
 
 def _seasonal_fixture_df() -> pd.DataFrame:
@@ -28,6 +29,21 @@ def _cot_fixture_df() -> pd.DataFrame:
         },
         index=idx,
     )
+
+
+def test_cot_preserves_short_dates_and_limits_historical_band() -> None:
+    index = pd.date_range("2015-01-06", "2025-06-24", freq="W-TUE")
+    data = pd.DataFrame({name: np.arange(len(index), dtype=float) for name in _cot_fixture_df().columns}, index=index)
+    data.loc[data.index.year == 2015, "Net OI"] = 99999.0
+    fig = plot_cot(data, None, "COT", ["Net", "Long", "Short"])
+    short = next(trace for trace in fig.data if trace.name == "Net/OI" and trace.xaxis == "x6")
+    expected = ts_by_year(data["Short OI"], frequency="W", dummy_date_index=True).iloc[:, -1]
+    pd.testing.assert_series_equal(pd.Series(short.y, index=short.x), expected, check_names=False, check_freq=False)
+    maximum = next(trace for trace in fig.data if trace.name == "Max" and trace.xaxis == "x4")
+    history = ts_by_year(data["Net OI"], frequency="W", dummy_date_index=True).iloc[:, -6:-1]
+    np.testing.assert_allclose(maximum.y, history.max(axis=1), equal_nan=True)
+    unlimited = plot_cot(data, None, "COT", ["Net", "Long", "Short"], history_years=None)
+    assert max(next(trace.y for trace in unlimited.data if trace.name == "Max" and trace.xaxis == "x4")) == 99999
 
 
 def test_plot_seasonal_builds_three_stacked_subplots_when_enabled() -> None:

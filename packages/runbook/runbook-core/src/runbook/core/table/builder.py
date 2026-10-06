@@ -11,6 +11,7 @@ from numbers import Integral, Number, Real
 from typing import Any, Callable, cast
 
 import pandas as pd
+import numpy as np
 from runbook.core.table.models import (
     ConditionOp,
     ResolvedTableStyle,
@@ -18,6 +19,7 @@ from runbook.core.table.models import (
     StyleInput,
     TableColumnRHS,
     TableCondition,
+    TableDataBar,
     TableFormatDate,
     TableFormatNumber,
     TableFormatPercent,
@@ -87,7 +89,7 @@ def table_style_json(
     max_rows: int | None = None,
 ) -> str:
     """Return canonical style payload JSON string."""
-    return canonical_json(table_style_payload(style, style_key=style_key, max_rows=max_rows))
+    return canonical_json(_table_json_value(table_style_payload(style, style_key=style_key, max_rows=max_rows)))
 
 
 def table_style_hash(
@@ -108,6 +110,25 @@ def _is_null(value: Any) -> bool:
     return False
 
 
+def _table_json_value(value: Any) -> Any:
+    """Normalize table dates, nested axis labels and numeric scalars for identity."""
+    if isinstance(value, Mapping):
+        return {key: _table_json_value(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_table_json_value(item) for item in value]
+    if isinstance(value, np.generic):
+        return _table_json_value(value.item())
+    if _is_null(value):
+        return None
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Integral) and not isinstance(value, bool):
+        return int(value)
+    if isinstance(value, Real) and not isinstance(value, bool):
+        return float(value)
+    return value
+
+
 def _css_string(css: Mapping[str, str]) -> str:
     """Handle css string."""
     if not css:
@@ -119,10 +140,30 @@ def _ensure_supported_dataframe(df: pd.DataFrame) -> None:
     """Handle ensure supported dataframe."""
     if not isinstance(df, pd.DataFrame):
         raise TypeError(f"Expected pandas.DataFrame, got {type(df)!r}")
-    if isinstance(df.index, pd.MultiIndex):
-        raise ValueError("MultiIndex index is not supported for table styling in v1")
-    if isinstance(df.columns, pd.MultiIndex):
-        raise ValueError("MultiIndex columns are not supported for table styling in v1")
+
+
+def table_axis_spans(index: pd.Index) -> list[list[tuple[int, int, str]]]:
+    """Return (position, span, label) cells per header level, grouping equal prefixes.
+
+    Pass the already-visible axis so hidden rows/columns do not occupy spans.
+    Single-level axes retain one header per value; MultiIndex parents span only
+    contiguous children, never equal labels belonging to different parents.
+    """
+    if not isinstance(index, pd.MultiIndex):
+        return [[(i, 1, str(value)) for i, value in enumerate(index)]]
+    result: list[list[tuple[int, int, str]]] = []
+    for level in range(index.nlevels):
+        cells: list[tuple[int, int, str]] = []
+        start = 0
+        while start < len(index):
+            prefix = tuple(code[start] for code in index.codes[: level + 1])
+            end = start + 1
+            while end < len(index) and tuple(code[end] for code in index.codes[: level + 1]) == prefix:
+                end += 1
+            cells.append((start, end - start, str(index[start][level])))
+            start = end
+        result.append(cells)
+    return result
 
 
 def _column_lookup(df: pd.DataFrame) -> dict[str, int]:
@@ -144,7 +185,10 @@ def _resolve_row_ref_position(index: pd.Index, row_ref: TableRowRef) -> int:
             raise ValueError(f"row_ref.position out of range: {pos}")
         return pos
 
-    matches = [i for i, idx_val in enumerate(index.tolist()) if idx_val == row_ref.value]
+    label = (
+        tuple(row_ref.value) if isinstance(index, pd.MultiIndex) and isinstance(row_ref.value, list) else row_ref.value
+    )
+    matches = [i for i, idx_val in enumerate(index.tolist()) if _table_json_value(idx_val) == _table_json_value(label)]
     if not matches and isinstance(row_ref.value, str):
         matches = [i for i, idx_val in enumerate(index.tolist()) if str(idx_val) == row_ref.value]
     if not matches:
@@ -369,6 +413,39 @@ class _ResolvedStyleMaps:
     cell_css: dict[tuple[int, str], dict[str, str]]
 
 
+def _data_bar_css(values: pd.Series, bar: TableDataBar) -> list[dict[str, str]]:
+    """Resolve bounded bars to neutral CSS, keeping the displayed values intact."""
+    numbers = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+    finite = numbers[np.isfinite(numbers)]
+    if not len(finite):
+        return [{"background-image": "none"} for _ in numbers]
+    left = float(finite.min()) if bar.vmin is None else bar.vmin
+    right = float(finite.max()) if bar.vmax is None else bar.vmax
+    align = bar.align
+    if align == "mid" and left >= 0:
+        align, left = "left", 0.0 if bar.vmin is None else left
+    elif align == "mid" and right <= 0:
+        align, right = "right", 0.0 if bar.vmax is None else right
+    elif align == "zero":
+        limit = max(abs(left), abs(right))
+        left, right = -limit, limit
+    result = []
+    for value in numbers:
+        css = {"background-image": "none"}
+        if np.isfinite(value) and right > left:
+            fraction = (min(right, max(left, value)) - left) / (right - left)
+            origin = 0.0 if align == "left" else 1.0 if align == "right" else -left / (right - left)
+            start, end = sorted((origin * 100, fraction * 100))
+            color = bar.negative_color if value < 0 else bar.positive_color
+            if end > start:
+                css["background-image"] = (
+                    f"linear-gradient(90deg, transparent {start:.3f}%, {color} {start:.3f}%, "
+                    f"{color} {end:.3f}%, transparent {end:.3f}%)"
+                )
+        result.append(css)
+    return result
+
+
 def _resolve_style_maps_for_frames(
     visible_df: pd.DataFrame,
     style: TableStylePlan,
@@ -399,6 +476,11 @@ def _resolve_style_maps_for_frames(
         _validate_rhs_shape(rule.condition)
         row_positions, col_positions = _resolve_target(visible_df, rule.target, visible_col_lookup)
         css_props = rule.action.css_properties()
+        bar_styles: dict[tuple[int, int], dict[str, str]] = {}
+        if rule.action.data_bar is not None:
+            for col_pos in col_positions:
+                styles = _data_bar_css(visible_df.iloc[row_positions, col_pos], rule.action.data_bar)
+                bar_styles.update(((row_pos, col_pos), css) for row_pos, css in zip(row_positions, styles, strict=True))
         for row_pos in row_positions:
             for col_pos in col_positions:
                 visible_col_label = str(visible_df.columns[col_pos])
@@ -418,6 +500,7 @@ def _resolve_style_maps_for_frames(
                     existing = cell_css.get(key, {})
                     merged = dict(existing)
                     merged.update(css_props)
+                    merged.update(bar_styles.get((row_pos, col_pos), {}))
                     cell_css[key] = merged
 
     return _ResolvedStyleMaps(
@@ -487,8 +570,6 @@ def _resolve_links(
                 header_links[field] = resolved
         elif link.area == "index":
             assert field is not None
-            if index_source.index.nlevels != 1:
-                raise ValueError("index links require a single-level dataframe index")
             if not any(str(value) == field for value in index_source.index):
                 raise ValueError(f"link index label not found: {field!r}")
             resolved = _resolved_destination(link.destination)
@@ -529,11 +610,22 @@ def resolve_table_style(
         index_df=df,
     )
     visible_labels = tuple(str(col) for col in visible_df.columns)
-    hidden_columns = frozenset(col for col in plan.options.hidden_columns if col in visible_df.columns)
+    hidden_columns = frozenset(col for col in plan.options.hidden_columns if col in visible_labels)
     hidden_rows = frozenset(
         _resolve_row_ref_position(visible_df.index, row_ref) for row_ref in plan.options.hidden_rows
     )
     visible_columns = tuple(label for label in visible_labels if label not in hidden_columns)
+    cell_formats: dict[tuple[int, str], TableFormatSpec] = {}
+    # Resolve against the full input: truncation hides rows without changing
+    # positional references, and does not turn a valid override into an error.
+    for item in plan.format.rows:
+        row_pos = _resolve_row_ref_position(df.index, item.row_ref)
+        columns = visible_labels if item.columns is None else item.columns
+        for column in columns:
+            if column not in visible_labels:
+                raise ValueError(f"row format column label not found: {column!r}")
+            if row_pos < len(visible_df):
+                cell_formats[(row_pos, column)] = item.spec
 
     return ResolvedTableStyle(
         schema_version=plan.schema_version,
@@ -545,6 +637,7 @@ def resolve_table_style(
         row_width_px=maps.row_width_px,
         cell_css=maps.cell_css,
         formats=dict(plan.format.columns),
+        cell_formats=cell_formats,
         na_rep=plan.format.na_rep,
         precision=plan.format.precision,
         thousands=plan.format.thousands,
@@ -556,6 +649,8 @@ def resolve_table_style(
         header_links=header_links,
         index_links=index_links,
         index_header_link=index_header_link,
+        index_width_px=plan.sizing.index_width_px,
+        footer=plan.options.footer,
     )
 
 
@@ -705,7 +800,8 @@ def _inject_link_anchors(
         col_pos = column_lookup.get(field)
         if col_pos is None:
             continue
-        pattern = rf'(<th\b[^>]*\bid="{re.escape(table_id)}_level0_col{col_pos}"[^>]*>)(.*?)(</th>)'
+        level = visible_df.columns.nlevels - 1
+        pattern = rf'(<th\b[^>]*\bid="{re.escape(table_id)}_level{level}_col{col_pos}"[^>]*>)(.*?)(</th>)'
         html_output = re.sub(
             pattern,
             lambda match: f"{match.group(1)}{link_anchor(match.group(2), destination)}{match.group(3)}",
@@ -715,7 +811,8 @@ def _inject_link_anchors(
         )
 
     for row_pos, destination in resolved.index_links.items():
-        pattern = rf'(<th\b[^>]*\bid="{re.escape(table_id)}_level0_row{row_pos}"[^>]*>)(.*?)(</th>)'
+        level = visible_df.index.nlevels - 1
+        pattern = rf'(<th\b[^>]*\bid="{re.escape(table_id)}_level{level}_row{row_pos}"[^>]*>)(.*?)(</th>)'
         html_output = re.sub(
             pattern,
             lambda match: f"{match.group(1)}{link_anchor(match.group(2), destination)}{match.group(3)}",
@@ -743,7 +840,9 @@ def _deterministic_styler_uuid(df: pd.DataFrame, plan: TableStylePlan, table_cla
         "index": index_values,
         "data": data_rows,
     }
-    return sha256_hexdigest(canonical_json(payload))[:12]
+    if isinstance(df.index, pd.MultiIndex) or isinstance(df.columns, pd.MultiIndex):
+        payload["axis_names"] = [list(df.index.names), list(df.columns.names)]
+    return sha256_hexdigest(canonical_json(_table_json_value(payload)))[:12]
 
 
 def render_table_html(
@@ -769,7 +868,7 @@ def render_table_html(
     cols = len(visible_df.columns)
     global_style = resolved.global_style
     base_row_backgrounds = set(range(rows)) if global_style.one_bg_color else set(range(0, rows, 2))
-    cell_css: list[list[dict[str, str]]] = [[{} for _ in range(cols)] for _ in range(rows)]
+    cell_css: list[list[dict[str, str]]] = [[{"text-align": "center"} for _ in range(cols)] for _ in range(rows)]
 
     for row_pos in base_row_backgrounds:
         for col_pos in range(cols):
@@ -815,6 +914,13 @@ def render_table_html(
             ],
         },
     ]
+    if resolved.index_width_px is not None:
+        table_styles.append(
+            {
+                "selector": ".row_heading, .index_name",
+                "props": [("width", f"{resolved.index_width_px}px"), ("min-width", f"{resolved.index_width_px}px")],
+            }
+        )
 
     for col_label, width in resolved.column_width_px.items():
         col_pos = visible_col_lookup[col_label]
@@ -833,8 +939,9 @@ def render_table_html(
             }
         )
 
-    formatter_map: dict[str, Callable[[Any], Any]] = {
-        col: _formatter_from_spec(spec) for col, spec in resolved.formats.items()
+    formatter_map = {
+        visible_df.columns[visible_col_lookup[col]]: _formatter_from_spec(spec)
+        for col, spec in resolved.formats.items()
     }
 
     table_attrs = f'class="{escape(table_class)}" data-style-schema="{escape(resolved.schema_version)}"'
@@ -863,13 +970,22 @@ def render_table_html(
         thousands=resolved.thousands,
         escape="html" if resolved.links else None,
     )
+    for (row_pos, column), spec in resolved.cell_formats.items():
+        styler = styler.format(
+            _formatter_from_spec(spec),
+            subset=(visible_df.index[[row_pos]], visible_df.columns[[visible_col_lookup[column]]]),
+            na_rep=resolved.na_rep,
+            escape="html" if resolved.links else None,
+        )
 
     if not resolved.show_index:
         styler = styler.hide(axis="index")
 
     hidden_columns = list(resolved.hidden_columns)
     if hidden_columns:
-        styler = styler.hide(subset=hidden_columns, axis="columns")
+        styler = styler.hide(
+            subset=[visible_df.columns[visible_col_lookup[col]] for col in hidden_columns], axis="columns"
+        )
 
     hidden_row_positions = list(resolved.hidden_rows)
     if hidden_row_positions:
@@ -879,8 +995,32 @@ def render_table_html(
     rendered = styler.to_html()
     if resolved.links:
         rendered = _inject_link_anchors(rendered, table_uuid, visible_df, resolved)
-    if resolved.links and resolved.show_index:
+    if resolved.links and resolved.show_index and visible_df.index.nlevels == 1 and visible_df.columns.nlevels == 1:
         rendered = _replace_index_header(rendered, visible_df.index.name, resolved.index_header_link)
+    elif resolved.index_header_link is not None and resolved.show_index:
+        # Pandas emits column-level names before index-level names. Select the
+        # last leaf index-name cell so a link never overwrites a column heading.
+        level = visible_df.index.nlevels - 1
+        pattern = rf'(<th\b[^>]*class="index_name level{level}"[^>]*>)(.*?)(</th>)'
+        matches = list(re.finditer(pattern, rendered, re.DOTALL))
+        if matches and any(name is not None for name in visible_df.index.names):
+            match = matches[-1]
+            label = visible_df.index.names[-1]
+            display = escape(str(label), quote=True) if label is not None else "&nbsp;"
+            replacement = match.group(1) + link_anchor(display, resolved.index_header_link) + match.group(3)
+            rendered = rendered[: match.start()] + replacement + rendered[match.end() :]
+        else:
+            blanks = "<th></th>" * level
+            linked = "<th>" + link_anchor("&nbsp;", resolved.index_header_link) + "</th>"
+            blanks_after = "<th></th>" * len(resolved.visible_columns)
+            rendered = rendered.replace("</thead>", f"<tr>{blanks}{linked}{blanks_after}</tr></thead>", 1)
+    if resolved.footer is not None:
+        rendered = rendered.replace(
+            "</table>",
+            f'<tfoot><tr><td colspan="{len(resolved.visible_columns) + (visible_df.index.nlevels if resolved.show_index else 0)}">'
+            f"{escape(resolved.footer)}</td></tr></tfoot></table>",
+            1,
+        )
     return rendered
 
 
@@ -892,4 +1032,5 @@ __all__ = [
     "table_style_hash",
     "table_style_json",
     "table_style_payload",
+    "table_axis_spans",
 ]

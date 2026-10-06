@@ -27,6 +27,7 @@ from runbook.core.table import (
     TableStylePlan,
     format_table_value,
     resolve_table_style,
+    table_axis_spans,
 )
 from runbook.sdk.discovery import ReportDefinition
 from runbook.sdk.extensions.dash.ids import DashIds
@@ -196,13 +197,15 @@ def _build_components(
                     rowData=grid.row_data,
                     columnDefs=grid.column_defs,
                     defaultColDef=ag_grid_default_col_def(),
-                    dashGridOptions={"sideBar": "columns"},
+                    dashGridOptions={"sideBar": "columns", "suppressFieldDotNotation": True},
                     style=grid.style,
                     # Phase C uses client-side grouping/pivot/value aggregation in
                     # local preview. Formatter functions use only Dash AG Grid's
                     # trusted preloaded d3 namespace; PDL has no JS escape hatch.
                     enableEnterpriseModules=True,
                 )
+                if grid.footer is not None:
+                    body = html.Div([body, html.Div(grid.footer, className="rb-table-footer")])
             else:
                 body = _build_native_table(frame, block, ids.block(block.name), ctx, route_resolver, plot_refs)
         else:
@@ -372,6 +375,13 @@ def _wrap_default_block(title: Any | None, body: Any) -> list[Any]:
     return [item for item in (title, body) if item is not None]
 
 
+def _table_field_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Use stable string field keys internally without losing the source axes."""
+    result = frame.copy(deep=False)
+    result.columns = [str(column) for column in frame.columns]
+    return result
+
+
 def _build_native_table(
     frame: pd.DataFrame,
     block: PDLTableBlock,
@@ -383,7 +393,7 @@ def _build_native_table(
     """Build a static Dash table from resolved renderer-neutral table semantics."""
     from dash import html
 
-    schema = pa.Schema.from_pandas(frame, preserve_index=False)
+    schema = pa.Schema.from_pandas(_table_field_frame(frame), preserve_index=False)
     semantics = merge_columns(schema, block.columns)
     plan = _read_table_style(ctx, block)
     resolved = resolve_table_style(frame, plan)
@@ -406,11 +416,13 @@ def _build_native_table(
     }
 
     header_cells: list[Any] = []
+    index_header_style = dict(header_base)
+    _apply_width(index_header_style, resolved.index_width_px)
     if resolved.show_index:
         index_header: Any = "" if frame.index.name is None else str(frame.index.name)
         if resolved.index_header_link is not None:
             index_header = _dash_link(index_header, resolved.index_header_link, route_resolver, ctx, plot_refs)
-        header_cells.append(html.Th(index_header, style=dict(header_base)))
+        header_cells.append(html.Th(index_header, style=index_header_style))
     for field in fields:
         style = dict(header_base)
         _apply_width(style, resolved.column_width_px.get(field))
@@ -418,6 +430,43 @@ def _build_native_table(
         if field in resolved.header_links:
             header = _dash_link(header, resolved.header_links[field], route_resolver, ctx, plot_refs)
         header_cells.append(html.Th(header, style=style))
+
+    header_rows = [html.Tr(header_cells)]
+    if isinstance(frame.index, pd.MultiIndex) or isinstance(frame.columns, pd.MultiIndex):
+        positions = {str(column): i for i, column in enumerate(frame.columns)}
+        axis = frame.columns.take([positions[field] for field in fields])
+        header_rows = []
+        for level, spans in enumerate(table_axis_spans(axis)):
+            cells = []
+            if resolved.show_index:
+                cells = [html.Th("", style=dict(header_base)) for _ in range(frame.index.nlevels - 1)]
+                cells.append(html.Th(str(axis.names[level] or ""), style=dict(header_base)))
+            for position, span, label in spans:
+                style = dict(header_base)
+                content: Any = label
+                if level == axis.nlevels - 1:
+                    field = fields[position]
+                    content = by_field[field].label or label
+                    _apply_width(style, resolved.column_width_px.get(field))
+                    if field in resolved.header_links:
+                        content = _dash_link(content, resolved.header_links[field], route_resolver, ctx, plot_refs)
+                cells.append(html.Th(content, colSpan=span, style=style))
+            header_rows.append(html.Tr(cells))
+        if resolved.show_index and (any(name is not None for name in frame.index.names) or resolved.index_header_link):
+            cells = []
+            for level, name in enumerate(frame.index.names):
+                content = "" if name is None else str(name)
+                if level == frame.index.nlevels - 1 and resolved.index_header_link is not None:
+                    content = _dash_link(content, resolved.index_header_link, route_resolver, ctx, plot_refs)
+                cells.append(html.Th(content, style=index_header_style))
+            cells.extend(html.Th("", style=dict(header_base)) for _ in fields)
+            header_rows.append(html.Tr(cells))
+
+    row_positions = [i for i in range(len(visible)) if i not in resolved.hidden_rows]
+    index_spans = [
+        dict((pos, (span, label)) for pos, span, label in level)
+        for level in table_axis_spans(visible.index.take(row_positions))
+    ]
 
     body_rows: list[Any] = []
     for row_pos, (index_value, row) in enumerate(
@@ -431,11 +480,16 @@ def _build_native_table(
             index_cell_style: dict[str, Any] = {}
             _apply_base_row_style(index_cell_style, row_pos, global_style.one_bg_color, global_style.background_color)
             _apply_width(index_cell_style, row_style)
-            index_value_display: Any = _display_scalar(index_value)
-            destination = resolved.index_links.get(row_pos)
-            if destination is not None:
-                index_value_display = _dash_link(index_value_display, destination, route_resolver, ctx, plot_refs)
-            row_cells.append(html.Th(index_value_display, style=index_cell_style))
+            _apply_width(index_cell_style, resolved.index_width_px)
+            display_row = len(body_rows)
+            for level, spans in enumerate(index_spans):
+                if display_row not in spans:
+                    continue
+                span, index_value_display = spans[display_row]
+                destination = resolved.index_links.get(row_pos) if level == len(index_spans) - 1 else None
+                if destination is not None:
+                    index_value_display = _dash_link(index_value_display, destination, route_resolver, ctx, plot_refs)
+                row_cells.append(html.Th(index_value_display, rowSpan=span, style=index_cell_style))
         values = dict(zip((str(column) for column in visible.columns), row, strict=True))
         for field in fields:
             cell_style: dict[str, Any] = {}
@@ -443,15 +497,24 @@ def _build_native_table(
             _apply_width(cell_style, resolved.column_width_px.get(field))
             _apply_width(cell_style, row_style)
             cell_style.update(_dash_style(resolved.cell_css.get((row_pos, field), {})))
-            value = _display_value(values[field], by_field[field], resolved)
+            value = _display_value(values[field], by_field[field], resolved, row_pos)
             destination = resolved.cell_links.get((row_pos, field))
             if destination is not None:
                 value = _dash_link(value, destination, route_resolver, ctx, plot_refs)
             row_cells.append(html.Td(value, style=cell_style))
         body_rows.append(html.Tr(row_cells))
 
+    children = [html.Thead(header_rows[0] if len(header_rows) == 1 else header_rows), html.Tbody(body_rows)]
+    if resolved.footer is not None:
+        children.append(
+            html.Tfoot(
+                html.Tr(
+                    html.Td(resolved.footer, colSpan=len(fields) + (frame.index.nlevels if resolved.show_index else 0))
+                )
+            )
+        )
     return html.Table(
-        [html.Thead(html.Tr(header_cells)), html.Tbody(body_rows)],
+        children,
         id=component_id,
         style=table_style,
     )
@@ -464,6 +527,7 @@ class _AGGridConfig:
     row_data: list[dict[str, Any]]
     column_defs: list[dict[str, Any]]
     style: dict[str, str]
+    footer: str | None
 
 
 def _metadata_field(prefix: str, frame: pd.DataFrame) -> str:
@@ -483,17 +547,26 @@ def _build_ag_grid(
     plot_refs: Mapping[str, str],
 ) -> _AGGridConfig:
     """Translate one resolved table into AG Grid props without re-evaluating rules."""
-    schema = pa.Schema.from_pandas(frame, preserve_index=False)
+    schema = pa.Schema.from_pandas(_table_field_frame(frame), preserve_index=False)
     plan = _read_table_style(ctx, block)
     resolved = resolve_table_style(frame, plan)
     styles_field = _metadata_field("__runbook_styles__", frame)
+    formats_field = _metadata_field("__runbook_formats__", frame) if resolved.cell_formats else None
     links_field = _metadata_field("__runbook_links__", frame) if resolved.links else None
     index_field = (
         _metadata_field("__runbook_index__", frame)
-        if resolved.show_index and (resolved.index_header_link is not None or resolved.index_links)
+        if resolved.show_index
+        and (resolved.index_header_link is not None or resolved.index_links or resolved.index_width_px is not None)
         else None
     )
     index_links_field = _metadata_field("__runbook_index_links__", frame) if resolved.index_links else None
+    index_fields = None
+    if resolved.show_index and isinstance(frame.index, pd.MultiIndex):
+        index_fields = [
+            (_metadata_field(f"__runbook_index_{level}__", frame), "" if name is None else str(name))
+            for level, name in enumerate(frame.index.names)
+        ]
+        index_field = index_fields[-1][0]
     header_links: dict[str, tuple[str, str]] = {}
     for field, destination in resolved.header_links.items():
         href = _destination_href(destination, route_resolver, ctx, plot_refs)
@@ -514,8 +587,10 @@ def _build_ag_grid(
         block.columns,
         resolved=resolved,
         styles_field=styles_field,
+        formats_field=formats_field,
         links_field=links_field,
         index_field=index_field,
+        index_fields=index_fields,
         index_links_field=index_links_field,
         route_resolver=route_resolver,
         ctx=ctx,
@@ -526,19 +601,28 @@ def _build_ag_grid(
         block.columns,
         resolved=resolved,
         cell_style_field=styles_field,
+        cell_formats_field=formats_field,
         cell_links_field=links_field,
         cell_link_kinds=cell_link_kinds,
         header_links=header_links,
         index_field=index_field,
+        index_fields=index_fields,
+        column_index=frame.columns,
         index_header_link=index_header_link,
         index_links_field=index_links_field,
         index_header_name="" if frame.index.name is None else str(frame.index.name),
         na_rep=resolved.na_rep,
     )
     global_style = resolved.global_style
+    if resolved.index_width_px is not None:
+        index_names = {name for name, _ in index_fields} if index_fields else {index_field}
+        for definition in column_defs:
+            if definition.get("field") in index_names:
+                definition.update(width=resolved.index_width_px, minWidth=resolved.index_width_px, flex=0)
     return _AGGridConfig(
         row_data=row_data,
         column_defs=column_defs,
+        footer=resolved.footer,
         style={
             "border": global_style.table_border,
             "fontFamily": global_style.font_family,
@@ -755,7 +839,8 @@ def _apply_width(style: dict[str, Any], width: int | None) -> None:
 
 
 def _apply_base_row_style(style: dict[str, Any], row_pos: int, one_bg_color: bool, background_color: str) -> None:
-    """Apply the same alternating background rule as the HTML renderer."""
+    """Apply the same default alignment and alternating background as HTML."""
+    style["textAlign"] = "center"
     if one_bg_color or row_pos % 2 == 0:
         style["backgroundColor"] = background_color
 
@@ -770,11 +855,11 @@ def _dash_style(css: Mapping[str, str]) -> dict[str, str]:
     return result
 
 
-def _display_value(value: Any, semantic: PDLColumn, resolved: Any) -> Any:
+def _display_value(value: Any, semantic: PDLColumn, resolved: Any, row_pos: int | None = None) -> Any:
     """Format a table value with style-plan formats taking precedence."""
     if _is_null_scalar(value):
         return _display_scalar(format_table_value(value, na_rep=resolved.na_rep))
-    spec = resolved.formats.get(semantic.field)
+    spec = resolved.cell_formats.get((row_pos, semantic.field), resolved.formats.get(semantic.field))
     if spec is not None:
         return _display_scalar(format_table_value(value, spec, na_rep=resolved.na_rep))
     if resolved.precision is not None or resolved.thousands is not None:
@@ -995,15 +1080,17 @@ def _records(
     *,
     resolved: Any | None = None,
     styles_field: str | None = None,
+    formats_field: str | None = None,
     links_field: str | None = None,
     index_field: str | None = None,
+    index_fields: list[tuple[str, str]] | None = None,
     index_links_field: str | None = None,
     route_resolver: RouteResolver | None = None,
     ctx: Any | None = None,
     plot_refs: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Convert a dataframe to JSON-safe AG Grid row records with PDL time types."""
-    source = frame if resolved is None else frame.head(resolved.max_rows)
+    source = _table_field_frame(frame if resolved is None else frame.head(resolved.max_rows))
     schema = pa.Schema.from_pandas(source, preserve_index=False)
     semantics = merge_columns(schema, columns)
     normalized = source.copy()
@@ -1025,7 +1112,10 @@ def _records(
     for row_pos, (record, index_value) in enumerate(zip(records, source.index, strict=True)):
         if row_pos in resolved.hidden_rows:
             continue
-        if index_field is not None:
+        if index_fields is not None:
+            for (field, _), value in zip(index_fields, index_value, strict=True):
+                record[field] = _display_scalar(value)
+        elif index_field is not None:
             record[index_field] = _display_scalar(index_value)
         if index_links_field is not None:
             destination = resolved.index_links.get(row_pos)
@@ -1036,6 +1126,12 @@ def _records(
         if styles_field is not None:
             record[styles_field] = {
                 semantic.field: _ag_cell_style(resolved, row_pos, semantic.field) for semantic in semantics
+            }
+        if formats_field is not None:
+            record[formats_field] = {
+                semantic.field: _display_value(source[semantic.field].iloc[row_pos], semantic, resolved, row_pos)
+                for semantic in semantics
+                if (row_pos, semantic.field) in resolved.cell_formats
             }
         if links_field is not None:
             links: dict[str, str] = {}
@@ -1053,7 +1149,7 @@ def _records(
 def _ag_cell_style(resolved: Any, row_pos: int, field: str) -> dict[str, str]:
     """Combine resolved base, sizing, and conditional CSS for one AG cell."""
     global_style = resolved.global_style
-    style: dict[str, str] = {}
+    style: dict[str, str] = {"textAlign": "center"}
     if global_style.one_bg_color or row_pos % 2 == 0:
         style["backgroundColor"] = global_style.background_color
     _apply_width(style, resolved.column_width_px.get(field))

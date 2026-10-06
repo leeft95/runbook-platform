@@ -47,3 +47,11 @@ def test_calculate_historical_mean_std_for_date_window_mode_uses_window_arg() ->
     expected_std = float(df["x"].rolling(5).std().iloc[-2])
     assert np.isclose(float(out.loc["x", "mean"]), expected_mean)
     assert np.isclose(float(out.loc["x", "std"]), expected_std)
+
+
+def test_historical_samples_do_not_fill_across_absent_years_or_intraday_times() -> None:
+    dates = pd.to_datetime(["2019-06-15 16:00", "2020-06-15 16:00", "2021-06-15 16:00", "2022-07-01 16:00"])
+    frame = pd.DataFrame({"x": [1.0, np.nan, 3.0, 99.0]}, index=dates.tz_localize("Europe/London"))
+    sampled = _get_historical_data_on_date(frame.iloc[::-1], pd.Timestamp("2021-06-17"))
+    assert sampled.index.year.tolist() == [2019, 2021]
+    assert sampled.x.tolist() == [1.0, 3.0]

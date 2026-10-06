@@ -5,7 +5,10 @@ import typing as tp
 
 import pandas as pd
 import plotly
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from runbook.core.plotting.graphly import GraphlyPlotter, PlotlyPlotDef, PlotType
+from runbook.core.plotting.line import plot_line
 from runbook.core.timeseries.transforms import ts_by_year
 
 
@@ -50,7 +53,16 @@ def plot_seasonal(
     holiday_countries: list[str] | None = None,
     exclude_years: tp.List[int] | None = None,
     five_year: bool = True,
-    **kwargs: tp.Any,
+    *,
+    current_year: int | None = None,
+    start: str | dt.datetime | None = None,
+    x_axis_title: str | None = "Date",
+    y_axis_title: str | None = None,
+    y1_axis_title: str | None = None,
+    y2_axis_title: str | None = None,
+    y_axis_reversed: bool = False,
+    y1_axis_reversed: bool = False,
+    y2_axis_reversed: bool = False,
 ) -> plotly.graph_objs._figure.Figure:
     """Plot seasonal years, optional comparisons, and an optional cumulative panel.
 
@@ -82,6 +94,14 @@ def plot_seasonal(
         raise TypeError("df must be a pandas DataFrame.")
     if not isinstance(df.index, pd.DatetimeIndex):
         raise TypeError("df index must be a pandas DatetimeIndex.")
+    df = df.sort_index()
+    if start is not None:
+        cutoff = pd.Timestamp(start)
+        if df.index.tz is not None and cutoff.tzinfo is None:
+            cutoff = cutoff.tz_localize(df.index.tz)
+        df = df.loc[df.index >= cutoff]
+    if df.empty:
+        raise ValueError("No seasonal data available after applying start.")
 
     if holiday_countries is None:
         holiday_countries = []
@@ -102,11 +122,12 @@ def plot_seasonal(
 
     if exclude_years:
         df_by_year = df_by_year.drop(columns=exclude_years, errors="ignore")
+    if df_by_year.shape[1] == 0:
+        raise ValueError("No seasonal years remain after exclusions.")
 
     non_future_years = df_by_year.columns[df_by_year.columns <= dt.date.today().year]
-    current_year = kwargs.get(
-        "current_year", int(non_future_years[-1] if len(non_future_years) else df_by_year.columns[-1])
-    )
+    if current_year is None:
+        current_year = int(non_future_years[-1] if len(non_future_years) else df_by_year.columns[-1])
     if current_year not in df_by_year.columns:
         raise KeyError(f"current_year {current_year!r} not found in seasonal data.")
 
@@ -178,6 +199,7 @@ def plot_seasonal(
             }
 
     subplot_frames: list[pd.DataFrame] = [seasonal_data]
+    axes = [(y_axis_title, y_axis_reversed)]
 
     if vs_average:
         data_vs_avg = pd.DataFrame(index=dts)
@@ -191,6 +213,7 @@ def plot_seasonal(
             series_styles[y1_name] = {"line": {"color": "black", "width": 1, "dash": "dash"}}
         if not data_vs_avg.empty:
             subplot_frames.append(data_vs_avg)
+            axes.append((y1_axis_title, y1_axis_reversed))
 
     if ytd or ytd_cum_sum:
         data_ytd = pd.DataFrame(index=dts)
@@ -217,6 +240,7 @@ def plot_seasonal(
 
         if not data_ytd.empty:
             subplot_frames.append(data_ytd)
+            axes.append((y2_axis_title, y2_axis_reversed))
 
     rows = len(subplot_frames)
     if rows > 1:
@@ -236,6 +260,8 @@ def plot_seasonal(
             holiday_countries=holiday_countries,
             show_legend=show_legend,
             series_styles=series_styles,
+            y_axis_title=axes[row - 1][0],
+            reversed_y=axes[row - 1][1],
         )
         for row, panel_df in enumerate(subplot_frames, start=1)
     ]
@@ -263,8 +289,7 @@ def plot_seasonal(
                 break
 
     fig.update_layout(margin={"l": 50, "r": 20, "t": 60, "b": 50})
-    fig.update_yaxes(title_text=kwargs.get("y_axis_title", ""), row=1, col=1)
-    fig.update_xaxes(title_text="Date", row=rows, col=1)
+    fig.update_xaxes(title_text=x_axis_title, row=rows, col=1)
     return fig
 
 
@@ -278,17 +303,28 @@ def plot_cot(
     exclude_years: tp.List[int] | None = None,
     tickformat: str | None = None,
     dtick: str | int | float | None = None,
+    history_years: int | None = 5,
+    *,
+    rows: int = 2,
 ) -> plotly.graph_objs._figure.Figure:
-    """Build a 2x3 COT figure:
+    """Build COT panels (three columns and two rows by default):
     - Top row: seasonal position overlays + current-year price (secondary y)
     - Bottom row: current-year position/oi + historical oi min/max band + CTA LN4 (secondary y)
+
+    The band uses the previous five available years by default. Set
+    ``history_years=None`` to include all history. Observation dates are preserved
+    for every series, including short positions.
+    Supply one or more column specifications and matching titles. ``rows=1``
+    omits the OI panel and allows specifications containing only position/price.
     """
     if not isinstance(data, pd.DataFrame):
         raise TypeError("data must be a pandas DataFrame.")
     if not isinstance(data.index, pd.DatetimeIndex):
         raise TypeError("data index must be a pandas DatetimeIndex.")
-    if len(plot_titles) != 3:
-        raise ValueError("plot_titles must contain exactly 3 titles.")
+    if rows not in {1, 2}:
+        raise ValueError("rows must be 1 or 2.")
+    if history_years is not None and history_years < 1:
+        raise ValueError("history_years must be positive or None.")
 
     def _normalize_panel_specs(specs: list[list[str]] | None) -> list[dict[str, str | None]]:
         # Three permutations: Net / Long / Short. Internal is optional.
@@ -299,19 +335,19 @@ def plot_cot(
             ["Short", "PX_LAST", "Short OI", "Internal"],
         ]
         raw = defaults if specs is None else specs
-        if len(raw) != 3:
-            raise ValueError("columns must contain exactly three panel permutations.")
+        if not raw or len(raw) != len(plot_titles):
+            raise ValueError("plot_titles must have one title per non-empty panel specification.")
 
         out: list[dict[str, str | None]] = []
         for panel_i, panel in enumerate(raw):
             if not isinstance(panel, list):
                 raise TypeError(f"columns[{panel_i}] must be a list.")
-            if len(panel) not in {3, 4}:
+            if len(panel) not in ({2, 3, 4} if rows == 1 else {3, 4}):
                 raise ValueError(f"columns[{panel_i}] must be [main, PX_LAST, oi] or [main, PX_LAST, oi, Internal].")
 
-            main_col, price_col, oi_col = panel[0], panel[1], panel[2]
+            main_col, price_col, oi_col = panel[0], panel[1], panel[2] if len(panel) >= 3 else None
             internal_col = panel[3] if len(panel) == 4 else None
-            for required in (main_col, price_col, oi_col):
+            for required in (main_col, price_col, *([oi_col] if rows == 2 else [])):
                 if required not in data.columns:
                     raise KeyError(f"Required column {required!r} in panel {panel_i} not found in data.")
             if internal_col is not None and internal_col not in data.columns:
@@ -321,10 +357,13 @@ def plot_cot(
 
     panel_specs = _normalize_panel_specs(columns)
     n_cols = len(panel_specs)
-    n_rows = 2
+    n_rows = rows
     working = data.sort_index()
     if start is not None:
-        working = working.loc[working.index >= start]
+        cutoff = pd.Timestamp(start)
+        if working.index.tz is not None and cutoff.tzinfo is None:
+            cutoff = cutoff.tz_localize(working.index.tz)
+        working = working.loc[working.index >= cutoff]
     if working.empty:
         raise ValueError("No rows left after applying start filter.")
 
@@ -358,12 +397,14 @@ def plot_cot(
         if main_by_year.empty:
             raise ValueError(f"No seasonal data for panel {panel_i + 1} ({main_col}).")
         price_by_year = ts_by_year(working[price_col], frequency=freq, dummy_date_index=True)
-        oi_by_year = ts_by_year(working[oi_col], frequency=freq, dummy_date_index=True)
+        oi_by_year = ts_by_year(working[oi_col], frequency=freq, dummy_date_index=True) if rows == 2 else pd.DataFrame()
         if exclude_years:
             main_by_year = main_by_year.drop(columns=exclude_years, errors="ignore")
             price_by_year = price_by_year.drop(columns=exclude_years, errors="ignore")
             oi_by_year = oi_by_year.drop(columns=exclude_years, errors="ignore")
 
+        if main_by_year.shape[1] == 0:
+            raise ValueError(f"No seasonal years remain for panel {panel_i + 1}.")
         current_year = int(main_by_year.columns[-1])
 
         # Top row dataframe: year lines + current-year price.
@@ -375,24 +416,6 @@ def plot_cot(
                 series_styles[str(year)] = {"line": {"color": "red", "width": 2}, "mode": "lines+markers"}
         if current_year in price_by_year.columns:
             top_df["price"] = price_by_year[current_year].reindex(top_df.index)
-
-        # Bottom row dataframe: historical OI band + current-year OI + optional internal.
-        bottom_df = pd.DataFrame(index=oi_by_year.index)
-        oi_hist = oi_by_year.drop(columns=[current_year], errors="ignore")
-        bottom_df["Max"] = oi_hist.max(axis=1) if not oi_hist.empty else oi_by_year[current_year]
-        bottom_df["Min"] = oi_hist.min(axis=1) if not oi_hist.empty else oi_by_year[current_year]
-        if current_year in oi_by_year.columns:
-            net_oi_current = oi_by_year[current_year].reindex(bottom_df.index)
-            if "Short" in main_col:
-                net_oi_current = net_oi_current.iloc[::-1].reset_index(drop=True)
-                net_oi_current.index = bottom_df.index
-            bottom_df["Net/OI"] = net_oi_current
-
-        if internal_col is not None:
-            internal_by_year = ts_by_year(working[internal_col], frequency=freq, dummy_date_index=True)
-            if current_year in internal_by_year.columns:
-                internal_current = internal_by_year[current_year].reindex(bottom_df.index)
-                bottom_df["CTA LN4"] = internal_current
 
         plot_defs.append(
             PlotlyPlotDef(
@@ -406,6 +429,26 @@ def plot_cot(
                 series_styles=series_styles,
             )
         )
+        if rows == 1:
+            continue
+
+        # Bottom row dataframe: historical OI band + current-year OI + optional internal.
+        bottom_df = pd.DataFrame(index=oi_by_year.index)
+        oi_hist = oi_by_year.drop(columns=[current_year], errors="ignore")
+        if history_years is not None:
+            oi_hist = oi_hist.iloc[:, -history_years:]
+        bottom_df["Max"] = oi_hist.max(axis=1) if not oi_hist.empty else oi_by_year[current_year]
+        bottom_df["Min"] = oi_hist.min(axis=1) if not oi_hist.empty else oi_by_year[current_year]
+        if current_year in oi_by_year.columns:
+            net_oi_current = oi_by_year[current_year].reindex(bottom_df.index)
+            bottom_df["Net/OI"] = net_oi_current
+
+        if internal_col is not None:
+            internal_by_year = ts_by_year(working[internal_col], frequency=freq, dummy_date_index=True)
+            if current_year in internal_by_year.columns:
+                internal_current = internal_by_year[current_year].reindex(bottom_df.index)
+                bottom_df["CTA LN4"] = internal_current
+
         plot_defs.append(
             PlotlyPlotDef(
                 data=bottom_df,
@@ -437,6 +480,89 @@ def plot_cot(
     for col in range(1, n_cols + 1):
         fig.update_yaxes(title_text="Contracts", row=1, col=col, secondary_y=False)
         fig.update_yaxes(title_text="Price", row=1, col=col, secondary_y=True)
-        fig.update_yaxes(title_text="Net/OI", row=n_rows, col=col, secondary_y=False)
-        fig.update_yaxes(title_text="CTA LN4", row=n_rows, col=col, secondary_y=True)
+        if rows == 2:
+            fig.update_yaxes(title_text="Net/OI", row=n_rows, col=col, secondary_y=False)
+            fig.update_yaxes(title_text="CTA LN4", row=n_rows, col=col, secondary_y=True)
+    return fig
+
+
+def plot_seasonal_grid(
+    data: dict[str, pd.DataFrame],
+    *,
+    history: pd.DataFrame | None = None,
+    history_title: str = "History",
+    history_first: bool = False,
+    title: str | None = None,
+    width: int | None = None,
+    height: int = 600,
+    **seasonal_options: tp.Any,
+) -> go.Figure:
+    """Place seasonal figures in columns, optionally beside a full-height history plot.
+
+    Each mapping entry uses ``plot_seasonal`` (including its selected column,
+    forecast, comparisons, cumulative panels and axis options). The ordinary
+    history plot retains actual dates on an independent x-axis. No data is
+    aligned between the artificial seasonal dates and the history dates.
+    """
+    if not data:
+        raise ValueError("data must contain at least one named seasonal frame")
+    figures = [(name, plot_seasonal(frame, **seasonal_options)) for name, frame in data.items()]
+    rows = max(max(int((trace.xaxis or "x")[1:] or 1) for trace in fig.data) for _, fig in figures)
+    entries = [(name, fig, False) for name, fig in figures]
+    if history is not None:
+        entry = (history_title, plot_line(history, use_rangebreaks=False), True)
+        entries.insert(0 if history_first else len(entries), entry)
+    cols = len(entries)
+    specs = [
+        [({"rowspan": rows} if row == 0 else None) if is_history else {} for _, _, is_history in entries]
+        for row in range(rows)
+    ]
+    fig = make_subplots(
+        rows=rows,
+        cols=cols,
+        specs=specs,
+        shared_xaxes=True,
+        row_heights=_row_heights_for_rows(rows),
+        vertical_spacing=0.03,
+        subplot_titles=[name if row == 0 else "" for row in range(rows) for name, _, _ in entries],
+    )
+    seen = set()
+    colors: dict[str, str] = {}
+    reserved = {
+        trace.line.color
+        for _, source, is_history in entries
+        if not is_history
+        for trace in source.data
+        if trace.line.color
+    }
+    for col, (name, source, is_history) in enumerate(entries, start=1):
+        palette = [
+            color
+            for color in (source.layout.template.layout.colorway or plotly.colors.DEFAULT_PLOTLY_COLORS)
+            if color not in reserved
+        ]
+        palette = palette or plotly.colors.DEFAULT_PLOTLY_COLORS
+        for trace in source.data:
+            row = 1 if is_history else int((trace.xaxis or "x")[1:] or 1)
+            copy = go.Scatter(trace.to_plotly_json())
+            copy.legendgroup = f"history:{copy.name}" if is_history else copy.name
+            if not is_history:
+                colors.setdefault(copy.name, copy.line.color or palette[len(colors) % len(palette)])
+                copy.line.color = colors[copy.name]
+            if copy.showlegend is not False:
+                copy.showlegend = copy.legendgroup not in seen
+                seen.add(copy.legendgroup)
+            fig.add_trace(copy, row=row, col=col)
+        source_rows = 1 if is_history else max(int((trace.xaxis or "x")[1:] or 1) for trace in source.data)
+        for row in range(1, source_rows + 1):
+            suffix = "" if row == 1 else str(row)
+            for axis in ("x", "y"):
+                options = source.layout[f"{axis}axis{suffix}"].to_plotly_json()
+                for key in ("domain", "anchor", "matches"):
+                    options.pop(key, None)
+                if axis == "x":
+                    fig.update_xaxes(options, row=row, col=col)
+                else:
+                    fig.update_yaxes(options, row=row, col=col)
+    fig.update_layout(title=title, width=width or 750 * cols, height=height)
     return fig

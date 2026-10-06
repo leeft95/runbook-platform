@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import pyarrow as pa
+import pandas as pd
 from runbook.core.pdl.models import PDLColumn, PDLColumnRole
 from runbook.core.table.models import (
     ResolvedTableStyle,
@@ -15,12 +16,14 @@ from runbook.core.table.models import (
     TableFormatString,
 )
 from runbook.sdk.ui import merge_columns
+from runbook.core.table import table_axis_spans
 
 _DEFAULT_COL_DEF: dict[str, Any] = {
     "sortable": True,
     "filter": True,
     "resizable": True,
     "suppressMovable": False,
+    "headerClass": "rb-table-header",
 }
 
 _CURRENCY_SYMBOLS = {
@@ -31,7 +34,13 @@ _CURRENCY_SYMBOLS = {
 }
 
 _AG_GRID_COMPONENTS_MARKER = "runbook-ag-grid-components-v1"
-_AG_GRID_COMPONENTS_SCRIPT = r"""<script id="runbook-ag-grid-components-v1">
+_AG_GRID_COMPONENTS_SCRIPT = r"""<style>
+.rb-table-header .ag-header-cell-label,
+.rb-table-header .ag-header-group-cell-label,
+.rb-table-header .ag-header-cell-comp-wrapper {
+    justify-content: var(--rb-table-header-alignment, center);
+}
+</style><script id="runbook-ag-grid-components-v1">
 (function () {
     "use strict";
 
@@ -106,7 +115,7 @@ def register_ag_grid_components(app: Any) -> None:
 
 def ag_grid_default_col_def() -> dict[str, Any]:
     """Return renderer defaults for client-side analytical table behaviour."""
-    return dict(_DEFAULT_COL_DEF)
+    return {**_DEFAULT_COL_DEF, "cellStyle": {"textAlign": "center"}}
 
 
 def build_ag_grid_column_defs(
@@ -115,10 +124,13 @@ def build_ag_grid_column_defs(
     *,
     resolved: ResolvedTableStyle | None = None,
     cell_style_field: str | None = None,
+    cell_formats_field: str | None = None,
     cell_links_field: str | None = None,
     cell_link_kinds: dict[str, str] | None = None,
     header_links: dict[str, tuple[str, str]] | None = None,
     index_field: str | None = None,
+    index_fields: list[tuple[str, str]] | None = None,
+    column_index: pd.Index | None = None,
     index_header_link: tuple[str, str] | None = None,
     index_links_field: str | None = None,
     index_header_name: str = "",
@@ -135,8 +147,8 @@ def build_ag_grid_column_defs(
     if index_field is not None:
         index_definition: dict[str, Any] = {
             "field": index_field,
-            "headerName": index_header_name,
-            **_DEFAULT_COL_DEF,
+            "headerName": index_fields[-1][1] if index_fields else index_header_name,
+            **ag_grid_default_col_def(),
             "filter": "agTextColumnFilter",
             "headerStyle": header_style,
         }
@@ -155,6 +167,17 @@ def build_ag_grid_column_defs(
                     "cellRenderer": "runbookIndexLinkRenderer",
                 }
             )
+        if index_fields:
+            definitions.extend(
+                {
+                    "field": field,
+                    "headerName": label,
+                    **ag_grid_default_col_def(),
+                    "filter": "agTextColumnFilter",
+                    "headerStyle": header_style,
+                }
+                for field, label in index_fields[:-1]
+            )
         definitions.append(index_definition)
     for semantic in merge_columns(schema, columns):
         role = semantic.role
@@ -164,7 +187,7 @@ def build_ag_grid_column_defs(
             "field": semantic.field,
             "headerName": semantic.label or semantic.field,
             "hide": hidden,
-            **_DEFAULT_COL_DEF,
+            **ag_grid_default_col_def(),
             "enableRowGroup": role in {PDLColumnRole.dimension, PDLColumnRole.identifier, PDLColumnRole.time},
             "enablePivot": role in {PDLColumnRole.dimension, PDLColumnRole.identifier, PDLColumnRole.time},
             "enableValue": role == PDLColumnRole.measure,
@@ -207,12 +230,20 @@ def build_ag_grid_column_defs(
                 na_rep=na_rep,
                 thousands_separator=resolved.thousands,
             )
+        if cell_formats_field is not None:
+            values = f"params.data[{json.dumps(cell_formats_field)}]"
+            fallback = definition.get("valueFormatter", {}).get("function", "params.value")
+            definition["valueFormatter"] = {
+                "function": f"params.data && {values} && {values}[params.colDef.field] != null"
+                f" ? {values}[params.colDef.field] : ({fallback})"
+            }
         if cell_style_field is not None:
             definition.update(
                 {
                     "cellStyle": {
                         "function": "(params.data && params.data["
-                        f"{json.dumps(cell_style_field)}] && params.data[{json.dumps(cell_style_field)}][params.colDef.field]) || null"
+                        f"{json.dumps(cell_style_field)}] && params.data[{json.dumps(cell_style_field)}][params.colDef.field])"
+                        ' || {"textAlign": "center"}'
                     },
                 }
             )
@@ -236,6 +267,34 @@ def build_ag_grid_column_defs(
                 }
             )
         definitions.append(definition)
+    if isinstance(column_index, pd.MultiIndex):
+        by_field = {item["field"]: item for item in definitions}
+        fields = [str(column) for column in column_index]
+        groups = table_axis_spans(column_index)
+
+        def grouped(level: int, start: int, end: int) -> list[dict[str, Any]]:
+            """Build AG Grid groups from the same contiguous spans as native tables."""
+            result = []
+            for position, span, label in groups[level]:
+                if not start <= position < end:
+                    continue
+                if level == len(groups) - 1:
+                    item = dict(by_field[fields[position]])
+                    if item["headerName"] == fields[position]:
+                        item["headerName"] = label
+                    result.append(item)
+                else:
+                    result.append(
+                        {
+                            "headerName": label,
+                            "headerClass": "rb-table-header",
+                            "headerStyle": header_style,
+                            "children": grouped(level + 1, position, position + span),
+                        }
+                    )
+            return result
+
+        return [item for item in definitions if item["field"] not in fields] + grouped(0, 0, len(fields))
     return definitions
 
 
@@ -249,6 +308,9 @@ def _header_style(resolved: ResolvedTableStyle | None) -> dict[str, str]:
         "fontFamily": global_style.font_family,
         "fontSize": global_style.font_size,
         "textAlign": global_style.header_text_align,
+        "--rb-table-header-alignment": {"left": "flex-start", "right": "flex-end"}.get(
+            global_style.header_text_align, global_style.header_text_align
+        ),
     }
 
 

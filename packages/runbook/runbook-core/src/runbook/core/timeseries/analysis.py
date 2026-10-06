@@ -1,6 +1,5 @@
 "timeseries analysis functions"
 
-import calendar
 import datetime as dt
 import typing as tp
 from enum import Enum
@@ -12,8 +11,6 @@ import statsmodels.api as sm
 from loguru import logger as log
 from scipy.optimize import minimize
 from statsmodels.regression.rolling import RollingOLS
-
-from .transforms import ts_by_year
 
 
 class MovingAvgModes(str, Enum):
@@ -51,7 +48,12 @@ class AggregationModes(str, Enum):
         aliases = {
             "change": cls.DIFF,
             "chg": cls.DIFF,
+            "diff": cls.DIFF,
+            "difference": cls.DIFF,
             "mean": cls.MA,
+            "ma": cls.MA,
+            "movingaverage": cls.MA,
+            "sum": cls.SUM,
         }
         return aliases.get(value.strip().lower())
 
@@ -97,45 +99,25 @@ def calculate_moving_average(
 
 
 def _get_historical_data_on_date(df: pd.DataFrame, ref_date: dt.datetime | pd.Timestamp) -> pd.DataFrame:
-    """Return historical data on date."""
-    all_days_df = df.reindex(pd.date_range(df.index[0], df.index[-1], freq="D")).ffill()
+    """Sample the reference calendar day using observations from that year only.
+
+    Missing values may use an earlier observation within the same year, never
+    another year's data. Intraday values on the reference day are included.
+    """
     ref_ts = pd.Timestamp(ref_date)
     ref_month = int(ref_ts.month)
     ref_day = 28 if (ref_ts.month == 2 and ref_ts.day == 29) else int(ref_ts.day)
-
-    historical_series: list[pd.Series] = []
-    for col in all_days_df.columns:
-        by_year = ts_by_year(
-            all_days_df[col],
-            frequency="D",
-            start_day=ref_day,
-            start_month=ref_month,
-            end_day=ref_day,
-            end_month=ref_month,
-            over_year=True,
-        )
-        if by_year.empty or 0 not in by_year.index:
-            sampled = pd.Series(dtype=np.float64, name=col)
-            historical_series.append(sampled)
-            continue
-
-        sampled = tp.cast(pd.Series, by_year.loc[0].dropna())
-        sampled.index = pd.DatetimeIndex(
-            [
-                pd.Timestamp(
-                    year=int(year),
-                    month=ref_month,
-                    day=min(ref_day, calendar.monthrange(int(year), ref_month)[1]),
-                )
-                for year in sampled.index
-            ]
-        )
-        sampled = sampled.sort_index().rename(col)
-        historical_series.append(sampled)
-
-    if not historical_series:
-        return pd.DataFrame(columns=df.columns)
-    return pd.concat(historical_series, axis=1)
+    rows = {}
+    ordered = df.sort_index()
+    for year, group in ordered.groupby(ordered.index.year):
+        group = group.loc[
+            (group.index.month < ref_month) | ((group.index.month == ref_month) & (group.index.day <= ref_day))
+        ]
+        if not group.empty:
+            rows[pd.Timestamp(year=int(year), month=ref_month, day=ref_day)] = group.ffill().iloc[-1]
+    result = pd.DataFrame.from_dict(rows, orient="index").reindex(columns=df.columns).dropna(how="all")
+    result.index = pd.DatetimeIndex(result.index)
+    return result
 
 
 def calculate_historical_mean_std_for_date(

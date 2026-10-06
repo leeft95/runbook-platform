@@ -4,6 +4,7 @@ import re
 
 import numpy as np
 import pandas as pd
+import pytest
 from runbook.core.table import general_table_with_link, render_table_html
 
 
@@ -99,3 +100,40 @@ def test_general_table_with_link_chart_tuple_overrides_and_plot_count() -> None:
     )
 
     assert len(out["Asset"]["plots"]) == 2
+
+
+def test_general_table_ma_comparison_and_presentation_options() -> None:
+    dates = pd.date_range("2025-01-01", periods=110)
+    frame = pd.DataFrame({"A": np.arange(110.0), "B": np.arange(110.0) / 10}, index=dates)
+    comparison = pd.DataFrame({"B": [50.0, 70.0, 999.0]}, index=dates[[4, 50, 90]])
+    original = comparison.copy()
+    result = general_table_with_link(
+        frame,
+        "Prices",
+        rows=105,
+        chart_columns={"A": 7, "B": comparison.iloc[::-1]},
+        footer="Updated <today> & checked",
+        title_column_width=173,
+        column_plot_links=True,
+    )["Prices"]
+    ma, secondary = result["plots"]
+    assert [trace.name for trace in ma.data] == ["A", "7d MA"]
+    np.testing.assert_allclose(ma.data[1].y, frame.A.rolling(7).mean(), equal_nan=True)
+    assert secondary.data[1].name == "Comparison: B"
+    assert secondary.data[1].yaxis != secondary.data[0].yaxis
+    np.testing.assert_allclose(secondary.data[1].y, comparison.reindex(dates, method="ffill").B, equal_nan=True)
+    pd.testing.assert_frame_equal(comparison, original)
+    assert result["plot_names"] == ["prices-a-line-ma", "prices-b-line-comparison"]
+    html = render_table_html(result["data"], result["style"])
+    assert "Updated &lt;today&gt; &amp; checked" in html
+    assert "173px" in html and "20d mv (simple)" in html
+    assert result["style"]["options"]["max_rows"] == 106
+
+
+def test_general_table_short_history_and_invalid_chart_window() -> None:
+    frame = pd.DataFrame({"A": [1.0, 2.0]}, index=pd.date_range("2025-01-01", periods=2))
+    result = general_table_with_link(frame, chart_columns={"A": 20})["table"]
+    assert pd.isna(result["data"].iloc[-1].A)
+    assert pd.isna(result["plots"][0].data[1].y).all()
+    with pytest.raises(ValueError, match="positive"):
+        general_table_with_link(frame, chart_columns={"A": 0})

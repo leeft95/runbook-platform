@@ -4,6 +4,9 @@ import re
 import typing as tp
 import unicodedata
 
+import pandas as pd
+
+from ...timeseries.analysis import MovingAvgModes, calculate_moving_average
 from ..models import (
     ConditionOp,
     TableAction,
@@ -20,6 +23,16 @@ from ..models import (
 )
 
 ColumnRef = int | str
+
+
+def _aligned_moving_average(series: pd.Series, window: int, kind: MovingAvgModes | str) -> pd.Series:
+    """Align a moving average to the original index, preserving warm-up gaps."""
+    aligned = pd.Series(index=series.index, dtype="float64")
+    if len(series) < window:
+        return aligned
+    ma_values = tp.cast(pd.Series, calculate_moving_average(series, window=window, kind=kind))
+    aligned.loc[ma_values.index] = ma_values.to_numpy()
+    return aligned
 
 
 def _slugify_link_part(value: object) -> str:

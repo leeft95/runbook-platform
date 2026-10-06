@@ -13,10 +13,46 @@ table template     -> transforms data, builds style rules, may build plots
 layout             -> decides where the finished artifacts appear
 ```
 
+## ECM report migration coverage
+
+Preview all the new templates and charts with synthetic data:
+
+```bash
+pixi run python scripts/preview_gallery.py --serve --port 8766
+```
+
+Open `http://127.0.0.1:8766/`. The gallery includes working companion-chart
+links and a live HTML / native Dash / AG Grid comparison for every table.
+Without `--serve`, it exports the gallery to `/tmp/runbook-gallery/index.html`.
+
+The recovered ECM core and report callers use the following capabilities.
+Runbook provides them through shared models and dataset-first helpers:
+
+| ECM capability | Runbook implementation |
+| --- | --- |
+| COT summary calculations, rank/threshold highlights, section boundaries, hidden signals, linked asset names | `cot_summary`, `cot_position_changes`, `cot_position_divergence`, and `cot_table` |
+| Custom numeric formats by row/cell, grouped axes, in-cell bars | `TableRowFormat`, pandas MultiIndex inputs, and `TableAction(data_bar=...)` across HTML, native Dash, and AG Grid |
+| Inventory `table_format1`, monthly consensus, flow `table_format2`, month/quarter benchmarks | Options on `table_with_linked_plots_monthly` |
+| Daily linked tables with MA/comparison charts, footer, and label widths | `general_table_with_link` |
+| Regression/price-position charts, flexible COT and OHLC panels, seasonal/history composites, single-bar highlights | [Plotting helpers](plotting-helpers.md) |
+
+These are migration building blocks, not a drop-in replacement for ECM's
+Windows-file/report APIs. Reports still supply their datasets, instrument
+mappings, contract multipliers, participant definitions, and artifact layout.
+The recovered reports contain photo-transcription gaps, so validation uses
+explicit calculation fixtures and rendered examples rather than claiming a
+complete live-report comparison. Known date-order, four-interval, price-return,
+and missing-history errors are corrected rather than copied.
+
 For v0.3.2, an ordinary report table renders as an HTML table in the HTML
 renderer and as a native static Dash table in the Dash renderer. AG Grid is an
 explicit opt-in for interactive table output; it is not the default table
 representation.
+
+All columns are centered by default in HTML, native Dash, and AG Grid.
+Explicit `TableAction(text_align="left")` or `text_align="right"` rules override
+the default for selected cells. Header alignment uses
+`TableGlobalStyle.header_text_align`, which also defaults to `"center"`.
 
 The flagship template, `table_with_linked_plots_monthly`, creates a monthly
 summary and one seasonal chart for each input column. It returns a mapping of
@@ -28,9 +64,8 @@ style -> a serializable table style plan
 plots -> a list of Plotly Figures
 ```
 
-The display DataFrame retains its meaningful index and names it with the
-requested `header`; this is the visible index header used by aggregate plot
-links.
+The display DataFrame has a label column named with the requested `header`.
+This column carries row plot links; its heading carries the aggregate plot link.
 
 ## Complete report integration
 
@@ -89,10 +124,89 @@ table_with_linked_plots_monthly(
     na_rep="-",
     row_plot_links=True,
     all_plots_link=True,
+    windows=(10, 20),
+    history_months=5,
+    history_quarters=0,
+    include_qtd=False,
+    comparison_years=None,
+    exclude_years=None,
+    input_frequency="D",
+    as_of=None,
+    smooth=None,
+    mtd=False,
 )
 ```
 
 Use keyword arguments so the code remains readable.
+
+### Inventory and flow summary variants
+
+The same template covers ECM's `table_format1` inventory tables and
+`table_format2` flow tables. For an inventory table with mixed stock changes
+and flow averages:
+
+```python
+payload = table_with_linked_plots_monthly(
+    inventory,
+    "Inventory",
+    aggregation_type="diff",
+    aggregation_columns={"Flow": "mean"},
+    windows=(20,),
+    history_months=3,
+    history_quarters=4,
+    include_qtd=True,
+    comparison_years=5,
+    exclude_years=[2020],
+    highlighting_rules={"seasonal": 5},
+    row_plot_links=True,
+)["Inventory"]
+```
+
+Windows count observations for daily inputs. Monthly consensus inputs use
+`input_frequency="M", windows=(1,), moving_average_window=None`; one input
+row is allowed per calendar month, and missing months are inserted before
+calculations. The column heading uses `m` instead of `d`. Aggregation accepts
+`diff`/`change`, `sum`, `mean`/`ma`, and `None`/`level`/`last`; per-column
+overrides are annotated on the row label. Level mode uses the latest value.
+Calendar changes use consecutive period-end levels, averages use available
+observations, and sums keep wholly missing periods missing.
+
+`history_months` and `history_quarters` show completed calendar periods in
+reverse order. `include_qtd` adds the current partial quarter. `comparison_years`
+adds the actual prior calendar year's same-date rolling value and the mean of
+the requested number of available prior years, respecting `exclude_years`.
+An excluded or absent prior year remains missing. These comparisons do not
+depend on enabling highlight rules.
+
+`benchmark_month` compares the first window with that month's aggregate;
+`benchmark_quarter` compares the last window with the equally weighted mean of
+the three monthly aggregates. Missing benchmark periods remain missing. Set
+only one benchmark. `smooth` averages stock levels before rolling differences;
+it does not change calendar aggregates. `mtd=True` instead measures each DIFF
+rolling average from its prior calendar month-end, including historical
+observations used for highlighting. This applies consistently to the default
+mode and overrides; headings explicitly say `MTD basis`. It cannot be combined
+with `smooth`.
+
+`as_of` filters before filling, smoothing, statistics, and plots. An optional
+input `_last_update` metadata column is carried as a hidden output field.
+Short histories produce missing rolling measures and an explanatory empty
+companion chart when the smoothing window cannot be computed.
+
+### Daily linked tables
+
+`general_table_with_link` accepts chart selections per column or tuple of
+columns. Values can be `"line"`, `"seasonal"`, `"seasonal_mva"`, a positive
+integer for a line chart with that moving-average window, or a dated DataFrame
+to overlay on a secondary axis. Comparison data is sorted and forward-aligned
+to the primary dates without borrowing future observations. Chart options do
+not change the table's moving-average summary calculation.
+
+`footer` is plain text rendered in HTML, native Dash, and AG Grid;
+`title_column_width` controls the index column. These also work on custom
+tables through `TableStyleOptions(footer=...)`,
+`TableSizing(index_width_px=...)`, or SDK
+`table_style(footer=..., index_width_px=...)`.
 The template returns a serializable style payload; `ctx.artifact.table` turns
 it into the immutable table data/style/HTML artifacts consumed by renderers.
 For `name="monthly-summary"`, these are `tables/monthly-summary.parquet`,
@@ -199,6 +313,111 @@ are available from `runbook.core.table` for reusable rule construction. A
 style changes presentation only; a template such as the monthly helper also
 calculates the table and companion plots.
 
+## Mixed formats within a column
+
+Use `format.rows` when a report mixes levels, percentages or dates in the same
+column. A `TableRowFormat` selects a row by index label or original position;
+its optional `columns` list limits the override to particular cells. Column
+formats override the global default, then row overrides apply in list order.
+The last matching override wins. Hidden rows and `max_rows` do not renumber
+positions. Formats change display only: numeric values stay numeric in Parquet
+artifacts and in AG Grid sorting/filtering.
+
+```python
+from runbook.sdk.table_style import format_number, format_row, table_style
+
+style = table_style(
+    formats=[
+        format_number("Latest", digits=0, thousands=True),
+        format_row(
+            {"mode": "label", "value": "% OI"},
+            "{:.2%}",
+            columns=["Latest", "Change"],
+        ),
+        format_row(
+            {"mode": "position", "value": 3},
+            "{:.1f}",
+            columns=["Latest"],
+        ),
+    ],
+    na_rep="-",
+)
+table_ref = ctx.artifact.table(frame, name="inventory", style=style)
+```
+
+The same plan works in HTML, native Dash and AG Grid. Row overrides require
+`table-style/0.2`; existing plans without overrides retain their previous payload.
+
+## Grouped table headers and row indexes
+
+Tables accept pandas `MultiIndex` columns and indexes. HTML and native Dash
+preserve contiguous column spans and row spans; AG Grid uses nested column
+groups and separate index-level fields. Parent labels are never merged across
+different parents or noncontiguous groups. Parquet artifacts retain the original
+axes rather than storing flattened display strings.
+
+Style plans and PDL use string field keys. Reference a complete MultiIndex
+column with `str(column_tuple)`, including in formats, rules, sizing, hidden
+columns and links. Row references accept complete tuple labels (JSON arrays
+after serialization); positional references work unchanged. Header and index
+links attach to the corresponding leaf label.
+
+```python
+from runbook.core.table import TableStylePlan
+
+latest = str(("January", "Latest"))
+signal = str(("January", "_signal"))
+plan = TableStylePlan.model_validate(
+    {
+        "format": {
+            "columns": {latest: "{:,.1f}"},
+            "rows": [
+                {
+                    "row_ref": {"mode": "label", "value": ("Europe", "Returns")},
+                    "columns": [latest],
+                    "spec": "{:.2%}",
+                }
+            ],
+        },
+        "options": {"hidden_columns": [signal]},
+    }
+)
+```
+
+## In-cell data bars
+
+Add `TableAction(data_bar=TableDataBar(...))` to an ordinary rule, or use the
+SDK action builder. This reproduces the signed bars in price-range tables:
+
+```python
+from runbook.sdk.table_style import action, format_percent, rule, table_style, target_columns
+
+style = table_style(
+    formats=[format_percent("Percentile of 10yr Range", digits=1)],
+    rules=[
+        rule(
+            "range_bar",
+            target_columns(["Percentile of 10yr Range"]),
+            action=action(data_bar={"vmin": -1, "vmax": 1}),
+        )
+    ],
+)
+```
+
+Bars use the same resolved CSS in HTML, native Dash and AG Grid, without
+changing the displayed number or its numeric sorting. Values outside explicit
+bounds have clipped bars and retain their actual numeric labels. Missing or
+non-finite values have no bar. Omitted bounds are inferred separately for each
+target column from finite values within `max_rows`, before hiding rows or
+applying conditions. Client-side filtering retains that scale.
+
+`align="mid"` draws from zero proportionally within the range, from the left
+for positive-only data, and from the right for negative-only data.
+`align="zero"` places zero at the center using a symmetric range; `left` and
+`right` use fixed edges. `positive_color` and `negative_color` customize the
+palette. Bars compose with row formats, borders, text colors and background
+highlights, and require `table-style/0.2`.
+
 ## Choosing the right layer
 
 - Use a style helper when the DataFrame and its shape are already right.
@@ -209,3 +428,87 @@ calculates the table and companion plots.
 
 The static HTML renderer displays the table and plots. Interactive reports can
 add semantic column metadata; see [Interactive reports](pdl-interactive.md).
+
+## COT tables from existing summary data
+
+`cot_table` reproduces the COT table presentation through the shared
+`TableStylePlan`, `TableRule`, formatting, sizing, and semantic-link models.
+It accepts already-calculated summaries; it does not require new COT analytics
+or access any data provider. The same plan works in HTML and native Dash tables.
+
+```python
+from runbook.core.table import TableStylePlan, cot_table, render_table_html
+
+payload = cot_table(
+    cot_summary_frame,
+    header="Speculators Net Position (Managed money)",
+    label_column=cot_summary_frame.columns[0],  # e.g. "24-Jun to 01-Jul"
+    position_column="Net Position (MM)",
+    group_column="Group",  # caller-supplied instrument groups, hidden in output
+    plot_links={"Brent Fut": "cot-brent", "Brent Fut+Opt": "cot-brent"},
+)["Speculators Net Position (Managed money)"]
+
+plan = TableStylePlan.model_validate(payload["style"])
+html = render_table_html(payload["data"], plan)
+# Or persist the very same data and plan inside a report:
+table_ref = ctx.artifact.table(payload["data"], name="cot", style=plan)
+```
+
+Omit `group_column` or `plot_links` when unused. Plot link values must name
+artifacts/pages that the report publishes. The template keeps values numeric;
+it returns data, style and an empty `plots` list, without writing files or
+creating companion figures. `position_label` optionally changes the displayed
+net-position heading for dealers or investment funds. Optional
+`Net Position (NC)` appears beside the instrument label.
+
+The model rules preserve the COT conventions:
+
+- Instrument labels and net/OI use hidden percentile-rank thresholds.
+- Weekly and four-week moves use their supplied score columns and thresholds.
+- Long/short percentiles and the combined net signal have separate rules.
+- Percentages, integer positions, two-decimal prices/scores, negative red text,
+  bold change columns and column-group borders use ordinary table models.
+- A separator follows each contiguous `group_column` group; hidden signal and
+  link fields never appear as display columns.
+
+The template selects measures by column name, so adding noncommercial positions
+or reordering the input does not shift highlighting onto the wrong measure. You can customize
+the returned plan with the ordinary models before rendering:
+
+```python
+from runbook.core.table import TableAction, TableRule, TableTarget
+
+plan.rules.append(
+    TableRule(
+        id="total_row",
+        target=TableTarget(scope="rows", positions=[0]),
+        action=TableAction(font_weight="bold", border_top="2px solid black"),
+    )
+)
+```
+
+Run the synthetic example without a provider connection:
+
+```bash
+pixi run python scripts/preview_cot_table.py --output-dir /tmp/runbook-cot-preview
+```
+
+This writes `index.html` and the reusable `style.json` from
+`data/fixtures/cot/summary.csv`. The fixture contains no production data.
+
+For new calculations, `runbook.core.timeseries.cot` supplies `prepare_cot_data`,
+`cot_summary`, `cot_position_changes` and `cot_position_divergence`. Inputs use
+`Long`, `Short`, optional `OI`, `PX_LAST`, `VWAP`, `Internal` and paired
+`NC Long`/`NC Short` columns. Providers and participant aggregation remain with
+the caller. `as_of` pins the data cutoff; the default uses the latest supplied
+observation, never today's date. Position scaling and contract values are
+explicit arguments.
+
+`cot_summary` uses four observation intervals for four-week changes and the
+previous price for weekly returns. Position scores retain ECM's uncentered
+change/standard-deviation convention; price scores are centered. The default
+position dispersion window is 52 observations; pass `change_window=208` for
+the MiFID convention. Percentile history excludes the latest value. Insufficient
+history or zero denominators remain missing instead of becoming infinite or
+zero. Alert subsets have no instrument or row-number exclusions; apply those
+report-specific selections before building the table.

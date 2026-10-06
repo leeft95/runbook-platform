@@ -29,7 +29,10 @@ with layout.section("Summary") as section:
 | show categories or bars | `plot_bar` | DataFrame, Series, or named DataFrames | Plotly `Figure` |
 | separate history and forecast bars | `plot_bar_forecast` | DataFrame, Series, or named DataFrames plus `forecast_from` | Plotly `Figure` |
 | compare values by year/season | `plot_seasonal` | DataFrame with a `DatetimeIndex` | Plotly `Figure` |
+| compare seasonal columns beside ordinary history | `plot_seasonal_grid` | Named seasonal DataFrames and optional history | Plotly `Figure` |
 | build a Commitment of Traders panel | `plot_cot` | DataFrame with a `DatetimeIndex`, panel columns, and titles | Plotly `Figure` |
+| show COT price, volume and OI | `plot_cot_market` | Named OHLC DataFrames with optional volume/OI/holdings | Plotly `Figure` |
+| fit price/position changes | `plot_regression` / `plot_price_vs_position` | Paired changes / dated position and price levels | Plotly `Figure` |
 | combine explicit trace specifications | `plot_mixed` | `GraphlyTraceSpec` list and optional shared DataFrame | Plotly `Figure` |
 
 The public functions are imported from their implementation modules:
@@ -38,7 +41,9 @@ The public functions are imported from their implementation modules:
 from runbook.sdk import plot_line
 from runbook.core.plotting.bar import plot_bar, plot_bar_forecast
 from runbook.core.plotting.mixed import plot_mixed
-from runbook.core.plotting.seasonal import plot_cot, plot_seasonal
+from runbook.core.plotting.seasonal import plot_cot, plot_seasonal, plot_seasonal_grid
+from runbook.core.plotting.cot import plot_cot_market
+from runbook.core.plotting.regression import plot_regression, plot_price_vs_position
 ```
 
 ## Line and bar charts
@@ -97,6 +102,11 @@ with layout.section("Forecast") as section:
 
 The result of every helper is a Plotly figure; no helper writes to Runbook
 storage until `ctx.artifact.plot(...)` is called.
+
+For ECM's selected-single-bar highlighting, pass `highlight_only=True` to
+`plot_bar_forecast`. Only the exact `forecast_from` index value receives the
+forecast color/pattern; observations after it keep the history style. The
+selected value must exist in the index.
 
 ## Seasonal charts
 
@@ -186,9 +196,33 @@ seasonality = plot_seasonal(
 )
 ```
 
-`plot_cot` creates a fixed two-row, three-panel COT figure. Its input must have
-the named main, price, and open-interest columns required by each panel, and
-`plot_titles` must contain exactly three titles:
+`plot_seasonal` applies `start` before transforming the data, accepts an
+explicit `current_year`, and honors `x_axis_title`, `y_axis_title`,
+`y1_axis_title` (comparisons), and `y2_axis_title` (cumulative). The corresponding
+`y_axis_reversed`, `y1_axis_reversed`, and `y2_axis_reversed` flags follow the
+panel meaning even when the middle panel is omitted. Unrecognized keyword
+arguments raise an error rather than silently doing nothing.
+
+For multiple seasonal columns or a seasonal/history composite:
+
+```python
+comparison = plot_seasonal_grid(
+    {"Brent": prices[["brent"]], "WTI": prices[["wti"]]},
+    history=prices[["brent", "wti"]],
+    title="Seasonality and price history",
+    ytd_cum_sum=True,
+    exclude_years=[2020],
+)
+```
+
+Each named frame contributes its selected series. Seasonal options are
+forwarded to `plot_seasonal`; matching traces share legend controls. The
+optional history column spans the figure height and keeps actual dates on
+its own axis. `history_first=True` places it on the left.
+
+`plot_cot` defaults to two rows and three columns. Supply any non-empty list
+of panel specifications and one `plot_titles` entry per specification. Its
+input must contain the named main, price, and open-interest columns:
 
 ```python
 cot = plot_cot(
@@ -201,6 +235,50 @@ cot_ref = ctx.artifact.plot(cot, name="cot")
 with section.grid(columns=1) as grid:
     grid.plot(cot_ref, title="Commitment of Traders")
 ```
+
+The OI band uses the previous five available years. Pass `history_years=None`
+for all historical years, or another positive lookback. Short-position values
+retain their observation dates; they are not reversed along the time axis.
+For a single seasonal position/price panel, use
+`columns=[["Net", "PX_LAST"]], plot_titles=["Net"], rows=1`. Two-row panels
+require the OI field, with an optional fourth internal/CTA field.
+
+### COT price and regression figures
+
+`plot_cot_market({"Brent": brent, "WTI": wti}, cot_start="2025-06-24")`
+combines candlesticks with optional volume bars and OI or holdings lines.
+It uses `PX_OPEN`, `PX_HIGH`, `PX_LOW`, `PX_LAST`, `VOLUME`,
+`FUT_AGGTE_OPEN_INT`, and `HOLDINGS` by default; column parameters allow other
+names. Price fields are required, and missing/all-zero optional fields are
+omitted. If both OI and holdings are supplied, holdings get a separate third
+row so their units remain independent. `cot_start` shows 76 days of prior
+history by default and shades the following seven days; `lookback_days` and
+`highlight=False` control those choices. These helpers never fetch market data.
+
+```python
+regression = plot_regression(changes, x="Net position change", y="Price change", title="Price vs positioning")
+beta = regression.layout.meta["regression"]["beta"]
+
+# Or derive changes directly from dated Net and PX_LAST levels.
+weekly = plot_price_vs_position(position_data, periods=1, highlight_length=4)
+four_week = plot_price_vs_position(position_data, periods=4, as_of="2025-06-24")
+```
+
+`plot_regression` defaults to an OLS fit through the origin, matching the COT
+reports. Set `constant=True` to fit an intercept. Without explicit names, its
+first column is y and second is x. It drops missing/non-finite pairs together,
+sorts dated observations, highlights the latest 8/3/1 observations, and draws
+the fit with ±2 residual-standard-deviation lines in sorted x order. The bands
+describe residual dispersion, not confidence intervals. Numeric `alpha`,
+`beta`, `r_squared`, `residual_std`, `observations`, and `constant` are stored
+under `figure.layout.meta["regression"]` for report text.
+
+`plot_price_vs_position` calculates position differences and percentage-point
+price returns over `periods` paired observations; `is_spread=True` uses price
+differences instead. Older points are grouped by year, the previous selected
+observations are highlighted separately, and the latest point is distinct.
+Neither helper fills missing observations. Insufficient pairs or constant x
+values raise an explanatory error.
 
 ## Mixed figures
 

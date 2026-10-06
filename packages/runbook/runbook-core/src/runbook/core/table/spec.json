@@ -32,6 +32,17 @@
         "TableAction": {
           "additionalProperties": false,
           "properties": {
+            "data_bar": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TableDataBar"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "background_color": {
               "anyOf": [
                 {
@@ -270,6 +281,59 @@
           "title": "TableCondition",
           "type": "object"
         },
+        "TableDataBar": {
+          "additionalProperties": false,
+          "description": "Column-scaled bars; omitted bounds are inferred from finite target values.",
+          "properties": {
+            "vmin": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Vmin"
+            },
+            "vmax": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Vmax"
+            },
+            "align": {
+              "default": "mid",
+              "enum": [
+                "mid",
+                "zero",
+                "left",
+                "right"
+              ],
+              "title": "Align",
+              "type": "string"
+            },
+            "negative_color": {
+              "default": "#d65f5f",
+              "title": "Negative Color",
+              "type": "string"
+            },
+            "positive_color": {
+              "default": "#5fba7d",
+              "title": "Positive Color",
+              "type": "string"
+            }
+          },
+          "title": "TableDataBar",
+          "type": "object"
+        },
         "TableFormatDate": {
           "additionalProperties": false,
           "properties": {
@@ -492,6 +556,53 @@
           "title": "TableLiteralRHS",
           "type": "object"
         },
+        "TableRowFormat": {
+          "additionalProperties": false,
+          "description": "Override a row's display format, optionally within selected columns.",
+          "properties": {
+            "row_ref": {
+              "$ref": "#/$defs/TableRowRef"
+            },
+            "spec": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TableFormatNumber"
+                },
+                {
+                  "$ref": "#/$defs/TableFormatPercent"
+                },
+                {
+                  "$ref": "#/$defs/TableFormatDate"
+                },
+                {
+                  "$ref": "#/$defs/TableFormatString"
+                }
+              ],
+              "title": "Spec"
+            },
+            "columns": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Columns"
+            }
+          },
+          "required": [
+            "row_ref",
+            "spec"
+          ],
+          "title": "TableRowFormat",
+          "type": "object"
+        },
         "TableRowRHS": {
           "additionalProperties": false,
           "properties": {
@@ -588,6 +699,19 @@
               },
               "title": "Rows",
               "type": "array"
+            },
+            "index_width_px": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Index Width Px"
             }
           },
           "title": "TableSizing",
@@ -652,6 +776,13 @@
               },
               "title": "Columns",
               "type": "object"
+            },
+            "rows": {
+              "items": {
+                "$ref": "#/$defs/TableRowFormat"
+              },
+              "title": "Rows",
+              "type": "array"
             }
           },
           "title": "TableStyleFormat",
@@ -687,6 +818,18 @@
               },
               "title": "Hidden Rows",
               "type": "array"
+            },
+            "footer": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Footer"
             }
           },
           "title": "TableStyleOptions",

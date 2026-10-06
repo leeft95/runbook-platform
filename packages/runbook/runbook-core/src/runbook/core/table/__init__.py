@@ -7,6 +7,7 @@ from runbook.core.table.builder import (
     table_style_hash,
     table_style_json,
     table_style_payload,
+    table_axis_spans,
 )
 from runbook.core.table.models import (
     TABLE_STYLE_SCHEMA_VERSION,
@@ -17,6 +18,7 @@ from runbook.core.table.models import (
     RowRefMode,
     StyleInput,
     TableAction,
+    TableDataBar,
     TableArtifactRef,
     TableColumnRHS,
     TableColumnSizing,
@@ -33,6 +35,7 @@ from runbook.core.table.models import (
     TableLinkKind,
     TableLiteralRHS,
     TableRowRef,
+    TableRowFormat,
     TableRowRHS,
     TableRowSizing,
     TableRule,
@@ -48,6 +51,7 @@ from runbook.core.table.models import (
     validate_link_url,
 )
 from runbook.core.table.templates import table_with_link_monthly
+from runbook.core.table.templates.cot import cot_table
 from runbook.core.table.templates.common import (
     band_compare_rules,
     color_negative_red,
@@ -79,6 +83,7 @@ __all__ = [
     "TableLinkDestination",
     "TableLinkKind",
     "TableAction",
+    "TableDataBar",
     "TableColumnRHS",
     "TableColumnSizing",
     "TableCondition",
@@ -91,6 +96,7 @@ __all__ = [
     "TableGlobalStyle",
     "TableLiteralRHS",
     "TableRowRef",
+    "TableRowFormat",
     "TableRowRHS",
     "TableRowSizing",
     "TableRule",
@@ -106,6 +112,7 @@ __all__ = [
     "validate_link_url",
     "band_compare_rules",
     "color_negative_red",
+    "cot_table",
     "column_compare_rules",
     "highlight",
     "highlight_on_key",
@@ -124,4 +131,5 @@ __all__ = [
     "table_style_hash",
     "table_style_json",
     "table_style_payload",
+    "table_axis_spans",
 ]

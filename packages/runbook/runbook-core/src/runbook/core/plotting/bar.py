@@ -69,13 +69,6 @@ def _validate_single_series_subplot(df: pd.DataFrame, subplot_name: str) -> None
         raise ValueError(f"Subplot {subplot_name!r} must contain exactly one data column.")
 
 
-def _split_bar_series(series: pd.Series, forecast_from: object) -> tuple[pd.Series, pd.Series]:
-    """Handle split bar series."""
-    history = series.where(series.index < forecast_from)
-    forecast = series.where(series.index >= forecast_from)
-    return history, forecast
-
-
 def plot_bar(
     data: tp.Union[tp.Dict[str, pd.DataFrame], pd.DataFrame],
     title: str | None = None,
@@ -165,8 +158,10 @@ def plot_bar_forecast(
     trace_style: dict[str, tp.Any] | None = None,
     hist_trace_style: dict[str, tp.Any] | None = None,
     forecast_trace_style: dict[str, tp.Any] | None = None,
+    *,
+    highlight_only: bool = False,
 ) -> plotly.graph_objs._figure.Figure:
-    """Plot history and forecast bars as separate traces split at ``forecast_from``."""
+    """Split history/forecast bars, or highlight only the exact selected index value."""
     normalized_data = _normalize_plot_data(data)
     if rows * cols < len(normalized_data):
         raise ValueError(f"Not enough subplots for {len(normalized_data)} bars with {rows} rows and {cols} cols.")
@@ -174,15 +169,21 @@ def plot_bar_forecast(
         raise ValueError("Rows and cols must be positive integers.")
 
     forecast_data: dict[str, pd.DataFrame] = {}
-    forecast_styles_by_subplot: dict[str, dict[str, dict[str, tp.Any]]] = {}
+    series_styles: dict[str, dict[str, tp.Any]] = {}
     for subplot_name, df in normalized_data.items():
         _validate_single_series_subplot(df, subplot_name)
         base_name = str(df.columns[0])
         series = df.iloc[:, 0]
-        history, forecast = _split_bar_series(series, forecast_from)
+        if highlight_only:
+            if forecast_from not in series.index:
+                raise ValueError("forecast_from must be an index value when highlight_only=True")
+            selected = series.index == forecast_from
+            history, forecast = series.where(~selected), series.where(selected)
+        else:
+            history = series.where(series.index < forecast_from)
+            forecast = series.where(series.index >= forecast_from)
 
         subplot_df = pd.DataFrame(index=df.index)
-        subplot_styles: dict[str, dict[str, tp.Any]] = {}
 
         history_name = hist_legend or base_name
         forecast_name = forecast_legend or f"{base_name} Forecast"
@@ -190,41 +191,14 @@ def plot_bar_forecast(
         if history.notna().any():
             subplot_df[history_name] = history
             history_style = _merge_style(dict(trace_style or {}), hist_trace_style)
-            subplot_styles[history_name] = _set_marker_defaults(history_style, hist_color, hist_pattern_shape)
+            series_styles[history_name] = _set_marker_defaults(history_style, hist_color, hist_pattern_shape)
 
         if forecast.notna().any():
             subplot_df[forecast_name] = forecast
             forecast_style = _merge_style(dict(trace_style or {}), forecast_trace_style)
-            subplot_styles[forecast_name] = _set_marker_defaults(forecast_style, forecast_color, forecast_pattern_shape)
+            series_styles[forecast_name] = _set_marker_defaults(forecast_style, forecast_color, forecast_pattern_shape)
 
         forecast_data[subplot_name] = subplot_df
-        forecast_styles_by_subplot[subplot_name] = subplot_styles
-
-    if len(forecast_data) == 1 and "" in forecast_data:
-        return plot_bar(
-            data=forecast_data[""],
-            title=title,
-            width=width,
-            height=height,
-            show_legend=show_legend,
-            hovertemplate=hovertemplate,
-            rows=rows,
-            cols=cols,
-            trace_style=None,
-            series_styles=forecast_styles_by_subplot[""],
-            shared_xaxes=shared_xaxes,
-            horizontal_spacing=horizontal_spacing,
-            vertical_spacing=vertical_spacing,
-            tickformat=tickformat,
-            dtick=dtick,
-            use_rangebreaks=use_rangebreaks,
-            holiday_countries=holiday_countries,
-            legend_groups=legend_groups,
-        )
-
-    merged_series_styles: dict[str, dict[str, tp.Any]] = {}
-    for subplot_styles in forecast_styles_by_subplot.values():
-        merged_series_styles.update(subplot_styles)
 
     return plot_bar(
         data=forecast_data,
@@ -236,7 +210,7 @@ def plot_bar_forecast(
         rows=rows,
         cols=cols,
         trace_style=None,
-        series_styles=merged_series_styles,
+        series_styles=series_styles,
         shared_xaxes=shared_xaxes,
         horizontal_spacing=horizontal_spacing,
         vertical_spacing=vertical_spacing,

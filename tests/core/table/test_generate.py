@@ -482,13 +482,14 @@ def test_render_table_html_fails_for_non_unique_row_label_reference() -> None:
         _ = render_table_html(df, style)
 
 
-def test_render_table_html_rejects_multiindex() -> None:
+def test_render_table_html_renders_multiindex() -> None:
     df = pd.DataFrame(
         {"a": [1.0, 2.0]},
         index=pd.MultiIndex.from_tuples([(2026, 1), (2026, 2)]),
     )
-    with pytest.raises(ValueError, match="MultiIndex index is not supported"):
-        _ = render_table_html(df, {"schema_version": "table-style/0.1"})
+    html = render_table_html(df, {"schema_version": "table-style/0.1"})
+    assert 'rowspan="2"' in html
+    assert ">2026</th>" in html
 
 
 def test_render_table_html_always_condition_applies_to_all_cells_in_target() -> None:

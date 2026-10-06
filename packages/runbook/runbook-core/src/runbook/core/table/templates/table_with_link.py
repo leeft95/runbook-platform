@@ -6,7 +6,7 @@ import pandas as pd
 
 from ...plotting.line import plot_line
 from ...plotting.seasonal import plot_seasonal
-from ...timeseries.analysis import MovingAvgModes, calculate_moving_average
+from ...timeseries.analysis import MovingAvgModes
 from ..models import (
     TableAction,
     TableColumnSizing,
@@ -22,15 +22,7 @@ from ..models import (
     TableTarget,
     TargetScope,
 )
-from .common import _build_plot_link_metadata, color_negative_red, highlight_zscore
-
-
-def _aligned_moving_average(series: pd.Series, window: int, kind: MovingAvgModes | str) -> pd.Series:
-    """Handle aligned moving average."""
-    aligned = pd.Series(index=series.index, dtype="float64")
-    ma_values = tp.cast(pd.Series, calculate_moving_average(series, window=window, kind=kind))
-    aligned.loc[ma_values.index] = ma_values.to_numpy()
-    return aligned
+from .common import _aligned_moving_average, _build_plot_link_metadata, color_negative_red, highlight_zscore
 
 
 def _normalize_input_frame(
@@ -69,19 +61,27 @@ def _moving_average_type_label(mode: MovingAvgModes | str) -> str:
 
 def _resolve_chart_columns(
     columns: list[str],
-    chart_columns: dict[str | tuple[str, ...], str] | None,
+    chart_columns: dict[str | tuple[str, ...], str | int | pd.DataFrame] | None,
     *,
     index: pd.DatetimeIndex,
-) -> dict[str, str]:
+) -> dict[str, tp.Any]:
     """Resolve chart columns."""
     allowed = {"line", "seasonal", "seasonal_mva"}
     default_chart = "seasonal" if (index.max() - index.min()).days > 730 else "line"
-    resolved = {col: default_chart for col in columns}
+    resolved: dict[str, tp.Any] = {col: default_chart for col in columns}
     if chart_columns is None:
         return resolved
 
     for raw_key, mode in chart_columns.items():
-        if mode not in allowed:
+        if isinstance(mode, pd.DataFrame):
+            if not isinstance(mode.index, pd.DatetimeIndex) or not mode.index.is_unique:
+                raise ValueError("Comparison data requires a unique DatetimeIndex")
+            if not mode.columns.is_unique or mode.empty:
+                raise ValueError("Comparison data requires non-empty data and unique columns")
+        elif isinstance(mode, int) and not isinstance(mode, bool):
+            if mode < 1:
+                raise ValueError("Chart moving-average windows must be positive")
+        elif not isinstance(mode, str) or mode not in allowed:
             raise ValueError(f"Unsupported chart type: {mode}")
         key_columns = list(raw_key) if isinstance(raw_key, tuple) else [raw_key]
         for column in key_columns:
@@ -95,14 +95,33 @@ def _plots_for_columns(
     levels_df: pd.DataFrame,
     ma_df: pd.DataFrame,
     *,
-    chart_modes: dict[str, str],
+    chart_modes: dict[str, tp.Any],
     moving_average_window: int,
+    exclude_years: list[int] | None,
 ) -> list[tp.Any]:
     """Handle plots for columns."""
     plots: list[tp.Any] = []
     for col in levels_df.columns:
         mode = chart_modes[str(col)]
         title = str(col)
+        if isinstance(mode, (int, pd.DataFrame)):
+            frame = levels_df[[col]].copy()
+            styles = {}
+            if isinstance(mode, int):
+                label = f"{mode}d MA"
+                if label == str(col):
+                    label += " overlay"
+                frame[label] = _aligned_moving_average(levels_df[col], mode, MovingAvgModes.SIMPLE)
+            else:
+                comparison = mode.sort_index().reindex(levels_df.index, method="ffill")
+                for field in comparison:
+                    label = str(field)
+                    while label in frame:
+                        label = f"Comparison: {label}"
+                    frame[label] = comparison[field]
+                    styles[label] = {"secondary_y": True}
+            plots.append(plot_line(frame, title=title, series_styles=styles))
+            continue
         if mode == "line":
             plots.append(
                 plot_line(
@@ -114,13 +133,14 @@ def _plots_for_columns(
             )
             continue
         if mode == "seasonal":
-            plots.append(plot_seasonal(levels_df[[col]], title=title, ytd_cum_sum=True))
+            plots.append(plot_seasonal(levels_df[[col]], title=title, ytd_cum_sum=True, exclude_years=exclude_years))
             continue
         plots.append(
             plot_seasonal(
                 ma_df[[col]],
                 title=f"{col} - {moving_average_window}d mva",
                 ytd_cum_sum=True,
+                exclude_years=exclude_years,
             )
         )
     return plots
@@ -128,6 +148,7 @@ def _plots_for_columns(
 
 def _build_internal_general_frame(
     levels_df: pd.DataFrame,
+    ma_df: pd.DataFrame,
     *,
     rows: int,
     moving_average_window: int,
@@ -139,17 +160,6 @@ def _build_internal_general_frame(
     chg_df = levels_df.diff()
     chg_mean_df = chg_df.rolling(change_zscore_window).mean()
     chg_std_df = chg_df.rolling(change_zscore_window).std()
-    ma_df = pd.concat(
-        [
-            _aligned_moving_average(
-                tp.cast(pd.Series, levels_df[col]),
-                moving_average_window,
-                moving_average_type,
-            ).rename(col)
-            for col in levels_df.columns
-        ],
-        axis=1,
-    ).loc[:, list(levels_df.columns)]
     level_std_df = levels_df.rolling(moving_average_window).std()
 
     internal_df = levels_df.copy()
@@ -190,6 +200,8 @@ def _build_general_style(
     *,
     helper_columns: list[str],
     data_column_width: int,
+    title_column_width: int,
+    footer: str | None,
     na_rep: str | None,
     links: list[TableLink] | None = None,
 ) -> dict[str, tp.Any]:
@@ -236,7 +248,8 @@ def _build_general_style(
     rules.extend(highlight_zscore(list(ret_df.columns), zscore_targets))
 
     options = TableStyleOptions(
-        max_rows=100,
+        max_rows=max(1, len(ret_df)),
+        footer=footer,
         global_style=TableGlobalStyle(
             background_color="lightblue",
             one_bg_color=False,
@@ -251,7 +264,7 @@ def _build_general_style(
 
     return TableStylePlan(
         format=TableStyleFormat(na_rep=na_rep, precision=2, thousands=None, columns=format_columns),
-        sizing=TableSizing(columns=sizing_cols),
+        sizing=TableSizing(columns=sizing_cols, index_width_px=title_column_width),
         rules=rules,
         options=options,
         links=links,
@@ -267,13 +280,15 @@ def general_table_with_link(
     moving_average_type: MovingAvgModes = MovingAvgModes.SIMPLE,
     change_zscore_window: int = 65,
     columns_filter: list[str] | None = None,
-    chart_columns: dict[str | tuple[str, ...], str] | None = None,
+    chart_columns: dict[str | tuple[str, ...], str | int | pd.DataFrame] | None = None,
     title_column_width: int = 80,
     data_column_width: int = 60,
     fill_na: str | None = None,
     na_rep: str | None = "-",
     column_plot_links: bool | list[str] = False,
     all_plots_link: bool = False,
+    *,
+    exclude_years: list[int] | None = None,
 ) -> dict[str, dict[str, tp.Any]]:
     """Build a daily table with linked plots using legacy mixed-row highlight semantics.
 
@@ -298,7 +313,7 @@ def general_table_with_link(
     if link_requested and header is not None and not str(header).strip():
         raise ValueError("table/header name must not be blank when plot links are requested")
     header_label = header or "table"
-    _ = footer
+    moving_average_type = MovingAvgModes(moving_average_type)
 
     levels_df = _normalize_input_frame(raw_df, columns_filter=columns_filter, fill_na=fill_na)
     if levels_df.empty:
@@ -325,10 +340,12 @@ def general_table_with_link(
         ma_df,
         chart_modes=chart_modes,
         moving_average_window=moving_average_window,
+        exclude_years=exclude_years,
     )
 
     ret_df, helper_columns = _build_internal_general_frame(
         levels_df,
+        ma_df,
         rows=rows,
         moving_average_window=moving_average_window,
         moving_average_type=moving_average_type,
@@ -341,7 +358,17 @@ def general_table_with_link(
     if link_requested:
         plot_names, links, all_plots_name = _build_plot_link_metadata(
             header_label,
-            [(str(col), chart_modes[str(col)]) for col in levels_df.columns],
+            [
+                (
+                    str(col),
+                    "line-comparison"
+                    if isinstance(chart_modes[str(col)], pd.DataFrame)
+                    else "line-ma"
+                    if isinstance(chart_modes[str(col)], int)
+                    else chart_modes[str(col)],
+                )
+                for col in levels_df.columns
+            ],
             [str(col) for col in ret_df.columns],
             column_plot_links=column_plot_links,
             all_plots_link=all_plots_link,
@@ -352,6 +379,8 @@ def general_table_with_link(
             ret_df,
             helper_columns=helper_columns,
             data_column_width=data_column_width,
+            title_column_width=title_column_width,
+            footer=footer,
             na_rep=na_rep,
             links=links,
         ),
