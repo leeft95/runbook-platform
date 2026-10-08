@@ -145,13 +145,23 @@ heading links to all generated figures, with the ordinary `plot_names` and
 calculation as the table. `row_plot_links=False` and `all_plots_link=False`
 disable links; the generated figures remain available in `plots`.
 
-Columns are centered by default. The `20d MA` column uses the general linked
-table's summary-band logic: compare Latest against the current calendar
-window's mean and sample standard deviation. Above +1/+2 SD is light green/green;
-below -1/-2 SD is orange/red. Hidden helper columns carry the statistics.
-Use `highlight_columns=["5d MA", "20d MA", "3m MA"]` to highlight other current
-averages, or `highlight_columns=[]` to disable bands. Historical reference
-columns stay neutral; negative numbers use the shared red-text rule.
+Columns are centered by default. **Every moving-average column**, including
+historical references, uses the general linked table's z-score highlighting.
+`Latest` itself is excluded. The signal is Latest minus the displayed column's
+mean, divided by its reference sample standard deviation:
+
+- Current MAs use observations in that column's calendar window.
+- `Y-1` (or `Y-N`) uses observations in the matching window of that prior year.
+- `5Y` (or `NY`) uses the prior yearly window averages, giving each available
+  year equal weight and respecting `exclude_years`.
+
+Above +1/+2 SD is light green/green; below -1/-2 SD is orange/red. Missing or
+zero dispersion produces no z-score highlight. Rules work on underlying
+numeric values, regardless of whether they display as prices, volumes,
+percentages or other numeric formats. Hidden helper columns carry the statistics.
+Use `highlight_columns` to select a subset of current/historical MA columns,
+or `highlight_columns=[]` to disable bands. `Latest` cannot be selected.
+Negative numbers continue to use the shared red-text rule.
 
 Use `format_spec` for precision or percentages,
 `rules` for additional shared `TableRule` overrides, `footer`

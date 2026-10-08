@@ -457,7 +457,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     table(
         "rollup-power",
         "Power · calendar roll-ups",
-        "Latest, 5-day / 20-day / 3-month averages, and matching prior-year windows. Each row opens full history and seasonal base/average panels.",
+        "Z-score highlighting on every current and historical average; Latest stays outside the bands. Each row opens full history and seasonal base/average panels.",
         eu_power_rollup_table,
         power,
         header="EU power",
@@ -465,7 +465,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     table(
         "rollup-share",
         "Power shares · calendar roll-ups",
-        "The same template accepts a time-series DataFrame of shares and formats the roll-ups as percentages.",
+        "The same numeric z-score rules apply to shares, displayed as percentages. All averages are eligible for highlighting; Latest is excluded.",
         eu_power_rollup_table,
         power.drop(columns="Load").div(power.Load, axis=0),
         header="EU power share",

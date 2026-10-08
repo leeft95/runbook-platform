@@ -56,9 +56,13 @@ def rollup_table_hst(
     Each row links to full base history plus seasonal base/MA panels. The index
     heading links to all figures. ``plot_options`` goes to ``plot_rollup_seasonal``;
     historical summary columns reuse their base window's seasonal panel.
-    The 20d MA column uses the general table's summary-band highlights: compare
-    Latest with that calendar window's mean and sample standard deviation.
-    ``highlight_columns`` selects other current MA columns; [] disables bands.
+    Every MA column uses the general table's summary-band highlights: compare
+    Latest with that column's mean and sample standard deviation. Current and
+    Y-N columns use observations in their matching calendar window; NY columns
+    use the N prior yearly window averages. Latest itself is never highlighted.
+    ``highlight_columns`` selects a subset of MA columns; [] disables bands.
+    Highlights use numeric values independently of display format; missing or
+    zero dispersion leaves a cell without z-score highlighting.
     Use ``format_spec='{:.1%}'`` for shares and ``rules`` for domain overrides.
     Returns the ordinary named data/style/plots payload, with numeric values.
     """
@@ -76,10 +80,11 @@ def rollup_table_hst(
     frame = frame.apply(pd.to_numeric, errors="raise")
     values: dict[str, pd.Series] = {}
     windows: list[str] = []
-    current_windows: dict[str, str] = {}
+    benchmarks: dict[str, tuple[pd.Series, pd.Series]] = {}
 
-    def mean_at(window: str, date: pd.Timestamp) -> pd.Series:
-        return frame.loc[(frame.index > date - _calendar_offset(window)) & (frame.index <= date)].mean()
+    def sample_at(window: str, date: pd.Timestamp) -> pd.DataFrame:
+        """Select observations in a calendar window, including its end date."""
+        return frame.loc[(frame.index > date - _calendar_offset(window)) & (frame.index <= date)]
 
     for label in params:
         if label.strip().casefold() == "latest":
@@ -92,32 +97,36 @@ def rollup_table_hst(
         if window not in windows:
             windows.append(window)
         if history is None:
-            values[label] = mean_at(window, anchor)
-            current_windows[label] = window
+            sample = sample_at(window, anchor)
+            values[label] = sample.mean()
+            benchmarks[label] = (values[label], sample.std())
         else:
             history = history.upper()
             years = [int(history[2:])] if history.startswith("Y-") else range(1, int(history[:-1]) + 1)
             samples = [
-                mean_at(window, anchor - pd.DateOffset(years=year))
+                sample_at(window, anchor - pd.DateOffset(years=year))
                 for year in years
                 if anchor.year - year not in exclude_years
             ]
-            values[label] = pd.DataFrame(samples, columns=frame.columns).mean()
+            annual_means = pd.DataFrame([sample.mean() for sample in samples], columns=frame.columns)
+            values[label] = annual_means.mean()
+            dispersion = samples[0].std() if history.startswith("Y-") and samples else annual_means.std()
+            benchmarks[label] = (values[label], dispersion)
     result = pd.DataFrame(values)
     result.index.name = header
-    highlighted = (
-        [label for label, window in current_windows.items() if window == "20d"]
-        if highlight_columns is None
-        else list(highlight_columns)
-    )
-    if set(highlighted) - current_windows.keys():
-        raise ValueError("highlight_columns must select current moving-average columns")
+    highlighted = list(benchmarks) if highlight_columns is None else list(highlight_columns)
+    if set(highlighted) - benchmarks.keys():
+        raise ValueError("highlight_columns must select moving-average columns; Latest is not highlighted")
     hidden: list[str] = []
     targets: list[tuple[str, str, str, str]] = []
     for i, label in enumerate(highlighted):
         signal, mean, std = f"_rollup_{i}_latest", f"_rollup_{i}_mean", f"_rollup_{i}_std"
-        sample = frame.loc[frame.index > anchor - _calendar_offset(current_windows[label])]
-        result[signal], result[mean], result[std] = frame.iloc[-1], result[label], sample.std()
+        reference_mean, reference_std = benchmarks[label]
+        result[signal], result[mean], result[std] = (
+            frame.iloc[-1],
+            reference_mean,
+            reference_std.where(reference_std > 0),
+        )
         hidden.extend([signal, mean, std])
         targets.append((label, signal, mean, std))
     columns = list(result.columns)
