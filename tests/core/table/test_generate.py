@@ -860,6 +860,10 @@ def test_render_table_html_applies_global_styles_and_background_modes(one_bg_col
     assert "border: 2px solid black" in html
     assert "font-family: Calibri" in html
     assert "text-align: center" in html
+    border_selectors = [
+        selector for selectors, props in _extract_css_blocks(html) if "border-bottom" in props for selector in selectors
+    ]
+    assert border_selectors and all(selector.endswith("thead th") for selector in border_selectors)
 
     row0_col_a = _style_for_label(html, df, 0, "a")
     row1_col_a = _style_for_label(html, df, 1, "a")

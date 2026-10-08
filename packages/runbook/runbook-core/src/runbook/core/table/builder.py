@@ -906,7 +906,7 @@ def render_table_html(
 
     table_styles: list[dict[str, Any]] = [
         {
-            "selector": "th",
+            "selector": "thead th",
             "props": [
                 ("border-bottom", global_style.header_border_bottom),
                 ("font-size", global_style.font_size),
