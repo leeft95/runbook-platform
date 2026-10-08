@@ -26,8 +26,11 @@ def plot_cot_market(
     """Plot named markets with OHLC and optional volume/OI/holdings panels.
 
     Inputs are already-acquired frames. ``cot_start`` filters to a lookback
-    window and optionally shades the following seven days. All inputs are
-    sorted without filling missing observations or altering the caller's data.
+    window and optionally shades the following seven days on each panel.
+    Set it to the COT observation date minus seven days to highlight the
+    measured week, as in the COT reports. Price and volume/OI use 70/30 rows.
+    All inputs are sorted without filling missing observations or altering the
+    caller's data.
     Optional series with only missing values or zeros are omitted.
     """
     if not data:
@@ -99,6 +102,7 @@ def plot_cot_market(
         n_cols=len(data),
         row_heights={2: [0.7, 0.3], 3: [0.5, 0.3, 0.2]}.get(rows),
         shared_xaxes=True,
+        vertical_spacing=0.02,
         use_rangebreaks=False,
         legend_groups=True,
     )

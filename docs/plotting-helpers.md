@@ -37,7 +37,7 @@ plotting functions remain available.
 | Seasonal columns beside ordinary history | `plot_seasonal_with_history` |
 | COT net/long/short panels | `plot_cot_positions` |
 | COT long/short panels | `plot_cot_long_short` |
-| COT net-position/price panel | `plot_cot_net` |
+| COT net-position/price and OI panels | `plot_cot_net` |
 | OHLC, volume and open interest | `plot_market_ohlc` |
 | OHLC, open interest and holdings | `plot_market_holdings` |
 | Regression through the origin | `plot_regression_origin` |
@@ -262,7 +262,11 @@ forwarded to `plot_seasonal`; matching traces share legend controls. The
 optional history column spans the figure height and keeps actual dates on
 its own axis. `history_first=True` places it on the left.
 
-`plot_cot` defaults to two rows and three columns. Supply any non-empty list
+`plot_cot` defaults to two rows and three columns, with row heights `[0.7, 0.3]`:
+seasonal positions and price occupy the upper 70%; the OI ratio, historical
+band and optional Internal model estimate occupy the lower 30%. All three COT templates
+(`plot_cot_net`, `plot_cot_long_short`, `plot_cot_positions`) use this layout,
+with one, two or three columns respectively. Supply any non-empty list
 of panel specifications and one `plot_titles` entry per specification. Its
 input must contain the named main, price, and open-interest columns:
 
@@ -283,7 +287,13 @@ for all historical years, or another positive lookback. Short-position values
 retain their observation dates; they are not reversed along the time axis.
 For a single seasonal position/price panel, use
 `columns=[["Net", "PX_LAST"]], plot_titles=["Net"], rows=1`. Two-row panels
-require the OI field, with an optional fourth internal/CTA field.
+require the OI field, with an optional fourth Internal field.
+
+COT inputs use `Internal` for the internal model estimate. Its lower-panel
+legend and secondary axis also default to `Internal`. Pass
+`internal_label="Model name"` to any COT seasonal preset to override that
+placeholder without renaming the input column.
+
 
 ### COT price and regression figures
 
@@ -296,6 +306,22 @@ omitted. If both OI and holdings are supplied, holdings get a separate third
 row so their units remain independent. `cot_start` shows 76 days of prior
 history by default and shades the following seven days; `lookback_days` and
 `highlight=False` control those choices. These helpers never fetch market data.
+
+This is the equivalent of `cot_px_ohlc_chart` used by the legacy
+`new_reports/positioning/cot_cme.py` report. Price occupies the top 70%, with
+volume and OI below at 30%. The box spans both rows. Anchor it to the COT
+observation date, rather than the later publication date:
+
+```python
+import pandas as pd
+from runbook.core.plotting.templates import plot_market_ohlc
+
+cot_date = pd.Timestamp("2025-07-01")  # date the positions were measured
+market = plot_market_ohlc(
+    {"Brent": brent, "WTI": wti},
+    cot_start=cot_date - pd.Timedelta(days=7),
+)
+```
 
 ```python
 regression = plot_regression(changes, x="Net position change", y="Price change", title="Price vs positioning")

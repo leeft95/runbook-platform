@@ -417,6 +417,10 @@ def test_plot_cot_builds_two_by_three_layout_with_secondary_axes(tick_settings) 
     assert {"x", "x2", "x3", "x4", "x5", "x6"}.issubset(xaxes)
     assert "y2" in yaxes
     assert "y8" in yaxes
+    for col in range(1, 4):
+        top = fig.get_subplot(1, col).yaxis.domain
+        bottom = fig.get_subplot(2, col).yaxis.domain
+        assert (top[1] - top[0]) / (bottom[1] - bottom[0]) == pytest.approx(0.7 / 0.3)
     for axis in fig.select_xaxes():
         assert axis.dtick == tick_settings.get("dtick")
         assert axis.tickformat == tick_settings.get("tickformat")

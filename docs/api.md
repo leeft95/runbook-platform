@@ -129,6 +129,9 @@ while a host-owned Dash route resolver handles the same logical destinations.
 .. automodule:: runbook.core.table.templates.reports
    :members:
 
+.. automodule:: runbook.core.cot
+   :members:
+
 .. automodule:: runbook.core.table.templates.rollup
    :members: rollup_table_hst
 

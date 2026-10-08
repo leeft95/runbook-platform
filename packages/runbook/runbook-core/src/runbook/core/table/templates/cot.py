@@ -28,13 +28,14 @@ from ..models import (
 from .common import color_negative_red, highlight
 
 
-def cot_table(
+def cot_summary_table(
     summary: pd.DataFrame,
     header: str = "COT",
     *,
     label_column: str = "Asset",
     position_column: str = "Net Position",
     position_label: str | None = None,
+    internal_change_label: str = "Internal Change",
     group_column: str | None = None,
     plot_links: Mapping[str, str] | None = None,
 ) -> dict[str, dict[str, Any]]:
@@ -43,6 +44,8 @@ def cot_table(
     ``label_column`` and ``position_column`` accept existing ECM summary names
     without recalculating the data. Use ``position_label`` to optionally rename
     the displayed net-position column for managed money, dealers or funds.
+    Legacy ``CTA Change`` summaries display as ``Internal Change``; override
+    ``internal_change_label`` when the model's final name is known.
     Optional noncommercial positions are displayed next to the asset name.
     ``group_column`` adds a separator after each contiguous instrument group;
     it is hidden along with calculation helpers. ``plot_links`` maps asset
@@ -54,8 +57,8 @@ def cot_table(
     if label_column not in summary or position_column not in summary or label_column == position_column:
         raise ValueError("summary requires distinct label and net-position columns")
     position_label = position_column if position_label is None else position_label
-    if not header.strip() or not position_label.strip():
-        raise ValueError("header and position_label must not be blank")
+    if not header.strip() or not position_label.strip() or not internal_change_label.strip():
+        raise ValueError("header, position_label and internal_change_label must not be blank")
     if position_label != position_column and position_label in summary.columns:
         raise ValueError("position_label must not collide with another summary column")
     frame = summary.copy().reset_index(drop=True)
@@ -67,6 +70,11 @@ def cot_table(
     ]
     frame = frame[columns + [col for col in frame if col not in columns]]
     frame = frame.rename(columns={position_column: position_label})
+    internal_column = "Internal Change" if "Internal Change" in frame else "CTA Change"
+    if internal_column in frame:
+        if internal_change_label != internal_column and internal_change_label in frame:
+            raise ValueError("internal_change_label must not collide with another summary column")
+        frame = frame.rename(columns={internal_column: internal_change_label})
     hidden = [
         col
         for col in frame
@@ -101,7 +109,7 @@ def cot_table(
     }
     decimals = {
         "Ref Week VWAP",
-        "CTA Change",
+        internal_change_label,
         "Long Short Ratio",
         "net change z score",
         "4w price change z score",
@@ -204,3 +212,7 @@ def cot_table(
         links=links,
     )
     return {header: {"data": frame, "style": style.model_dump(mode="python", exclude_none=True), "plots": []}}
+
+
+# Compatibility with the v0.3.2.2 public name.
+cot_table = cot_summary_table

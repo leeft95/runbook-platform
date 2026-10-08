@@ -63,6 +63,15 @@ def test_cot_alignment_does_not_fill_positions_or_look_ahead() -> None:
     assert prepared["Net OI"].iloc[0] == pytest.approx(50 / 30000)
 
 
+def test_internal_model_estimate_and_weekly_change_keep_placeholder_names() -> None:
+    data = _observations()
+    prepared = prepare_cot_data(data, position_scale=0.25)
+    pd.testing.assert_series_equal(prepared.Internal, data.Internal)
+    summary = cot_summary(data, "Asset")
+    assert summary["Internal Change"].iloc[0] == pytest.approx(data.Internal.diff().iloc[-1])
+    assert "CTA Change" not in summary
+
+
 def test_cot_missing_history_and_zero_denominators_remain_missing() -> None:
     data = pd.DataFrame({"Long": [10.0], "Short": [0.0], "OI": [0.0]}, index=pd.to_datetime(["2025-03-04"]))
     result = cot_summary(data, "New asset")

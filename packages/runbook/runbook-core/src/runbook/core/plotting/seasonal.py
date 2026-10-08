@@ -306,16 +306,19 @@ def plot_cot(
     history_years: int | None = 5,
     *,
     rows: int = 2,
+    internal_label: str = "Internal",
 ) -> plotly.graph_objs._figure.Figure:
-    """Build COT panels (three columns and two rows by default):
+    """Build COT panels (three columns and two rows, weighted 70/30, by default):
     - Top row: seasonal position overlays + current-year price (secondary y)
-    - Bottom row: current-year position/oi + historical oi min/max band + CTA LN4 (secondary y)
+    - Bottom row: current-year position/oi + historical oi min/max band + Internal estimate (secondary y)
 
     The band uses the previous five available years by default. Set
     ``history_years=None`` to include all history. Observation dates are preserved
     for every series, including short positions.
     Supply one or more column specifications and matching titles. ``rows=1``
     omits the OI panel and allows specifications containing only position/price.
+    Supply the model estimate in the ``Internal`` input column.
+    ``internal_label`` overrides the model's placeholder legend and axis title.
     """
     if not isinstance(data, pd.DataFrame):
         raise TypeError("data must be a pandas DataFrame.")
@@ -323,6 +326,8 @@ def plot_cot(
         raise TypeError("data index must be a pandas DatetimeIndex.")
     if rows not in {1, 2}:
         raise ValueError("rows must be 1 or 2.")
+    if not internal_label.strip() or internal_label in {"price", "Net/OI", "Max", "Min"}:
+        raise ValueError("internal_label must be nonblank and distinct from the other plotted series")
     if history_years is not None and history_years < 1:
         raise ValueError("history_years must be positive or None.")
 
@@ -372,7 +377,7 @@ def plot_cot(
             "line": {"color": "black", "width": 1.5, "dash": "dash"},
             "secondary_y": True,
         },
-        "CTA LN4": {
+        internal_label: {
             "line": {"color": "blue", "width": 1.6},
             "mode": "lines+markers",
             "secondary_y": True,
@@ -447,7 +452,7 @@ def plot_cot(
             internal_by_year = ts_by_year(working[internal_col], frequency=freq, dummy_date_index=True)
             if current_year in internal_by_year.columns:
                 internal_current = internal_by_year[current_year].reindex(bottom_df.index)
-                bottom_df["CTA LN4"] = internal_current
+                bottom_df[internal_label] = internal_current
 
         plot_defs.append(
             PlotlyPlotDef(
@@ -467,9 +472,10 @@ def plot_cot(
         n_rows=n_rows,
         n_cols=n_cols,
         auto_layout=False,
+        row_heights=_row_heights_for_rows(n_rows),
         shared_xaxes=True,
         vertical_spacing=0.02,
-        horizontal_spacing=0.08,
+        horizontal_spacing=min(0.12, 1 / n_cols),
         tickformat=tickformat,
         dtick=dtick,
         use_rangebreaks=False,
@@ -482,7 +488,7 @@ def plot_cot(
         fig.update_yaxes(title_text="Price", row=1, col=col, secondary_y=True)
         if rows == 2:
             fig.update_yaxes(title_text="Net/OI", row=n_rows, col=col, secondary_y=False)
-            fig.update_yaxes(title_text="CTA LN4", row=n_rows, col=col, secondary_y=True)
+            fig.update_yaxes(title_text=internal_label, row=n_rows, col=col, secondary_y=True)
     return fig
 
 

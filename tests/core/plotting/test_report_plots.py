@@ -124,6 +124,15 @@ def test_cot_market_reuses_mixed_ohlc_volume_and_secondary_axes() -> None:
     assert volume.type == "bar" and oi.yaxis != volume.yaxis
     assert len(figure.layout.shapes) == 4
     assert all(shape.x0 == pd.Timestamp("2025-03-01") for shape in figure.layout.shapes)
+    assert all(shape.x1 == pd.Timestamp("2025-03-08") for shape in figure.layout.shapes)
+    assert {shape.xref for shape in figure.layout.shapes} == {"x", "x2", "x3", "x4"}
+    assert all(shape.y0 == 0 and shape.y1 == 1 and shape.yref.endswith(" domain") for shape in figure.layout.shapes)
+    for col in (1, 2):
+        top = figure.get_subplot(1, col).yaxis.domain
+        bottom = figure.get_subplot(2, col).yaxis.domain
+        assert (top[1] - top[0]) / (bottom[1] - bottom[0]) == pytest.approx(0.7 / 0.3)
+        assert top[0] - bottom[1] == pytest.approx(0.02)
+    assert not plot_cot_market({"Brent": data}, cot_start="2025-03-01", highlight=False).layout.shapes
     assert not any(axis.rangeslider.visible for axis in figure.select_xaxes())
     pd.testing.assert_frame_equal(data, original)
     only = plot_cot_market({"Price": data.drop(columns=["VOLUME", "FUT_AGGTE_OPEN_INT"])}, highlight=False)

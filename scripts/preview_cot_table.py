@@ -7,7 +7,8 @@ import tempfile
 from pathlib import Path
 
 import pandas as pd
-from runbook.core.table import TableStylePlan, cot_table, render_table_html
+from runbook.core.table import TableStylePlan, render_table_html
+from runbook.core.table.templates import cot_cme_summary_table
 
 
 def main() -> None:
@@ -17,11 +18,9 @@ def main() -> None:
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     summary = pd.read_csv(root / "data/fixtures/cot/summary.csv")
-    payload = cot_table(
+    payload = cot_cme_summary_table(
         summary,
         header="Speculators Net Position (Managed money)",
-        label_column="24-Jun to 01-Jul",
-        position_column="Net Position (MM)",
         group_column="Group",
     )["Speculators Net Position (Managed money)"]
     plan = TableStylePlan.model_validate(payload["style"])

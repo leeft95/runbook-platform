@@ -51,7 +51,7 @@ from runbook.core.table.models import (
     validate_link_url,
 )
 from runbook.core.table.templates import rollup_table_hst, table_with_link_monthly
-from runbook.core.table.templates.cot import cot_table
+from runbook.core.table.templates.cot import cot_summary_table, cot_table
 from runbook.core.table.templates.common import (
     band_compare_rules,
     color_negative_red,
@@ -114,6 +114,7 @@ __all__ = [
     "band_compare_rules",
     "color_negative_red",
     "cot_table",
+    "cot_summary_table",
     "column_compare_rules",
     "highlight",
     "highlight_on_key",

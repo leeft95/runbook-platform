@@ -5,13 +5,13 @@ from types import SimpleNamespace
 import pandas as pd
 from runbook.core.pdl.models import PDLTableBlock
 from runbook.core.storage import BlobStore
-from runbook.core.table import TableStylePlan, cot_table
+from runbook.core.table import TableStylePlan, cot_summary_table
 from runbook.sdk.extensions.dash.renderer import _build_native_table
 
 
 def test_cot_shared_plan_reaches_native_dash_with_formats_rules_and_links(tmp_path) -> None:
     frame = pd.read_csv("data/fixtures/cot/summary.csv")
-    payload = cot_table(
+    payload = cot_summary_table(
         frame,
         label_column="24-Jun to 01-Jul",
         position_column="Net Position (MM)",

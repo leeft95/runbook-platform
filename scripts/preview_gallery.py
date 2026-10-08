@@ -36,19 +36,24 @@ from runbook.core.plotting.templates import (
 )
 from runbook.core.table import TableStylePlan, render_table_html
 from runbook.core.table.templates import (
-    cot_table,
-    cot_observations_table,
-    cot_position_changes_table,
-    cot_position_divergence_table,
-    daily_prices_table,
-    inventory_summary_table,
-    flow_quarterly_table,
+    cot_cme_summary_table,
+    cot_ice_mifid_summary_table,
+    cot_cme_timeseries_table,
+    cot_ice_mifid_timeseries_table,
+    cot_cme_position_change_table,
+    cot_cme_position_divergence_table,
+    oil_dashboard_table,
+    kpler_inventory_table,
+    russia_exports_table,
     flow_monthly_table,
-    monthly_consensus_table,
+    kpler_inventory_consensus_table,
+    product_inventory_consensus_table,
     mtd_inventory_table,
-    grouped_metrics_table,
-    rollup_table_hst,
+    oil_on_water_table,
+    futures_price_range_table,
+    eu_power_rollup_table,
 )
+from runbook.core.cot import analysis, analysis_mifid
 from runbook.core.timeseries.cot import prepare_cot_data
 
 
@@ -132,54 +137,84 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     fixture.loc[[1, 3], "Weekly Price Change"] *= -1
     fixture.loc[[1, 3], "_price_chg"] = 1
     cot_options = dict(label_column="24-Jun to 01-Jul", position_column="Net Position (MM)", group_column="Group")
+    analysis_inputs = {
+        name: positions * (1 + i * 0.05)
+        for i, name in enumerate(["Brent Fut", "Brent Fut+Opt", "WTI Fut", "WTI Fut+Opt"])
+    }
+    analysis_groups = {name: name.split()[0] for name in analysis_inputs}
+    analysis_links = {name: "cot-net" for name in analysis_inputs}
+    analysis_summary = analysis(analysis_inputs, summary_options={"contract_value": 1000}, asset_groups=analysis_groups)
+    mifid_inputs = {
+        name: positions.drop(columns=["NC Long", "NC Short"]) * (1 + i * 0.1)
+        for i, name in enumerate(["TTF Fut+Opt", "EUA Fut+Opt", "LME Copper Fut+Opt", "LME Aluminium Fut+Opt"])
+    }
+    mifid_groups = {name: "Metals" if name.startswith("LME") else "Energy" for name in mifid_inputs}
+    mifid_summary = analysis_mifid(mifid_inputs, summary_options={"contract_value": 1000}, asset_groups=mifid_groups)
     table(
         "cot",
-        "COT · managed money",
-        "Complete summary, noncommercial positions, hidden signals, group borders and linked asset names. Scroll sideways to see every measure.",
-        cot_table,
-        fixture,
-        plot_links={label: "cot-net" for label in fixture.iloc[:, 0]},
-        **cot_options,
+        "COT · analysis summary (CME / ICE / macro)",
+        "Four precomputed analysis rows, built in report order from the same synthetic data as the time-series example below.",
+        cot_cme_summary_table,
+        analysis_summary,
+        plot_links=analysis_links,
+        group_column="Group",
     )
     table(
         "cot-calculated",
-        "COT · calculated from observations",
-        "The same synthetic Long/Short/OI/price inputs, with standard and MiFID dispersion windows.",
-        cot_observations_table,
-        {"Standard · 52 observations": positions, "MiFID · 208 observations": positions},
+        "COT · analysis from time series (CME / ICE / macro)",
+        "The report pipeline: calculate Brent/WTI Fut and Fut+Opt rows, concatenate, then use the same summary formatter. Matches the table above.",
+        cot_cme_timeseries_table,
+        analysis_inputs,
         summary_options={"contract_value": 1000},
-        asset_options={"MiFID · 208 observations": {"change_window": 208}},
+        asset_groups=analysis_groups,
+        plot_links=analysis_links,
+    )
+    table(
+        "cot-mifid-summary",
+        "COT · analysis_mifid summary (ICE MiFID / EUA-TTF / LME)",
+        "Four precomputed investment-fund rows from the same synthetic TTF/EUA/LME inputs as the time-series example below.",
+        cot_ice_mifid_summary_table,
+        mifid_summary,
+        group_column="Group",
+    )
+    table(
+        "cot-mifid-calculated",
+        "COT · analysis_mifid from time series (ICE MiFID / EUA-TTF / LME)",
+        "The MiFID report pipeline with 208-observation position scores. Rows, columns, values and styling match the summary above.",
+        cot_ice_mifid_timeseries_table,
+        mifid_inputs,
+        summary_options={"contract_value": 1000},
+        asset_groups=mifid_groups,
     )
     table(
         "cot-changes",
-        "COT · large position moves",
-        "A score threshold of 2.15 selects the strongest four-week changes from the fixture.",
-        cot_position_changes_table,
+        "COT · position_change alerts (CME / macro)",
+        "Already-calculated summary rows; a 2.15 score threshold selects the strongest four-week position changes.",
+        cot_cme_position_change_table,
         fixture,
         threshold=2.15,
         **cot_options,
     )
     table(
         "cot-divergence",
-        "COT · price / position divergence",
-        "Only instruments whose weekly price and position changes have opposite signs.",
-        cot_position_divergence_table,
+        "COT · position_divergence alerts (CME / macro)",
+        "Already-calculated summary rows whose weekly price and position changes have opposite signs.",
+        cot_cme_position_divergence_table,
         fixture,
         **cot_options,
     )
     table(
         "daily",
-        "Daily prices · linked table",
-        "Dated prices, a moving-average summary, change highlights, footer and clickable chart headings.",
-        daily_prices_table,
+        "Oil dashboard · daily linked prices",
+        "oil/dashboard.py: ten daily prices, a 20-observation MA, change highlights and linked seasonal charts.",
+        oil_dashboard_table,
         price.tail(130),
-        chart_columns={"Brent": 20, "WTI": price[["Spread"]], "Spread": "line"},
         footer="Synthetic observations · 1 July 2025",
     )
     chart(
         "daily-ma",
         "Daily line with moving average",
-        "The daily table's Brent chart uses a 20-observation moving-average overlay.",
+        "Optional daily-chart template: a 20-observation moving-average overlay on Brent.",
         plot_line_with_moving_average,
         price.Brent.tail(130),
         window=20,
@@ -195,9 +230,9 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
 
     table(
         "inventory",
-        "Inventory · seasonal comparisons",
-        "20-observation changes, mixed flow averages, completed months and quarters, QTD, Y−1 and five-year comparisons excluding 2020.",
-        inventory_summary_table,
+        "Kpler inventory · seasonal stock comparisons",
+        "oil/kpler_inventory.py: 20-observation changes, mixed flow averages, three months, four quarters, QTD, Y−1/5Y excluding 2020.",
+        kpler_inventory_table,
         daily,
         aggregation_columns={"Refinery runs": "mean"},
         exclude_years=[2020],
@@ -205,16 +240,16 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     flows = pd.DataFrame({"Exports": 1500 + 200 * np.sin(t / 47), "Imports": 1800 + 150 * np.cos(t / 53)}, index=dates)
     table(
         "flow-quarter",
-        "Flows · quarter benchmark",
-        "10- and 20-observation averages with a Q1 benchmark and rolling-history highlights.",
-        flow_quarterly_table,
+        "Russia / OPEC exports · quarter benchmark",
+        "oil/russia_exports.py and opec_exports.py: 10/20-observation averages, five months and 92-observation highlights versus a supplied quarter.",
+        russia_exports_table,
         flows,
         benchmark_quarter="2025Q1",
     )
     table(
         "flow-month",
-        "Flows · month benchmark",
-        "Rolling sums and completed-month totals, with an explicit May benchmark.",
+        "Generic example · monthly flow totals",
+        "Generic builder example: rolling sums and completed-month totals versus May. No matching source report identified.",
         flow_monthly_table,
         flows / 100,
         benchmark_month="2025-05-01",
@@ -223,35 +258,56 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     consensus["_last_update"] = "2025-07-01"
     table(
         "monthly",
-        "Monthly consensus",
-        "One-month changes with quarterly history, QTD and same-month year comparisons. Update metadata stays hidden.",
-        monthly_consensus_table,
+        "Kpler inventory · monthly consensus",
+        "oil/kpler_inventory.py: monthly balances, quarterly means, QTD and year comparisons. Use aggregation_type='diff' for the US crude variant.",
+        kpler_inventory_consensus_table,
         consensus,
     )
     table(
+        "product-consensus",
+        "Product inventory · monthly consensus levels",
+        "oil/product_inventory.py: US product balances as monthly and quarter-end levels, with QTD and three quarters of history.",
+        product_inventory_consensus_table,
+        consensus[["Product stocks", "_last_update"]],
+    )
+    table(
         "mtd",
-        "Stocks · MTD basis",
-        "Each rolling average is measured from the previous calendar month-end. This example is pinned to 24 June.",
+        "Generic example · MTD stock changes",
+        "Generic builder example: changes from the prior month-end, pinned to 24 June. This differs from the oil-on-water report calculation.",
         mtd_inventory_table,
         daily[["Crude stocks", "Product stocks"]],
         as_of="2025-06-24",
     )
 
-    columns = pd.MultiIndex.from_product([["January", "February"], ["Latest", "Change"]], names=["Month", "Metric"])
-    index = pd.MultiIndex.from_product([["Europe", "US"], ["Returns", "Spread"]], names=["Region", "Measure"])
-    grouped = pd.DataFrame(
-        [[0.125, -0.2, 0.2, 0.35], [10.25, -0.5, 11.5, 0.1], [0.05, 0.7, 0.08, -0.25], [15.5, 0.8, 17.25, -0.8]],
-        index=index,
-        columns=columns,
+    water = daily[["Crude stocks", "Product stocks"]].copy()
+    water["Total"] = water.sum(axis=1)
+    water["Total MTD Chg"] = water.Total
+    table(
+        "oil-on-water",
+        "Oil on water · levels and total change",
+        "oil/oil_on_water.py: 20-observation averages, with a difference for the report's Total MTD Chg row; three quarters, QTD and 92-observation highlights.",
+        oil_on_water_table,
+        water,
+    )
+
+    price_ranges = pd.DataFrame(
+        {
+            "Current price vs history": ["Brent M1", "Brent M1–M2", "WTI M1", "WTI M1–M2"],
+            "Current Price": [72.25, 0.55, 68.40, -0.25],
+            "Percentile of 10yr Range": [0.35, 0.70, -0.25, -0.60],
+            "Z-score of 10yr Range": [0.65, 1.25, -0.40, -1.10],
+            "10yr Avg Price": [68.10, 0.25, 71.30, 0.10],
+            "10yr Max": [105.0, 1.50, 102.0, 1.25],
+            "10yr Min": [35.0, -1.00, 32.0, -1.20],
+        },
     )
     table(
-        "grouped",
-        "Grouped table · mixed formats and data bars",
-        "MultiIndex rows and columns, percentage versus numeric row formats, signed bars and centered alignment. Compare all three renderers below.",
-        grouped_metrics_table,
-        grouped,
-        percentage_rows=(0, 2),
-        bar_columns=(columns[1], columns[3]),
+        "price-range",
+        "Futures price range · signed percentile bars",
+        "cross_cmds/futures_price_range.py: calculated price-range rows, percentage bars on −1 to +1, two-decimal prices/z-scores and instrument group separators.",
+        futures_price_range_table,
+        price_ranges,
+        separator_rows=(1,),
     )
 
     chart(
@@ -288,7 +344,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     chart(
         "cot-full",
         "COT · net, long and short",
-        "Three position columns with price overlays, OI ratios, previous-five-year bands and an internal/CTA series.",
+        "Three position columns with price overlays, OI ratios, previous-five-year bands and an Internal model estimate.",
         plot_cot_positions,
         prepared,
         start=pd.Timestamp("2020-01-01"),
@@ -303,8 +359,8 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     )
     chart(
         "cot-net",
-        "COT · single position / price panel",
-        "A one-row COT variant without the OI panel. Linked COT asset names open this example.",
+        "COT · net position and OI",
+        "Two stacked panels at 70/30: seasonal position/price above OI and Internal. Linked COT asset names open this example.",
         plot_cot_net,
         prepared,
         start=pd.Timestamp("2020-01-01"),
@@ -323,11 +379,11 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     )
     chart(
         "market",
-        "OHLC · volume and open interest",
-        "Two markets, independent price and OI scales, volume bars and a shaded COT reference week.",
+        "COT · OHLC measurement week",
+        "Price above volume/OI in a 70/30 layout. The box highlights 24 June–1 July, the week measured by the latest COT observation.",
         plot_market_ohlc,
         {"Brent": ohlc, "WTI": ohlc * 0.9},
-        cot_start="2025-06-10",
+        cot_start=prepared.index[-1] - pd.Timedelta(days=7),
     )
     chart(
         "market-holdings",
@@ -335,7 +391,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         "Holdings get their own third row when open interest is also supplied.",
         plot_market_holdings,
         {"Commodity fund": ohlc.assign(HOLDINGS=1500 + np.arange(len(ohlc)) * 3)},
-        cot_start="2025-06-10",
+        cot_start=prepared.index[-1] - pd.Timedelta(days=7),
     )
     changes = pd.DataFrame(
         {"Price change (%)": prepared.PX_LAST.pct_change(fill_method=None) * 100, "Net change": prepared.Net.diff()}
@@ -402,7 +458,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         "rollup-power",
         "Power · calendar roll-ups",
         "Latest, 5-day / 20-day / 3-month averages, and matching prior-year windows. Each row opens full history and seasonal base/average panels.",
-        rollup_table_hst,
+        eu_power_rollup_table,
         power,
         header="EU power",
     )
@@ -410,7 +466,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         "rollup-share",
         "Power shares · calendar roll-ups",
         "The same template accepts a time-series DataFrame of shares and formats the roll-ups as percentages.",
-        rollup_table_hst,
+        eu_power_rollup_table,
         power.drop(columns="Load").div(power.Load, axis=0),
         header="EU power share",
         format_spec="{:.1%}",
@@ -574,7 +630,7 @@ def serve_gallery(output: Path, tables: list[dict[str, Any]], port: int) -> None
             dcc.Dropdown(
                 id="table-choice",
                 options=[{"label": x["title"], "value": x["key"]} for x in tables],
-                value="grouped",
+                value="price-range",
                 clearable=False,
             ),
             html.Div(id="table-comparison"),

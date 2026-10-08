@@ -34,32 +34,64 @@ general builders. Preset options can be overridden using the underlying
 builder's keyword arguments. Data, dates, exclusions and benchmarks are supplied
 by the caller; templates contain no fixture data or fixed report dates.
 
-| Preview | Template function |
-| --- | --- |
-| COT managed-money summary | `cot_table` |
-| COT calculated from observations | `cot_observations_table` |
-| COT large position moves | `cot_position_changes_table` |
-| COT price/position divergence | `cot_position_divergence_table` |
-| Daily linked prices | `daily_prices_table` |
-| Inventory seasonal comparisons | `inventory_summary_table` |
-| Flow averages versus a quarter | `flow_quarterly_table` |
-| Flow totals versus a month | `flow_monthly_table` |
-| Monthly consensus | `monthly_consensus_table` |
-| Stocks on an MTD basis | `mtd_inventory_table` |
-| Grouped axes, percentage rows and data bars | `grouped_metrics_table` |
-| Calendar roll-ups, including percentage shares | `rollup_table_hst` |
+| Source report / reference | Public preset | Expected input / calculation |
+| --- | --- | --- |
+| `positioning/cot_cme.py`, `cot_ice.py`, `cot_macro.py` | `cot_cme_timeseries_table`, `cot_ice_timeseries_table`, `cot_macro_timeseries_table` | Dictionary of dated Long/Short frames; `runbook.core.cot.analysis` (52 observations) |
+| Same reports, already calculated | `cot_cme_summary_table`, `cot_ice_summary_table`, `cot_macro_summary_table` | Existing `analysis` summary rows |
+| `positioning/cot_ice_mifid.py`, `cot_euattf.py`, `cot_lme.py` | `cot_ice_mifid_timeseries_table`, `cot_euattf_timeseries_table`, `cot_lme_timeseries_table` | Dictionary of dated Long/Short frames; `analysis_mifid` (208 observations) |
+| Same reports, already calculated | `cot_ice_mifid_summary_table`, `cot_euattf_summary_table`, `cot_lme_summary_table` | Existing `analysis_mifid` summary rows |
+| CME / macro alerts | `cot_cme_position_change_table`, `cot_macro_position_change_table`; `cot_cme_position_divergence_table`, `cot_macro_position_divergence_table` | Summary rows screened by `position_change` / `position_divergence` |
+| `oil/dashboard.py` | `oil_dashboard_table` | Daily prices; ten rows, 20-observation MA, linked seasonal charts |
+| `oil/kpler_inventory.py`, `product_inventory.py` | `kpler_inventory_table`, `product_inventory_table` | Prepared daily stocks; 20-observation changes, three months, four quarters, QTD, Y-1/5Y; excludes 2020 |
+| Consensus rows in those inventory reports | `kpler_inventory_consensus_table`, `product_inventory_consensus_table` | Monthly balances; Kpler global crude uses means, product consensus uses levels; three quarters; `aggregation_type="diff"` for US crude |
+| `oil/russia_exports.py`, `opec_exports.py`, `clean_exports.py`, `oil_demand_centres.py` | `russia_exports_table`, `opec_exports_table`, `clean_exports_table`, `oil_demand_centres_table` | Prepared daily flows; 10/20-observation means, five months, 92-observation highlights, supplied quarter benchmark |
+| `oil/oil_on_water.py` | `oil_on_water_table` | Prepared regional levels; 20-observation means, differences for `Total MTD Chg`, three quarters, QTD |
+| `cross_cmds/futures_price_range.py` | `futures_price_range_table` | Calculated price-range rows; signed percentile bars, two-decimal prices/z-scores and optional group separators |
+| Supplied EU power-stack reference | `eu_power_rollup_table` | One dated frame of levels or ratios; calendar roll-ups and linked history/seasonal plots |
+
+Report names with identical calculations and defaults are aliases of one preset. Their
+source paths are relative to `new_reports/`. `eu_power_rollup_table` comes from
+the supplied reference, not a recovered report file. Each docstring states
+which prepared data the report passes in: provider fetching, totals, participant
+aggregation, units and any upstream smoothing remain the caller's responsibility.
+This is a catalog of implemented presets, not a port of every custom table in
+`new_reports`; some recovered report/helper sections are incomplete.
 
 ```python
-from runbook.core.table.templates import inventory_summary_table, flow_quarterly_table
+from runbook.core.table.templates import kpler_inventory_table, russia_exports_table
 
-inventory = inventory_summary_table(stock_history, "Stocks", exclude_years=[2020])
-flows = flow_quarterly_table(flow_history, "Flows", benchmark_quarter="2026Q2")
+inventory = kpler_inventory_table(
+    stock_history, "Stocks", aggregation_columns={"Total (kbd)": "mean"}
+)
+flows = russia_exports_table(flow_history, "Flows", benchmark_quarter="2025Q4")
 ```
 
-`cot_observations_table` takes a mapping of asset names to observation frames.
-Use `summary_options` for shared calculation parameters and `asset_options`
-for per-asset overrides, such as `{"MiFID": {"change_window": 208}}`.
-`grouped_metrics_table` accepts arbitrary pandas Index/MultiIndex axes,
+The original generic presets remain available with their existing defaults:
+`daily_prices_table`, `inventory_summary_table`, `flow_quarterly_table`,
+`flow_monthly_table`, `monthly_consensus_table`, `mtd_inventory_table`,
+`grouped_metrics_table` and `rollup_table_hst`. The monthly-sum and true-MTD
+gallery cards are explicitly generic examples: no matching
+source report was found for those exact presets. In particular, the source
+`oil_on_water.py` names a row **Total MTD Chg** but calculates a 20-observation
+difference; it does not enable the builder's true month-to-date mode.
+
+COT calculation-family names (`cot_analysis_*`, `cot_analysis_mifid_*`) remain
+aliases of the report presets. `cot_timeseries_table` remains the generic
+calculator and `cot_summary_table` the generic summary styler. Use
+`summary_options` for shared calculation parameters and `asset_options` for
+per-asset overrides. Summary presets preserve supplied scores and windows.
+`futures_price_range_table` is the report preset for the signed data-bar preview.
+It accepts the source report's calculated columns: `Current price vs history`,
+`Current Price`, `Percentile of 10yr Range`, `Z-score of 10yr Range`,
+`10yr Avg Price`, `10yr Max` and `10yr Min`. Use `history_years` for another
+history horizon, and `separator_rows` for zero-based group boundaries.
+Prices and scores retain two decimals; percentile bars span −1 to +1 and
+display one decimal percent. All columns, including instrument names, are centered.
+`Current price vs history` becomes the row index, replacing the input RangeIndex.
+The template preserves calculated values; contract-history selection and
+percentile calculations stay with the caller.
+
+Its lower-level helper `grouped_metrics_table` remains available and accepts arbitrary pandas Index/MultiIndex axes,
 `percentage_rows` as row positions, and `bar_columns` as actual column labels.
 
 ## Calendar roll-up table
@@ -133,7 +165,7 @@ Runbook provides them through shared models and dataset-first helpers:
 
 | ECM capability | Runbook implementation |
 | --- | --- |
-| COT summary calculations, rank/threshold highlights, section boundaries, hidden signals, linked asset names | `cot_summary`, `cot_position_changes`, `cot_position_divergence`, and `cot_table` |
+| COT summary calculations, rank/threshold highlights, section boundaries, hidden signals, linked asset names | `cot_summary`, `cot_position_changes`, `cot_position_divergence`, and `cot_summary_table` |
 | Custom numeric formats by row/cell, grouped axes, in-cell bars | `TableRowFormat`, pandas MultiIndex inputs, and `TableAction(data_bar=...)` across HTML, native Dash, and AG Grid |
 | Inventory `table_format1`, monthly consensus, flow `table_format2`, month/quarter benchmarks | Options on `table_with_linked_plots_monthly` |
 | Daily linked tables with MA/comparison charts, footer, and label widths | `general_table_with_link` |
@@ -534,19 +566,34 @@ add semantic column metadata; see [Interactive reports](pdl-interactive.md).
 
 ## COT tables from existing summary data
 
-`cot_table` reproduces the COT table presentation through the shared
+The report presets map directly to the ECM calculation families:
+
+| ECM quant helper | Runbook table presets | Reports in `new_reports/positioning` | Input / defaults |
+| --- | --- | --- | --- |
+| `cot.analysis` | `cot_cme_summary_table`, `cot_cme_timeseries_table` | `cot_cme.py`, `cot_ice.py`, `cot_macro.py`; `cot_cme_monday.py` calls CME/macro | Summary: `Net Position (MM)`, optional `Net Position (NC)`. Time series: 52-observation position scores. |
+| `cot.analysis_mifid` | `cot_ice_mifid_summary_table`, `cot_ice_mifid_timeseries_table` | `cot_ice_mifid.py`, `cot_euattf.py`, `cot_lme.py` | Summary: `Net Position`. Time series: 208-observation position scores. |
+| `cot.position_change` | `cot_cme_position_change_table` | `cot_cme.py:update_cme`, `cot_macro.py:update_macro` | Summary rows with `net change z score` and `4w delta change z score`; threshold defaults to 1.5. |
+| `cot.position_divergence` | `cot_cme_position_divergence_table` | `cot_cme.py:update_cme`, `cot_macro.py:update_macro` | Summary rows with `Weekly Delta Change` and `Weekly Price Change`; selects opposite signs. |
+
+The analysis summary presets use the first column as the instrument label,
+matching ECM's date-range heading. Both accept `label_column` and
+`position_column` overrides. CME/ICE dealer reports use the standard
+`analysis` calculation with `header="Swap Dealers Net Position"`; macro uses
+`header="Speculators Net Position"`. The calculation family determines the
+preset, rather than the exchange name alone.
+
+`cot_summary_table` supplies their shared presentation through the
 `TableStylePlan`, `TableRule`, formatting, sizing, and semantic-link models.
 It accepts already-calculated summaries; it does not require new COT analytics
 or access any data provider. The same plan works in HTML and native Dash tables.
 
 ```python
-from runbook.core.table import TableStylePlan, cot_table, render_table_html
+from runbook.core.table import TableStylePlan, render_table_html
+from runbook.core.table.templates import cot_cme_summary_table
 
-payload = cot_table(
+payload = cot_cme_summary_table(
     cot_summary_frame,
     header="Speculators Net Position (Managed money)",
-    label_column=cot_summary_frame.columns[0],  # e.g. "24-Jun to 01-Jul"
-    position_column="Net Position (MM)",
     group_column="Group",  # caller-supplied instrument groups, hidden in output
     plot_links={"Brent Fut": "cot-brent", "Brent Fut+Opt": "cot-brent"},
 )["Speculators Net Position (Managed money)"]
@@ -599,13 +646,102 @@ pixi run python scripts/preview_cot_table.py --output-dir /tmp/runbook-cot-previ
 This writes `index.html` and the reusable `style.json` from
 `data/fixtures/cot/summary.csv`. The fixture contains no production data.
 
-For new calculations, `runbook.core.timeseries.cot` supplies `prepare_cot_data`,
-`cot_summary`, `cot_position_changes` and `cot_position_divergence`. Inputs use
+For new calculations, `runbook.core.cot` supplies `prepare_cot_data`,
+`cot_summary`, `position_change` and `position_divergence`. Inputs use
 `Long`, `Short`, optional `OI`, `PX_LAST`, `VWAP`, `Internal` and paired
 `NC Long`/`NC Short` columns. Providers and participant aggregation remain with
 the caller. `as_of` pins the data cutoff; the default uses the latest supplied
 observation, never today's date. Position scaling and contract values are
 explicit arguments.
+
+To calculate directly from normalized observations, choose the ECM family:
+
+```python
+from runbook.core.table.templates import (
+    cot_cme_timeseries_table,
+    cot_ice_mifid_timeseries_table,
+)
+
+cme = cot_cme_timeseries_table(
+    {"Brent Fut": brent_positions},
+    summary_options={"contract_value": 1000},
+)
+mifid = cot_ice_mifid_timeseries_table(
+    {"TTF Fut+Opt": ttf_positions},
+    summary_options={"contract_value": 1000},
+)
+```
+
+These presets use `cot_summary` with 52- or 208-observation position-score
+windows. Both retain 52-observation price-score/rank windows and 260-observation
+percentile history. `summary_options` overrides these defaults;
+`asset_options` takes precedence per asset. The standard preset displays
+`Net Position (MM)` and `Weekly Delta Change in $m`; MiFID uses `Net Position`
+and `Weekly Delta Change in $/EUR m`. These are the corresponding ECM summary
+column names; currency conversion remains the caller's responsibility.
+
+Both time-series presets follow the report pipeline: calculate one analysis
+row per supplied instrument/contract type, concatenate in mapping order, then
+pass the result through the matching `*_summary_table`. The calculations live
+in `runbook.core.cot`, independent of table styling. You can call them directly:
+
+```python
+from runbook.core.cot import analysis, analysis_mifid
+from runbook.core.table.templates import cot_cme_summary_table
+
+observations = {
+    "Brent Fut": brent_futures_df,
+    "Brent Fut+Opt": brent_combined_df,
+    "WTI Fut": wti_futures_df,
+    "WTI Fut+Opt": wti_combined_df,
+}
+groups = {name: name.split()[0] for name in observations}
+summary = analysis(
+    observations,
+    summary_options={"contract_value": 1000},
+    asset_groups=groups,
+)
+tables = cot_cme_summary_table(summary, group_column="Group")
+# analysis_mifid(observations, ...) produces the MiFID summary DataFrame.
+```
+
+This two-step path and `cot_cme_timeseries_table(observations, ...)`
+produce the same table when given the same calculation and style options.
+`runbook.core.cot.position_change` and `position_divergence` also work on
+summary DataFrames. The existing lower-level `timeseries.cot` functions remain
+available. Each input frame needs `Long`/`Short`; supply `OI`, `PX_LAST`, `VWAP`,
+`Internal` and paired `NC Long`/`NC Short` for the corresponding report measures.
+`Internal` is the model estimate's placeholder name in input frames and plots.
+Its weekly change is `Internal Change` in calculated summaries. Existing ECM
+summaries containing `CTA Change` are displayed as `Internal Change` too.
+Override `internal_change_label` on a table or `internal_label` on a COT plot
+when a final display name is available; the input column remains `Internal`.
+
+The first row's
+observation date supplies the common `dd-Mon to dd-Mon` week heading, matching
+`cot_cme.update_oil`; each row retains its own hidden `_last_update`. Override
+`label_column` for a different heading. Supply separate time series for
+`"Brent Fut"`, `"Brent Fut+Opt"`, `"WTI Fut"`, `"WTI Fut+Opt"` to reproduce
+those four report rows. Rows are not inferred or duplicated from a single series.
+`asset_groups={"Brent Fut": "Brent", "Brent Fut+Opt": "Brent", ...}` adds
+the same group separators as a summary's `Group` column. Supply one group
+per asset; `group_column` overrides the metadata-column name. `plot_links`
+works identically on both paths. The gallery uses the same four instruments
+per pair and verifies equal data, styles and rendered tables.
+
+The standard preset retains a supplied NC pair separately. For MiFID's
+additional venue positions (`long1`/`short1` in ECM), combine them into `Long`
+and `Short` before calling; `NC Long`/`NC Short` always represent a separate
+noncommercial series. Contract normalization is explicit, e.g.
+`asset_options={"NG ICE": {"position_scale": 0.25}}`.
+
+The old public names remain compatibility aliases:
+`cot_table` → `cot_summary_table`, `cot_observations_table` →
+`cot_timeseries_table`, and `cot_position_changes_table` →
+`cot_position_change_table`. Their original generic defaults are retained.
+The named calculation presets use Runbook's normalized inputs and the
+calculation corrections below; they do not fetch data or recreate ECM's
+ticker-specific acquisition logic.
 
 `cot_summary` uses four observation intervals for four-week changes and the
 previous price for weekly returns. Position scores retain ECM's uncentered

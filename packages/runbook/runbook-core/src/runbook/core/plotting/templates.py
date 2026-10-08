@@ -152,17 +152,17 @@ def plot_cot_long_short(data: pd.DataFrame, title: str = "", **options: Any) -> 
 
 
 def plot_cot_net(data: pd.DataFrame, title: str = "", **options: Any) -> go.Figure:
-    """Plot one seasonal net-position/price panel without an OI row.
+    """Plot one COT column with position/price above OI in a 70/30 layout.
 
-    Requires ``Net`` and ``PX_LAST``; options are forwarded to ``plot_cot``.
+    Requires ``Net``, ``PX_LAST`` and ``Net OI``; ``Internal`` is optional.
+    Pass ``rows=1`` to omit OI. Options are forwarded to ``plot_cot``.
     """
     return plot_cot(
         data,
         title=title,
         **{
-            "columns": [["Net", "PX_LAST"]],
+            "columns": [["Net", "PX_LAST", "Net OI", "Internal"]],
             "plot_titles": ["Net position"],
-            "rows": 1,
             "tickformat": "%b",
             **options,
         },
@@ -172,6 +172,8 @@ def plot_cot_net(data: pd.DataFrame, title: str = "", **options: Any) -> go.Figu
 def plot_market_ohlc(data: dict[str, pd.DataFrame], **options: Any) -> go.Figure:
     """Plot OHLC prices with optional volume and open interest.
 
+    Pass ``cot_start=observation_date - pd.Timedelta(days=7)`` to shade the
+    measured COT week. Price and volume/OI use 70/30 rows.
     Holdings are omitted by default; options go to ``plot_cot_market``.
     """
     return plot_cot_market(data, **{"holdings_column": None, **options})
