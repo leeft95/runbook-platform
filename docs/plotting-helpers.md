@@ -23,6 +23,48 @@ with layout.section("Summary") as section:
 
 ## Which helper should I use?
 
+The preview gallery uses named presets from `runbook.core.plotting.templates`.
+Each returns a Plotly `Figure`, accepts caller-supplied data and forwards
+additional keyword options to its underlying helper. Existing general-purpose
+plotting functions remain available.
+
+| Preview | Template function |
+| --- | --- |
+| Daily line with moving average | `plot_line_with_moving_average` |
+| Daily line with secondary comparison | `plot_line_with_comparison` |
+| Seasonal and cumulative comparisons | `plot_seasonal_comparison` |
+| Seasonal forecast with reversed axes | `plot_reversed_seasonal_forecast` |
+| Seasonal columns beside ordinary history | `plot_seasonal_with_history` |
+| COT net/long/short panels | `plot_cot_positions` |
+| COT long/short panels | `plot_cot_long_short` |
+| COT net-position/price panel | `plot_cot_net` |
+| OHLC, volume and open interest | `plot_market_ohlc` |
+| OHLC, open interest and holdings | `plot_market_holdings` |
+| Regression through the origin | `plot_regression_origin` |
+| Regression with an intercept | `plot_regression_intercept` |
+| Weekly price versus positioning | `plot_weekly_price_position` |
+| Four-week price versus positioning | `plot_four_week_price_position` |
+| Spread versus positioning changes | `plot_spread_position_changes` |
+| Historical/forecast bars | `plot_forecast_bars` |
+| One highlighted bar | `plot_highlighted_bar` |
+| Roll-up base history and seasonal averages | `plot_rollup_seasonal` |
+
+```python
+from runbook.core.plotting.templates import plot_cot_long_short, plot_rollup_seasonal
+from runbook.core.timeseries.cot import prepare_cot_data
+
+positions = plot_cot_long_short(prepare_cot_data(cot_observations))
+gas = plot_rollup_seasonal(power_ts["Gas"], windows=("5d", "20d", "3m"))
+```
+
+`plot_rollup_seasonal` uses calendar-day/month averages, matching
+[`rollup_table_hst`](table-templates.md#calendar-roll-up-table). It includes
+ordinary base history and seasonal panels for the base series and each average.
+The daily-price MA template retains observation-count windows. COT
+price-position templates likewise count paired observations, normally weekly.
+
+### General-purpose helpers
+
 | I want to... | Use | Input | Returns |
 | --- | --- | --- | --- |
 | show one or more time series | `plot_line` | DataFrame, or `dict[str, DataFrame]` for subplots | Plotly `Figure` |

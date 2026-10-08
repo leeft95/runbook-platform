@@ -24,6 +24,109 @@ pixi run python scripts/preview_gallery.py --serve --port 8766
 Open `http://127.0.0.1:8766/`. The gallery includes working companion-chart
 links and a live HTML / native Dash / AG Grid comparison for every table.
 Without `--serve`, it exports the gallery to `/tmp/runbook-gallery/index.html`.
+Every preview card names its public template function.
+
+## Named table templates
+
+Import these from `runbook.core.table.templates`. They return the same
+`{header: {"data": frame, "style": plan, "plots": figures}}` payload as the
+general builders. Preset options can be overridden using the underlying
+builder's keyword arguments. Data, dates, exclusions and benchmarks are supplied
+by the caller; templates contain no fixture data or fixed report dates.
+
+| Preview | Template function |
+| --- | --- |
+| COT managed-money summary | `cot_table` |
+| COT calculated from observations | `cot_observations_table` |
+| COT large position moves | `cot_position_changes_table` |
+| COT price/position divergence | `cot_position_divergence_table` |
+| Daily linked prices | `daily_prices_table` |
+| Inventory seasonal comparisons | `inventory_summary_table` |
+| Flow averages versus a quarter | `flow_quarterly_table` |
+| Flow totals versus a month | `flow_monthly_table` |
+| Monthly consensus | `monthly_consensus_table` |
+| Stocks on an MTD basis | `mtd_inventory_table` |
+| Grouped axes, percentage rows and data bars | `grouped_metrics_table` |
+| Calendar roll-ups, including percentage shares | `rollup_table_hst` |
+
+```python
+from runbook.core.table.templates import inventory_summary_table, flow_quarterly_table
+
+inventory = inventory_summary_table(stock_history, "Stocks", exclude_years=[2020])
+flows = flow_quarterly_table(flow_history, "Flows", benchmark_quarter="2026Q2")
+```
+
+`cot_observations_table` takes a mapping of asset names to observation frames.
+Use `summary_options` for shared calculation parameters and `asset_options`
+for per-asset overrides, such as `{"MiFID": {"change_window": 208}}`.
+`grouped_metrics_table` accepts arbitrary pandas Index/MultiIndex axes,
+`percentage_rows` as row positions, and `bar_columns` as actual column labels.
+
+## Calendar roll-up table
+
+`rollup_table_hst(df, params)` takes **one numeric time-series DataFrame** with
+a unique `DatetimeIndex` and one column per input series. It returns one row
+per series. `Latest` uses the final supplied row (after any `as_of` filter),
+not a per-series last non-null observation. Input data is never modified or filled.
+
+```python
+from runbook.core.table.templates import rollup_table_hst
+
+params = ["Latest", "5d MA", "20d MA", "3m MA", "Y-1 20d MA", "5Y 20d MA"]
+payload = rollup_table_hst(power_ts, params, header="EU power")["EU power"]
+
+# Supply a time-series frame of ratios to reuse the template for power shares
+# or thermal shares; formatting does not change the underlying numbers.
+shares = rollup_table_hst(
+    share_ts, params, header="EU power share", format_spec="{:.1%}"
+)["EU power share"]
+```
+
+| Default column | Calculation |
+| --- | --- |
+| `Latest` | Exact final supplied row after `as_of` filtering, including missing values |
+| `5d MA` | Mean of observations in the last five **calendar days** |
+| `20d MA` | Mean of observations in the last twenty **calendar days** |
+| `3m MA` | Mean of observations in the last three **calendar months** |
+| `Y-1 20d MA` | Twenty-calendar-day mean ending on the corresponding date last year |
+| `5Y 20d MA` | Equal-weight mean of the corresponding window means in the previous five calendar years |
+
+Each window is `(anchor - window, anchor]`, where `anchor` is the timestamp
+of the final supplied row after applying `as_of`. Calculations sort the data
+and exclude rows later than that anchor, so unsorted inputs do not change the
+meaning of Latest. Missing values are skipped; an all-missing
+window remains missing. Historical windows with no data are omitted from the
+five-year mean, without substituting older years. `exclude_years` removes
+specified historical years. Leap-day anniversaries use February 28 in
+non-leap years. Calendar offsets preserve local clock time across DST.
+
+`params` selects and orders roll-ups. Other positive lengths work too, such as
+`10d MA`, `6m MA`, `Y-2 20d MA` and `3Y 5d MA`. No completed-month/quarter
+columns are added. The screenshot's separately supplied **Current Month Base**
+is not inferred from the six requested roll-ups.
+
+Each series name links to a figure with its **full base history**, **seasonal
+base data**, and **seasonal rolling averages** for the requested windows.
+Historical summary columns reuse their base window's seasonal panel. The
+heading links to all generated figures, with the ordinary `plot_names` and
+`all_plots_name` payload fields. These figures use the same calendar-average
+calculation as the table. `row_plot_links=False` and `all_plots_link=False`
+disable links; the generated figures remain available in `plots`.
+
+Columns are centered by default. The `20d MA` column uses the general linked
+table's summary-band logic: compare Latest against the current calendar
+window's mean and sample standard deviation. Above +1/+2 SD is light green/green;
+below -1/-2 SD is orange/red. Hidden helper columns carry the statistics.
+Use `highlight_columns=["5d MA", "20d MA", "3m MA"]` to highlight other current
+averages, or `highlight_columns=[]` to disable bands. Historical reference
+columns stay neutral; negative numbers use the shared red-text rule.
+
+Use `format_spec` for precision or percentages,
+`rules` for additional shared `TableRule` overrides, `footer`
+for a custom note, and `plot_options` for seasonal chart settings. The default
+footer displays the latest data date.
+
+## Shared migration builders
 
 The recovered ECM core and report callers use the following capabilities.
 Runbook provides them through shared models and dataset-first helpers:

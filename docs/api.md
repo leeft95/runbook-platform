@@ -122,6 +122,18 @@ while a host-owned Dash route resolver handles the same logical destinations.
 
 .. automodule:: runbook.core.plotting.regression
    :members: plot_regression, plot_price_vs_position
+
+.. automodule:: runbook.core.plotting.templates
+   :members:
+
+.. automodule:: runbook.core.table.templates.reports
+   :members:
+
+.. automodule:: runbook.core.table.templates.rollup
+   :members: rollup_table_hst
+
+.. automodule:: runbook.core.timeseries.rollup
+   :members: calendar_moving_average
 ```
 
 ```{eval-rst}

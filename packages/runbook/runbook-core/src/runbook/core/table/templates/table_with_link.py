@@ -6,6 +6,7 @@ import pandas as pd
 
 from ...plotting.line import plot_line
 from ...plotting.seasonal import plot_seasonal
+from ...plotting.templates import plot_line_with_comparison, plot_line_with_moving_average
 from ...timeseries.analysis import MovingAvgModes
 from ..models import (
     TableAction,
@@ -105,22 +106,10 @@ def _plots_for_columns(
         mode = chart_modes[str(col)]
         title = str(col)
         if isinstance(mode, (int, pd.DataFrame)):
-            frame = levels_df[[col]].copy()
-            styles = {}
             if isinstance(mode, int):
-                label = f"{mode}d MA"
-                if label == str(col):
-                    label += " overlay"
-                frame[label] = _aligned_moving_average(levels_df[col], mode, MovingAvgModes.SIMPLE)
+                plots.append(plot_line_with_moving_average(levels_df[col], window=mode, title=title))
             else:
-                comparison = mode.sort_index().reindex(levels_df.index, method="ffill")
-                for field in comparison:
-                    label = str(field)
-                    while label in frame:
-                        label = f"Comparison: {label}"
-                    frame[label] = comparison[field]
-                    styles[label] = {"secondary_y": True}
-            plots.append(plot_line(frame, title=title, series_styles=styles))
+                plots.append(plot_line_with_comparison(levels_df[col], mode, title=title))
             continue
         if mode == "line":
             plots.append(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from html import escape
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,18 +14,42 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.offline import get_plotlyjs
 
-from runbook.core.plotting.bar import plot_bar_forecast
-from runbook.core.plotting.cot import plot_cot_market
-from runbook.core.plotting.regression import plot_price_vs_position, plot_regression
-from runbook.core.plotting.seasonal import plot_cot, plot_seasonal, plot_seasonal_grid
-from runbook.core.table import (
-    TableStylePlan,
-    cot_table,
-    general_table_with_link,
-    render_table_html,
-    table_with_linked_plots_monthly,
+from runbook.core.plotting.templates import (
+    plot_line_with_moving_average,
+    plot_line_with_comparison,
+    plot_seasonal_comparison,
+    plot_reversed_seasonal_forecast,
+    plot_seasonal_with_history,
+    plot_cot_positions,
+    plot_cot_long_short,
+    plot_cot_net,
+    plot_market_ohlc,
+    plot_market_holdings,
+    plot_regression_origin,
+    plot_regression_intercept,
+    plot_weekly_price_position,
+    plot_four_week_price_position,
+    plot_spread_position_changes,
+    plot_forecast_bars,
+    plot_highlighted_bar,
+    plot_rollup_seasonal,
 )
-from runbook.core.timeseries.cot import cot_position_changes, cot_position_divergence, cot_summary, prepare_cot_data
+from runbook.core.table import TableStylePlan, render_table_html
+from runbook.core.table.templates import (
+    cot_table,
+    cot_observations_table,
+    cot_position_changes_table,
+    cot_position_divergence_table,
+    daily_prices_table,
+    inventory_summary_table,
+    flow_quarterly_table,
+    flow_monthly_table,
+    monthly_consensus_table,
+    mtd_inventory_table,
+    grouped_metrics_table,
+    rollup_table_hst,
+)
+from runbook.core.timeseries.cot import prepare_cot_data
 
 
 def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -63,11 +88,42 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     tables: list[dict[str, Any]] = []
     charts: list[dict[str, Any]] = []
 
-    def table(key: str, title: str, description: str, payload: dict[str, Any]) -> None:
-        tables.append(dict(key=key, title=title, description=description, payload=payload))
+    def table(
+        key: str,
+        title: str,
+        description: str,
+        template: Callable[..., dict[str, dict[str, Any]]],
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        payload = next(iter(template(*args, **kwargs).values()))
+        tables.append(
+            dict(
+                key=key,
+                title=title,
+                description=description,
+                payload=payload,
+                template=f"runbook.core.table.templates.{template.__name__}",
+            )
+        )
 
-    def chart(key: str, title: str, description: str, figure: go.Figure) -> None:
-        charts.append(dict(key=key, title=title, description=description, figure=figure))
+    def chart(
+        key: str,
+        title: str,
+        description: str,
+        template: Callable[..., go.Figure],
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        charts.append(
+            dict(
+                key=key,
+                title=title,
+                description=description,
+                figure=template(*args, **kwargs),
+                template=f"runbook.core.plotting.templates.{template.__name__}",
+            )
+        )
 
     fixture = pd.read_csv(Path(__file__).resolve().parents[1] / "data/fixtures/cot/summary.csv")
     fixture["Net Position (NC)"] = [135_000, 145_000, -88_000, -92_000]
@@ -80,143 +136,105 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         "cot",
         "COT · managed money",
         "Complete summary, noncommercial positions, hidden signals, group borders and linked asset names. Scroll sideways to see every measure.",
-        cot_table(fixture, plot_links={label: "cot-net" for label in fixture.iloc[:, 0]}, **cot_options)["COT"],
-    )
-    computed = pd.concat(
-        [
-            cot_summary(positions, "Standard · 52 observations", contract_value=1000),
-            cot_summary(positions, "MiFID · 208 observations", change_window=208, contract_value=1000),
-        ],
-        ignore_index=True,
+        cot_table,
+        fixture,
+        plot_links={label: "cot-net" for label in fixture.iloc[:, 0]},
+        **cot_options,
     )
     table(
         "cot-calculated",
         "COT · calculated from observations",
         "The same synthetic Long/Short/OI/price inputs, with standard and MiFID dispersion windows.",
-        cot_table(computed)["COT"],
+        cot_observations_table,
+        {"Standard · 52 observations": positions, "MiFID · 208 observations": positions},
+        summary_options={"contract_value": 1000},
+        asset_options={"MiFID · 208 observations": {"change_window": 208}},
     )
     table(
         "cot-changes",
         "COT · large position moves",
         "A score threshold of 2.15 selects the strongest four-week changes from the fixture.",
-        cot_table(cot_position_changes(fixture, threshold=2.15), **cot_options)["COT"],
+        cot_position_changes_table,
+        fixture,
+        threshold=2.15,
+        **cot_options,
     )
     table(
         "cot-divergence",
         "COT · price / position divergence",
         "Only instruments whose weekly price and position changes have opposite signs.",
-        cot_table(cot_position_divergence(fixture), **cot_options)["COT"],
+        cot_position_divergence_table,
+        fixture,
+        **cot_options,
     )
-    daily_payload = general_table_with_link(
-        price.tail(130),
-        "Daily prices",
-        rows=5,
-        chart_columns={"Brent": 20, "WTI": price[["Spread"]], "Spread": "line"},
-        footer="Synthetic observations · 1 July 2025",
-        title_column_width=165,
-        column_plot_links=True,
-        all_plots_link=True,
-    )["Daily prices"]
     table(
         "daily",
         "Daily prices · linked table",
         "Dated prices, a moving-average summary, change highlights, footer and clickable chart headings.",
-        daily_payload,
+        daily_prices_table,
+        price.tail(130),
+        chart_columns={"Brent": 20, "WTI": price[["Spread"]], "Spread": "line"},
+        footer="Synthetic observations · 1 July 2025",
     )
     chart(
         "daily-ma",
         "Daily line with moving average",
         "The daily table's Brent chart uses a 20-observation moving-average overlay.",
-        daily_payload["plots"][0],
+        plot_line_with_moving_average,
+        price.Brent.tail(130),
+        window=20,
     )
     chart(
         "daily-comparison",
         "Daily line with secondary comparison",
         "WTI on the primary axis and a supplied spread series on the secondary axis.",
-        daily_payload["plots"][1],
+        plot_line_with_comparison,
+        price.WTI.tail(130),
+        comparison=price[["Spread"]],
     )
 
-    common = dict(row_plot_links=True, all_plots_link=True, history_quarters=2, include_qtd=True)
-    inventory = table_with_linked_plots_monthly(
-        daily,
-        "Inventory",
-        aggregation_type="diff",
-        aggregation_columns={"Refinery runs": "mean"},
-        windows=(20,),
-        history_months=3,
-        comparison_years=5,
-        exclude_years=[2020],
-        highlighting_rules={"seasonal": 5},
-        **common,
-    )["Inventory"]
     table(
         "inventory",
         "Inventory · seasonal comparisons",
         "20-observation changes, mixed flow averages, completed months and quarters, QTD, Y−1 and five-year comparisons excluding 2020.",
-        inventory,
+        inventory_summary_table,
+        daily,
+        aggregation_columns={"Refinery runs": "mean"},
+        exclude_years=[2020],
     )
     flows = pd.DataFrame({"Exports": 1500 + 200 * np.sin(t / 47), "Imports": 1800 + 150 * np.cos(t / 53)}, index=dates)
-    flow = table_with_linked_plots_monthly(
-        flows,
-        "Flow averages",
-        aggregation_type="mean",
-        benchmark_quarter="2025Q1",
-        highlighting_rules={"window": 65},
-        **common,
-    )["Flow averages"]
     table(
         "flow-quarter",
         "Flows · quarter benchmark",
         "10- and 20-observation averages with a Q1 benchmark and rolling-history highlights.",
-        flow,
+        flow_quarterly_table,
+        flows,
+        benchmark_quarter="2025Q1",
     )
-    sums = table_with_linked_plots_monthly(
-        flows / 100,
-        "Flow totals",
-        aggregation_type="sum",
-        windows=(5, 10),
-        benchmark_month="2025-05-01",
-        row_plot_links=True,
-    )["Flow totals"]
     table(
         "flow-month",
         "Flows · month benchmark",
         "Rolling sums and completed-month totals, with an explicit May benchmark.",
-        sums,
+        flow_monthly_table,
+        flows / 100,
+        benchmark_month="2025-05-01",
     )
     consensus = daily[["Crude stocks", "Product stocks"]].resample("MS").mean()
     consensus["_last_update"] = "2025-07-01"
-    monthly = table_with_linked_plots_monthly(
-        consensus,
-        "Monthly consensus",
-        input_frequency="M",
-        windows=(1,),
-        aggregation_type="diff",
-        moving_average_window=None,
-        comparison_years=5,
-        history_months=3,
-        **common,
-    )["Monthly consensus"]
     table(
         "monthly",
         "Monthly consensus",
         "One-month changes with quarterly history, QTD and same-month year comparisons. Update metadata stays hidden.",
-        monthly,
+        monthly_consensus_table,
+        consensus,
     )
-    mtd = table_with_linked_plots_monthly(
-        daily[["Crude stocks", "Product stocks"]].loc[:"2025-06-24"],
-        "MTD stocks",
-        aggregation_type="diff",
-        windows=(5, 20),
-        mtd=True,
-        highlighting_rules={"seasonal": 5},
-        row_plot_links=True,
-    )["MTD stocks"]
     table(
         "mtd",
         "Stocks · MTD basis",
         "Each rolling average is measured from the previous calendar month-end. This example is pinned to 24 June.",
-        mtd,
+        mtd_inventory_table,
+        daily[["Crude stocks", "Product stocks"]],
+        as_of="2025-06-24",
     )
 
     columns = pd.MultiIndex.from_product([["January", "February"], ["Latest", "Change"]], names=["Month", "Metric"])
@@ -226,103 +244,70 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         index=index,
         columns=columns,
     )
-    plan = TableStylePlan.model_validate(
-        {
-            "format": {
-                "columns": {str(c): "{:.2f}" for c in columns},
-                "rows": [{"row_ref": {"mode": "position", "value": row}, "spec": "{:.1%}"} for row in (0, 2)],
-            },
-            "sizing": {"columns": [{"label": str(c), "width_px": 145} for c in columns], "index_width_px": 100},
-            "rules": [
-                {
-                    "id": "bars",
-                    "target": {"scope": "columns", "labels": [str(columns[1]), str(columns[3])]},
-                    "action": {"data_bar": {"vmin": -1, "vmax": 1}},
-                }
-            ],
-        }
-    )
     table(
         "grouped",
         "Grouped table · mixed formats and data bars",
         "MultiIndex rows and columns, percentage versus numeric row formats, signed bars and centered alignment. Compare all three renderers below.",
-        {"data": grouped, "style": plan.model_dump(mode="json"), "plots": []},
+        grouped_metrics_table,
+        grouped,
+        percentage_rows=(0, 2),
+        bar_columns=(columns[1], columns[3]),
     )
 
     chart(
         "seasonal",
         "Seasonal comparison and cumulative panels",
         "Seasonal years, deviations from Y−1 / five-year history, and cumulative comparisons.",
-        plot_seasonal(
-            daily[["Crude stocks"]],
-            current_year=2025,
-            start="2020-01-01",
-            exclude_years=[2020],
-            ytd_cum_sum=True,
-            tickformat="%b",
-        ),
+        plot_seasonal_comparison,
+        daily[["Crude stocks"]],
+        current_year=2025,
+        start="2020-01-01",
+        exclude_years=[2020],
     )
     chart(
         "seasonal-reversed",
         "Seasonal forecast · reversed axes",
         "The selected year changes to a dashed forecast after 1 April. Axis reversal applies to the seasonal and comparison panels.",
-        plot_seasonal(
-            daily[["Product stocks"]],
-            current_year=2025,
-            start="2021-01-01",
-            dash_from=pd.Timestamp("2025-04-01"),
-            y_axis_reversed=True,
-            y1_axis_reversed=True,
-            y_axis_title="Stocks (reversed)",
-            tickformat="%b",
-        ),
+        plot_reversed_seasonal_forecast,
+        daily[["Product stocks"]],
+        current_year=2025,
+        start="2021-01-01",
+        dash_from=pd.Timestamp("2025-04-01"),
+        y_axis_title="Stocks (reversed)",
     )
     chart(
         "seasonal-grid",
         "Seasonal columns beside ordinary history",
         "Two seasonal columns share legend controls; the history column retains actual dates on an independent axis.",
-        plot_seasonal_grid(
-            {"Crude stocks": daily[["Crude stocks"]], "Product stocks": daily[["Product stocks"]]},
-            history=daily[["Crude stocks", "Product stocks"]],
-            history_first=True,
-            current_year=2025,
-            start="2021-01-01",
-            ytd_cum_sum=True,
-            tickformat="%b",
-        ),
+        plot_seasonal_with_history,
+        {"Crude stocks": daily[["Crude stocks"]], "Product stocks": daily[["Product stocks"]]},
+        history=daily[["Crude stocks", "Product stocks"]],
+        current_year=2025,
+        start="2021-01-01",
     )
     chart(
         "cot-full",
         "COT · net, long and short",
         "Three position columns with price overlays, OI ratios, previous-five-year bands and an internal/CTA series.",
-        plot_cot(prepared, None, "", ["Net", "Long", "Short"], start=pd.Timestamp("2020-01-01"), tickformat="%b"),
+        plot_cot_positions,
+        prepared,
+        start=pd.Timestamp("2020-01-01"),
     )
     chart(
         "cot-pair",
         "COT · long / short",
         "Two-column COT layout using the same model and observation dates.",
-        plot_cot(
-            prepared,
-            [["Long", "PX_LAST", "Long OI", "Internal"], ["Short", "PX_LAST", "Short OI", "Internal"]],
-            "",
-            ["Long", "Short"],
-            start=pd.Timestamp("2020-01-01"),
-            tickformat="%b",
-        ),
+        plot_cot_long_short,
+        prepared,
+        start=pd.Timestamp("2020-01-01"),
     )
     chart(
         "cot-net",
         "COT · single position / price panel",
         "A one-row COT variant without the OI panel. Linked COT asset names open this example.",
-        plot_cot(
-            prepared,
-            [["Net", "PX_LAST"]],
-            "",
-            ["Net position"],
-            rows=1,
-            start=pd.Timestamp("2020-01-01"),
-            tickformat="%b",
-        ),
+        plot_cot_net,
+        prepared,
+        start=pd.Timestamp("2020-01-01"),
     )
     recent_price = price.Brent.tail(150)
     ohlc = pd.DataFrame(
@@ -340,15 +325,17 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         "market",
         "OHLC · volume and open interest",
         "Two markets, independent price and OI scales, volume bars and a shaded COT reference week.",
-        plot_cot_market({"Brent": ohlc, "WTI": ohlc * 0.9}, cot_start="2025-06-10"),
+        plot_market_ohlc,
+        {"Brent": ohlc, "WTI": ohlc * 0.9},
+        cot_start="2025-06-10",
     )
     chart(
         "market-holdings",
         "OHLC · open interest and holdings",
         "Holdings get their own third row when open interest is also supplied.",
-        plot_cot_market(
-            {"Commodity fund": ohlc.assign(HOLDINGS=1500 + np.arange(len(ohlc)) * 3)}, cot_start="2025-06-10"
-        ),
+        plot_market_holdings,
+        {"Commodity fund": ohlc.assign(HOLDINGS=1500 + np.arange(len(ohlc)) * 3)},
+        cot_start="2025-06-10",
     )
     changes = pd.DataFrame(
         {"Price change (%)": prepared.PX_LAST.pct_change(fill_method=None) * 100, "Net change": prepared.Net.diff()}
@@ -357,24 +344,27 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         "regression",
         "OLS regression · through the origin",
         "Full sample, recent 8 / 3 / 1 observations, fitted line and ±2 residual-standard-deviation bands.",
-        plot_regression(changes),
+        plot_regression_origin,
+        changes,
     )
     chart(
         "regression-intercept",
         "OLS regression · fitted intercept",
         "The same change data with an intercept; coefficients remain available in figure metadata.",
-        plot_regression(changes, constant=True),
+        plot_regression_intercept,
+        changes,
     )
-    for periods, spread, key, title in [
-        (1, False, "position-weekly", "Price vs positioning · weekly"),
-        (4, False, "position-four-week", "Price vs positioning · four weeks"),
-        (4, True, "position-spread", "Price vs positioning · spread changes"),
+    for template, key, title in [
+        (plot_weekly_price_position, "position-weekly", "Price vs positioning · weekly"),
+        (plot_four_week_price_position, "position-four-week", "Price vs positioning · four weeks"),
+        (plot_spread_position_changes, "position-spread", "Price vs positioning · spread changes"),
     ]:
         chart(
             key,
             title,
             "Older observations are grouped by year, with the previous four and the latest observation highlighted separately.",
-            plot_price_vs_position(prepared.tail(130), periods=periods, is_spread=spread),
+            template,
+            prepared.tail(130),
         )
     forecast = pd.Series(
         [101, 102, 99, 105, 107, 110, 112, 109, 108, 111, 113, 116],
@@ -385,19 +375,52 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         "forecast",
         "Bars · history and forecast",
         "From July onward, bars use the forecast color and pattern.",
-        plot_bar_forecast(forecast, forecast_from=pd.Timestamp("2025-07-01"), forecast_pattern_shape="/"),
+        plot_forecast_bars,
+        forecast,
+        forecast_from=pd.Timestamp("2025-07-01"),
     )
     chart(
         "forecast-single",
         "Bars · one selected observation",
         "Only July is highlighted; later observations retain the base style.",
-        plot_bar_forecast(
-            forecast,
-            forecast_from=pd.Timestamp("2025-07-01"),
-            highlight_only=True,
-            forecast_legend="Selected month",
-            forecast_pattern_shape="/",
-        ),
+        plot_highlighted_bar,
+        forecast,
+        selected_at=pd.Timestamp("2025-07-01"),
+    )
+    power = pd.DataFrame(
+        {
+            "Gas": 26 + 4 * np.sin(t / 58),
+            "Coal": 3 + np.cos(t / 70),
+            "Nuclear": 45 + 5 * np.sin(t / 88),
+            "Wind": 11 + 6 * np.cos(t / 49),
+            "Solar": 20 + 8 * np.sin(t / 60),
+        },
+        index=dates,
+    )
+    power["Load"] = power.sum(axis=1)
+    table(
+        "rollup-power",
+        "Power · calendar roll-ups",
+        "Latest, 5-day / 20-day / 3-month averages, and matching prior-year windows. Each row opens full history and seasonal base/average panels.",
+        rollup_table_hst,
+        power,
+        header="EU power",
+    )
+    table(
+        "rollup-share",
+        "Power shares · calendar roll-ups",
+        "The same template accepts a time-series DataFrame of shares and formats the roll-ups as percentages.",
+        rollup_table_hst,
+        power.drop(columns="Load").div(power.Load, axis=0),
+        header="EU power share",
+        format_spec="{:.1%}",
+    )
+    chart(
+        "rollup-seasonal",
+        "Roll-up · history, base and rolling seasonal charts",
+        "Full gas-generation history beside seasonal base, 5-day, 20-day and 3-month averages. All windows use calendar time.",
+        plot_rollup_seasonal,
+        power.Gas,
     )
     return tables, charts
 
@@ -468,7 +491,8 @@ def write_gallery(output: Path, tables: list[dict[str, Any]], charts: list[dict[
             else:
                 content = '<div class="plot">' + plot_html(item["figure"], key) + "</div>"
             cards.append(
-                f'<article id="{key}"><h2>{escape(item["title"])}</h2><p>{escape(item["description"])}</p>{content}</article>'
+                f'<article id="{key}"><h2>{escape(item["title"])}</h2><p>{escape(item["description"])}</p>'
+                f'<p class="badge">Template: <code>{escape(item["template"])}</code></p>{content}</article>'
             )
         sections.append(
             f'<section data-kind="{kind}"><div class="section-label"><h2>{kind.title()}</h2><span class="count">{len(examples)} examples</span></div>'
