@@ -175,7 +175,7 @@ def rollup_table_hst(
         options=TableStyleOptions(
             max_rows=max(1, len(result)),
             hidden_columns=hidden,
-            footer=footer if footer is not None else f"Latest data: {anchor:%Y-%m-%d}",
+            footer=footer,
         ),
         links=links,
     )

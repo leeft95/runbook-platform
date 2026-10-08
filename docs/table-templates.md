@@ -174,8 +174,8 @@ Negative numbers continue to use the shared red-text rule.
 
 Use `format_spec` for precision or percentages,
 `rules` for additional shared `TableRule` overrides, `footer`
-for a custom note, and `plot_options` for seasonal chart settings. The default
-footer displays the latest data date.
+for a custom note, and `plot_options` for seasonal chart settings. Roll-ups have
+no footer by default.
 
 ## Shared migration builders
 

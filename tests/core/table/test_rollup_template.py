@@ -52,7 +52,7 @@ def test_rollup_uses_calendar_windows_prior_years_and_cutoff_for_data_and_plots(
     assert "_rollup_0_std" not in render_table_html(payload["data"], payload["style"])
     assert resolved.index_links[0].value == payload["plot_names"][0]
     assert resolved.index_header_link.value == payload["all_plots_name"]
-    assert "Latest data: 2025-06-20" in render_table_html(payload["data"], payload["style"])
+    assert "<tfoot>" not in render_table_html(payload["data"], payload["style"])
     figure = payload["plots"][0]
     assert {"History", "Base", "5d MA", "20d MA", "3m MA"}.issubset({a.text for a in figure.layout.annotations})
     history = figure.data[0]
