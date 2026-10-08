@@ -307,6 +307,10 @@ row so their units remain independent. `cot_start` shows 76 days of prior
 history by default and shades the following seven days; `lookback_days` and
 `highlight=False` control those choices. These helpers never fetch market data.
 
+The `plot_market_holdings` template disables the measurement-week highlight
+by default. The COT `plot_market_ohlc` template keeps it. Pass `highlight=True`
+to opt into the box on a holdings chart when needed.
+
 This is the equivalent of `cot_px_ohlc_chart` used by the legacy
 `new_reports/positioning/cot_cme.py` report. Price occupies the top 70%, with
 volume and OI below at 30%. The box spans both rows. Anchor it to the COT

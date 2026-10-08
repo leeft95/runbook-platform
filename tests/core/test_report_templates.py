@@ -54,6 +54,9 @@ def test_gallery_uses_public_templates_with_resolvable_links_and_serializable_ou
         assert "text-align: center" in render_table_html(payload["data"], payload["style"])
         assert all(figure.data and figure.to_json() for figure in payload["plots"])
     assert all(item["figure"].data and item["figure"].to_json() for item in charts)
+    chart_figures = {item["key"]: item["figure"] for item in charts}
+    assert chart_figures["market"].layout.shapes
+    assert not chart_figures["market-holdings"].layout.shapes
     examples = {item["key"]: item["payload"] for item in tables}
     for summary_key, calculated_key in (("cot", "cot-calculated"), ("cot-mifid-summary", "cot-mifid-calculated")):
         summary, calculated = examples[summary_key], examples[calculated_key]

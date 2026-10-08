@@ -7,6 +7,7 @@ from runbook.core.plotting.bar import plot_bar_forecast
 from runbook.core.plotting.cot import plot_cot_market
 from runbook.core.plotting.regression import plot_price_vs_position, plot_regression
 from runbook.core.plotting.seasonal import plot_cot, plot_seasonal, plot_seasonal_grid
+from runbook.core.plotting.templates import plot_market_holdings
 
 
 def test_regression_fits_origin_and_constant_sorts_dates_and_drops_invalid_pairs() -> None:
@@ -137,10 +138,12 @@ def test_cot_market_reuses_mixed_ohlc_volume_and_secondary_axes() -> None:
     pd.testing.assert_frame_equal(data, original)
     only = plot_cot_market({"Price": data.drop(columns=["VOLUME", "FUT_AGGTE_OPEN_INT"])}, highlight=False)
     assert len(only.data) == 1 and not only.layout.shapes
-    both = plot_cot_market({"Fund": data.assign(HOLDINGS=20.0)})
+    both = plot_market_holdings({"Fund": data.assign(HOLDINGS=20.0)}, cot_start="2025-03-01")
     holdings = next(trace for trace in both.data if trace.name == "Holdings")
     open_interest = next(trace for trace in both.data if trace.name == "OI")
     assert holdings.xaxis != open_interest.xaxis and holdings.yaxis != open_interest.yaxis
+    assert not both.layout.shapes
+    assert not any(annotation.text == "2025-03-01" for annotation in both.layout.annotations)
 
 
 def test_forecast_bar_can_highlight_one_observation_without_coloring_later_bars() -> None:

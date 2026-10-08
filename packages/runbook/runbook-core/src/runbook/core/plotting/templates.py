@@ -182,9 +182,10 @@ def plot_market_ohlc(data: dict[str, pd.DataFrame], **options: Any) -> go.Figure
 def plot_market_holdings(data: dict[str, pd.DataFrame], **options: Any) -> go.Figure:
     """Plot OHLC/volume/OI, with supplied holdings on a third row when OI exists.
 
-    Options, including column names and COT shading, go to ``plot_cot_market``.
+    No measurement-week highlight is drawn by default. Pass ``highlight=True``
+    with ``cot_start`` to enable it. Options go to ``plot_cot_market``.
     """
-    return plot_cot_market(data, **options)
+    return plot_cot_market(data, **{"highlight": False, **options})
 
 
 def plot_regression_origin(data: pd.DataFrame, **options: Any) -> go.Figure:
