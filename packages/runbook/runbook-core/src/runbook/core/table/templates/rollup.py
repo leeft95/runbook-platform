@@ -11,6 +11,7 @@ import pandas as pd
 from ...plotting.templates import plot_rollup_seasonal
 from ...timeseries.rollup import _calendar_offset
 from ..models import (
+    TableAction,
     TableColumnSizing,
     TableFormatSpec,
     TableRule,
@@ -18,6 +19,8 @@ from ..models import (
     TableStyleFormat,
     TableStyleOptions,
     TableStylePlan,
+    TableTarget,
+    TargetScope,
     parse_python_format_string,
 )
 from .common import _build_plot_link_metadata, color_negative_red, highlight_zscore
@@ -32,6 +35,7 @@ def rollup_table_hst(
     as_of: str | pd.Timestamp | None = None,
     exclude_years: Sequence[int] = (),
     format_spec: TableFormatSpec | str = "{:,.0f}",
+    total_label: str | None = "Total",
     row_plot_links: bool | list[str] = True,
     all_plots_link: bool = True,
     highlight_columns: Sequence[str] | None = None,
@@ -52,6 +56,11 @@ def rollup_table_hst(
     without filling. Y-1 samples the corresponding date last year; 5Y equally
     averages available window means from the previous five calendar years,
     excluding ``exclude_years``. Missing years are not replaced with older ones.
+
+    The final input series is the supplied total, displayed as ``total_label``
+    (default "Total") with bold text and a top border across the entire row.
+    No total is calculated or appended. Set ``total_label=None`` for inputs
+    without a total series. Plot-link selections accept the original series name.
 
     Each row links to full base history plus seasonal base/MA panels. The index
     heading links to all figures. ``plot_options`` goes to ``plot_rollup_seasonal``;
@@ -78,6 +87,13 @@ def rollup_table_hst(
     anchor = data.index[data.index.isin(frame.index)][-1]
     frame = frame.loc[frame.index <= anchor]
     frame = frame.apply(pd.to_numeric, errors="raise")
+    if total_label is not None:
+        if not total_label.strip() or total_label in frame.columns[:-1]:
+            raise ValueError("total_label must be non-blank and distinct from the other series names")
+        total_column = frame.columns[-1]
+        frame = frame.rename(columns={total_column: total_label})
+        if isinstance(row_plot_links, list):
+            row_plot_links = [total_label if column == total_column else column for column in row_plot_links]
     values: dict[str, pd.Series] = {}
     windows: list[str] = []
     benchmarks: dict[str, tuple[pd.Series, pd.Series]] = {}
@@ -132,6 +148,14 @@ def rollup_table_hst(
     columns = list(result.columns)
     style_rules = color_negative_red(columns, [(label, label) for label in params])
     style_rules.extend(highlight_zscore(columns, targets))
+    if total_label is not None:
+        style_rules.append(
+            TableRule(
+                id="rollup_total",
+                target=TableTarget(scope=TargetScope.rows, positions=[len(result) - 1]),
+                action=TableAction(font_weight="bold", border_top="1px solid #000000"),
+            )
+        )
     style_rules.extend(rules)
     plot_names, links, all_plots_name = _build_plot_link_metadata(
         header,

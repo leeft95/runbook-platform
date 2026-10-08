@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -584,6 +584,7 @@ class ResolvedTableStyle:
     index_header_link: TableLinkDestination | None
     index_width_px: int | None
     footer: str | None
+    index_css: dict[int, dict[str, str]] = field(default_factory=dict)
 
     @property
     def format(self) -> TableStyleFormat:

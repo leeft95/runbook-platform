@@ -411,6 +411,7 @@ class _ResolvedStyleMaps:
     row_width_px: dict[int, int]
     column_width_px: dict[str, int]
     cell_css: dict[tuple[int, str], dict[str, str]]
+    index_css: dict[int, dict[str, str]]
 
 
 def _data_bar_css(values: pd.Series, bar: TableDataBar) -> list[dict[str, str]]:
@@ -472,10 +473,21 @@ def _resolve_style_maps_for_frames(
         row_width_px[row_pos] = item.width_px
 
     cell_css: dict[tuple[int, str], dict[str, str]] = {}
+    index_css: dict[int, dict[str, str]] = {}
     for rule in style.rules:
         _validate_rhs_shape(rule.condition)
         row_positions, col_positions = _resolve_target(visible_df, rule.target, visible_col_lookup)
         css_props = rule.action.css_properties()
+        # Unconditional whole-row styles include the row heading. Value-based
+        # conditions and data bars continue to apply only to data cells.
+        if (
+            rule.target.scope == TargetScope.rows
+            and rule.condition.op == ConditionOp.always
+            and not rule.condition.all_of
+            and not rule.condition.any_of
+        ):
+            for row_pos in row_positions:
+                index_css.setdefault(row_pos, {}).update(css_props)
         bar_styles: dict[tuple[int, int], dict[str, str]] = {}
         if rule.action.data_bar is not None:
             for col_pos in col_positions:
@@ -507,6 +519,7 @@ def _resolve_style_maps_for_frames(
         row_width_px=row_width_px,
         column_width_px=column_width_px,
         cell_css=cell_css,
+        index_css=index_css,
     )
 
 
@@ -636,6 +649,7 @@ def resolve_table_style(
         column_width_px=maps.column_width_px,
         row_width_px=maps.row_width_px,
         cell_css=maps.cell_css,
+        index_css=maps.index_css,
         formats=dict(plan.format.columns),
         cell_formats=cell_formats,
         na_rep=plan.format.na_rep,
@@ -756,17 +770,13 @@ def link_anchor(display: str, destination: TableLinkDestination) -> str:
 
 
 def _replace_index_header(html_output: str, index_name: Any, destination: TableLinkDestination | None) -> str:
-    """Safely render the optional index header link in pandas Styler output."""
+    """Put the flat index heading alongside the column headings, as in Dash."""
     display = escape(str(index_name), quote=True) if index_name is not None else "&nbsp;"
     if destination is not None:
         display = link_anchor(display, destination)
-    if index_name is not None:
-        pattern = r'(<th\b[^>]*class="[^"]*\bindex_name\b[^"]*"[^>]*>).*?(</th>)'
-    else:
-        pattern = r'(<th\b[^>]*class="[^"]*\bblank\b[^"]*"[^>]*>).*?(</th>)'
     return re.sub(
-        pattern,
-        lambda match: f"{match.group(1)}{display}{match.group(2)}",
+        r"(<thead>\s*<tr>\s*)<th\b[^>]*>.*?</th>",
+        lambda match: f'{match.group(1)}<th class="index_name level0">{display}</th>',
         html_output,
         count=1,
         flags=re.DOTALL,
@@ -939,6 +949,12 @@ def render_table_html(
             }
         )
 
+    for row_pos in range(rows):
+        css = {"background-color": global_style.background_color} if row_pos in base_row_backgrounds else {}
+        css.update(resolved.index_css.get(row_pos, {}))
+        if css:
+            table_styles.append({"selector": f".row_heading.row{row_pos}", "props": list(css.items())})
+
     formatter_map = {
         visible_df.columns[visible_col_lookup[col]]: _formatter_from_spec(spec)
         for col, spec in resolved.formats.items()
@@ -980,6 +996,8 @@ def render_table_html(
 
     if not resolved.show_index:
         styler = styler.hide(axis="index")
+    elif visible_df.index.nlevels == 1 and visible_df.columns.nlevels == 1:
+        styler = styler.hide(axis="index", names=True)
 
     hidden_columns = list(resolved.hidden_columns)
     if hidden_columns:
@@ -995,7 +1013,7 @@ def render_table_html(
     rendered = styler.to_html()
     if resolved.links:
         rendered = _inject_link_anchors(rendered, table_uuid, visible_df, resolved)
-    if resolved.links and resolved.show_index and visible_df.index.nlevels == 1 and visible_df.columns.nlevels == 1:
+    if resolved.show_index and visible_df.index.nlevels == 1 and visible_df.columns.nlevels == 1:
         rendered = _replace_index_header(rendered, visible_df.index.name, resolved.index_header_link)
     elif resolved.index_header_link is not None and resolved.show_index:
         # Pandas emits column-level names before index-level names. Select the

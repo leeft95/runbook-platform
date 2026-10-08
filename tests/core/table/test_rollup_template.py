@@ -23,7 +23,7 @@ def test_rollup_uses_calendar_windows_prior_years_and_cutoff_for_data_and_plots(
     }
     frame = pd.DataFrame({"Gas": pd.Series(rows)})
     original = frame.copy()
-    payload = rollup_table_hst(frame, header="Power", as_of="2025-06-20")["Power"]
+    payload = rollup_table_hst(frame, header="Power", as_of="2025-06-20", total_label=None)["Power"]
     resolved = resolve_table_style(payload["data"], payload["style"])
     row = payload["data"].loc["Gas", list(resolved.visible_columns)]
     assert row.to_dict() == pytest.approx(
@@ -65,9 +65,9 @@ def test_rollup_uses_calendar_windows_prior_years_and_cutoff_for_data_and_plots(
     ) == pytest.approx(617)
     pd.testing.assert_frame_equal(frame, original)
 
-    selected = rollup_table_hst(frame, ["5Y 20d MA", "10d MA", "Y-2 3m MA"], as_of="2025-06-20", exclude_years=[2024])[
-        "Roll-up"
-    ]["data"]
+    selected = rollup_table_hst(
+        frame, ["5Y 20d MA", "10d MA", "Y-2 3m MA"], as_of="2025-06-20", exclude_years=[2024], total_label=None
+    )["Roll-up"]["data"]
     assert selected.loc["Gas", ["5Y 20d MA", "10d MA", "Y-2 3m MA"]].tolist() == pytest.approx([267, 619, 2480 / 6])
     assert selected.loc["Gas", "_rollup_0_std"] == pytest.approx(pd.Series([117, 217, 317, 417]).std())
 
@@ -96,8 +96,8 @@ def test_rollup_highlights_are_independent_of_format_and_skip_missing_or_zero_di
     dates = pd.to_datetime([f"{year}-06-{day:02d}" for year in range(2020, 2026) for day in range(1, 21)])
     values = np.tile(np.arange(20.0), 6) + np.repeat(np.arange(6) * 5, 20)
     frame = pd.DataFrame({"Volume": values, "Share": values / 100}, index=dates)
-    numeric = rollup_table_hst(frame, format_spec="{:,.2f}")["Roll-up"]
-    percent = rollup_table_hst(frame, format_spec="{:.1%}")["Roll-up"]
+    numeric = rollup_table_hst(frame, format_spec="{:,.2f}", total_label=None)["Roll-up"]
+    percent = rollup_table_hst(frame, format_spec="{:.1%}", total_label=None)["Roll-up"]
     numeric_style = resolve_table_style(numeric["data"], numeric["style"])
     percent_style = resolve_table_style(percent["data"], percent["style"])
     assert numeric_style.cell_css == percent_style.cell_css
@@ -148,10 +148,39 @@ def test_rollup_latest_is_the_final_supplied_row() -> None:
     frame = pd.DataFrame(
         {"Value": [30.0, 10.0, np.nan]}, index=pd.to_datetime(["2025-01-03", "2025-01-01", "2025-01-02"])
     )
-    payload = rollup_table_hst(frame, ["Latest", "5d MA"])["Roll-up"]
+    payload = rollup_table_hst(frame, ["Latest", "5d MA"], total_label=None)["Roll-up"]
     assert pd.isna(payload["data"].loc["Value", "Latest"])
     assert payload["data"].loc["Value", "5d MA"] == 10.0
     assert max(pd.to_datetime(payload["plots"][0].data[0].x)) == pd.Timestamp("2025-01-02")
+
+
+@pytest.mark.parametrize("label", ["Total", "Electricity demand", None])
+def test_rollup_uses_supplied_final_series_as_total_without_adding_or_summing_rows(label) -> None:
+    frame = pd.DataFrame(
+        {"Gas": [1.0, 2.0, 3.0], "Coal": [2.0, 3.0, 4.0], "System load": [15.0, 18.0, 21.0]},
+        index=pd.date_range("2025-06-01", periods=3),
+    )
+    original = frame.copy()
+    options = {} if label == "Total" else {"total_label": label}
+    payload = rollup_table_hst(frame, ["Latest", "5d MA"], row_plot_links=["System load"], **options)["Roll-up"]
+    data = payload["data"]
+    assert list(data.index) == ["Gas", "Coal", label or "System load"]
+    assert data.iloc[-1][["Latest", "5d MA"]].tolist() == [21.0, 18.0]
+    resolved = resolve_table_style(data, payload["style"])
+    assert list(resolved.index_links) == [2]
+    assert resolved.index_links[2].value == payload["plot_names"][-1]
+    assert list(payload["plots"][-1].data[0].y) == [15.0, 18.0, 21.0]
+    assert resolved.cell_css.get((0, "Latest"), {}) == {}
+    if label is None:
+        assert resolved.index_css == {}
+        assert "font-weight" not in resolved.cell_css.get((2, "Latest"), {})
+    else:
+        assert resolved.index_css == {2: {"font-weight": "bold", "border-top": "1px solid #000000"}}
+        for column in resolved.visible_columns:
+            assert resolved.cell_css[(2, column)]["font-weight"] == "bold"
+            assert resolved.cell_css[(2, column)]["border-top"] == "1px solid #000000"
+        assert "background-color" not in resolved.cell_css[(2, "Latest")]
+    pd.testing.assert_frame_equal(frame, original)
 
 
 @pytest.mark.parametrize("params", [[], "Latest", ["Latest", "latest"], ["0d MA"], ["3 months"], ["5Y 0d MA"]])

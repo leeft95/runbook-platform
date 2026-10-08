@@ -237,16 +237,6 @@ def build_ag_grid_column_defs(
                 "function": f"params.data && {values} && {values}[params.colDef.field] != null"
                 f" ? {values}[params.colDef.field] : ({fallback})"
             }
-        if cell_style_field is not None:
-            definition.update(
-                {
-                    "cellStyle": {
-                        "function": "(params.data && params.data["
-                        f"{json.dumps(cell_style_field)}] && params.data[{json.dumps(cell_style_field)}][params.colDef.field])"
-                        ' || {"textAlign": "center"}'
-                    },
-                }
-            )
         if cell_links_field is not None and cell_link_kinds and semantic.field in cell_link_kinds:
             definition.update(
                 {
@@ -267,6 +257,13 @@ def build_ag_grid_column_defs(
                 }
             )
         definitions.append(definition)
+    if cell_style_field is not None:
+        for definition in definitions:
+            definition["cellStyle"] = {
+                "function": "(params.data && params.data["
+                f"{json.dumps(cell_style_field)}] && params.data[{json.dumps(cell_style_field)}][params.colDef.field])"
+                ' || {"textAlign": "center"}'
+            }
     if isinstance(column_index, pd.MultiIndex):
         by_field = {item["field"]: item for item in definitions}
         fields = [str(column) for column in column_index]

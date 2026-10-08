@@ -565,5 +565,7 @@ def eu_power_rollup_table(
     This reference is not a recovered new_reports file. Supply one time-series
     frame of generation/load levels; for power or thermal shares supply ratios
     and format_spec="{:.1%}". Latest is the exact last input row.
+    The final series supplies the total, labeled "Total" by default; override
+    total_label or set it to None for inputs without a total series.
     """
     return rollup_table_hst(data, params, header, **options)

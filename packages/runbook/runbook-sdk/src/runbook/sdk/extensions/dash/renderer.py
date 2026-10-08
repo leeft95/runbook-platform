@@ -481,6 +481,7 @@ def _build_native_table(
             _apply_base_row_style(index_cell_style, row_pos, global_style.one_bg_color, global_style.background_color)
             _apply_width(index_cell_style, row_style)
             _apply_width(index_cell_style, resolved.index_width_px)
+            index_cell_style.update(_dash_style(resolved.index_css.get(row_pos, {})))
             display_row = len(body_rows)
             for level, spans in enumerate(index_spans):
                 if display_row not in spans:
@@ -1108,6 +1109,9 @@ def _records(
     if resolved is None:
         return records
 
+    index_style_fields = [index_field] if index_field is not None else []
+    if index_fields is not None:
+        index_style_fields = [name for name, _ in index_fields]
     result: list[dict[str, Any]] = []
     for row_pos, (record, index_value) in enumerate(zip(records, source.index, strict=True)):
         if row_pos in resolved.hidden_rows:
@@ -1127,6 +1131,11 @@ def _records(
             record[styles_field] = {
                 semantic.field: _ag_cell_style(resolved, row_pos, semantic.field) for semantic in semantics
             }
+            for field in index_style_fields:
+                record[styles_field][field] = {
+                    "textAlign": "center",
+                    **_dash_style(resolved.index_css.get(row_pos, {})),
+                }
         if formats_field is not None:
             record[formats_field] = {
                 semantic.field: _display_value(source[semantic.field].iloc[row_pos], semantic, resolved, row_pos)

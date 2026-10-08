@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from html import escape
 
 import numpy as np
 import pandas as pd
@@ -173,6 +174,23 @@ def test_render_table_html_renders_escaped_semantic_links_and_hides_dynamic_help
     assert 'class="col_heading' in html
     assert ">report<" not in html
     assert ">url<" not in html
+    header = re.search(r"<thead>(.*?)</thead>", html, re.S).group(1)
+    assert header.count("<tr>") == 1
+    assert 'href="https://example.test/all"' in header and "&lt;Region&gt;" in header
+
+
+@pytest.mark.parametrize("name", [None, "<Market>", "value"])
+def test_flat_index_heading_shares_the_column_header_row(name) -> None:
+    frame = pd.DataFrame({"value": [1, 2]}, index=pd.Index(["A", "B"], name=name))
+    frame.columns.name = "Columns"
+    original = frame.copy()
+    rendered = render_table_html(frame)
+    header = re.search(r"<thead>(.*?)</thead>", rendered, re.S).group(1)
+    assert header.count("<tr>") == 1
+    labels = re.findall(r"<th\b[^>]*>(.*?)</th>", header, re.S)
+    assert labels == [escape(name) if name is not None else "&nbsp;", "value"]
+    assert ">A</th>" in rendered and ">B</th>" in rendered
+    pd.testing.assert_frame_equal(frame, original)
 
 
 def test_index_links_resolve_row_labels_and_render_index_anchors() -> None:
@@ -694,6 +712,25 @@ def test_render_table_html_supports_target_row_positions() -> None:
     assert row1_col_a.get("background-color") == "#EEEEEE"
     assert row1_col_b.get("background-color") == "#EEEEEE"
     assert row0_col_a.get("background-color") == "lightblue"
+    assert resolve_table_style(df, style).index_css == {1: {"background-color": "#EEEEEE"}}
+    assert ".row_heading.row1" in html
+
+
+def test_conditional_row_rules_do_not_style_index_labels() -> None:
+    df = pd.DataFrame({"value": [-1.0, 2.0]}, index=["a", "b"])
+    style = {
+        "rules": [
+            {
+                "id": "negative",
+                "target": {"scope": "rows", "positions": [0, 1]},
+                "condition": {"all_of": [{"op": "lt", "rhs": {"kind": "literal", "value": 0}}]},
+                "action": {"text_color": "red"},
+            }
+        ]
+    }
+    resolved = resolve_table_style(df, style)
+    assert resolved.cell_css == {(0, "value"): {"color": "red"}}
+    assert resolved.index_css == {}
 
 
 def test_render_table_html_supports_lhs_column_conditions() -> None:
@@ -799,7 +836,8 @@ def test_render_table_html_supports_condition_all_of_and_any_of() -> None:
     assert row2_signal.get("color") is None
 
 
-def test_render_table_html_applies_global_styles_and_background_modes() -> None:
+@pytest.mark.parametrize("one_bg_color", [False, True])
+def test_render_table_html_applies_global_styles_and_background_modes(one_bg_color) -> None:
     df = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
     style = {
         "schema_version": "table-style/0.1",
@@ -807,7 +845,7 @@ def test_render_table_html_applies_global_styles_and_background_modes() -> None:
             "max_rows": 100,
             "global_style": {
                 "background_color": "#FAFAFA",
-                "one_bg_color": True,
+                "one_bg_color": one_bg_color,
                 "header_border_bottom": "1px solid black",
                 "table_border": "2px solid black",
                 "font_size": "11pt",
@@ -826,7 +864,13 @@ def test_render_table_html_applies_global_styles_and_background_modes() -> None:
     row0_col_a = _style_for_label(html, df, 0, "a")
     row1_col_a = _style_for_label(html, df, 1, "a")
     assert row0_col_a.get("background-color") == "#FAFAFA"
-    assert row1_col_a.get("background-color") == "#FAFAFA"
+    assert row1_col_a.get("background-color") == ("#FAFAFA" if one_bg_color else None)
+    for row in range(len(df)):
+        index_css = {}
+        for selectors, props in _extract_css_blocks(html):
+            if any(selector.endswith(f".row_heading.row{row}") for selector in selectors):
+                index_css.update(props)
+        assert index_css.get("background-color") == _style_for_label(html, df, row, "a").get("background-color")
 
 
 def test_render_table_html_supports_global_precision_thousands_and_column_override() -> None:

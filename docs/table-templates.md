@@ -101,6 +101,15 @@ a unique `DatetimeIndex` and one column per input series. It returns one row
 per series. `Latest` uses the final supplied row (after any `as_of` filter),
 not a per-series last non-null observation. Input data is never modified or filled.
 
+The **final input column supplies the total row**. For example, the power demo's
+`Load` is total load, not an additional component. The template displays that row
+as **Total**, with a top border and bold label and values in every renderer.
+It uses the supplied series directly; it does not sum components or append a row.
+Use `total_label="Load"` (or any other name) to override the label, or
+`total_label=None` when the input has no total series. Linked plots use the same
+label and supplied total data; `row_plot_links` selections accept the original
+input column name.
+
 ```python
 from runbook.core.table.templates import rollup_table_hst
 

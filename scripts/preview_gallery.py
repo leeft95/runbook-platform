@@ -467,7 +467,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         "Power shares · calendar roll-ups",
         "The same numeric z-score rules apply to shares, displayed as percentages. All averages are eligible for highlighting; Latest is excluded.",
         eu_power_rollup_table,
-        power.drop(columns="Load").div(power.Load, axis=0),
+        power.div(power.Load, axis=0),
         header="EU power share",
         format_spec="{:.1%}",
     )
