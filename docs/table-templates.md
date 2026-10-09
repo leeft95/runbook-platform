@@ -26,6 +26,17 @@ links and a live HTML / native Dash / AG Grid comparison for every table.
 Without `--serve`, it exports the gallery to `/tmp/runbook-gallery/index.html`.
 Every preview card names its public template function.
 
+For the roll-up options, including totals, highlighting, formatting and custom
+page links, generate the focused HTML / native Dash comparison:
+
+```bash
+pixi run python scripts/preview_rollup_options.py --serve --port 8767
+```
+
+Open `http://127.0.0.1:8767/` for all 21 examples. Each example includes its
+function call and a link to its renderer comparison. This produces HTML pages,
+not a notebook file; without `--serve`, the files are in `/tmp/runbook-rollup-options`.
+
 ## Named table templates
 
 Import these from `runbook.core.table.templates`. They return the same
@@ -99,17 +110,40 @@ Its lower-level helper `grouped_metrics_table` remains available and accepts arb
 
 `rollup_table_hst(df, params)` takes **one numeric time-series DataFrame** with
 a unique `DatetimeIndex` and one column per input series. It returns one row
-per series. `Latest` uses the final supplied row (after any `as_of` filter),
+per series, plus a calculated total when needed. `Latest` uses the final supplied row (after any `as_of` filter),
 not a per-series last non-null observation. Input data is never modified or filled.
 
-The **final input column supplies the total row**. For example, the power demo's
-`Load` is total load, not an additional component. The template displays that row
-as **Total**, with a top border and bold label and values in every renderer.
-It uses the supplied series directly; it does not sum components or append a row.
-Use `total_label="Load"` (or any other name) to override the label, or
-`total_label=None` when the input has no total series. Linked plots use the same
-label and supplied total data; `row_plot_links` selections accept the original
-input column name.
+`include_total=True` by default. `total_label=None` means **Total**. If an input
+column matches that label, it is treated as a precomputed total and moved to
+the last output row. For example, use `total_label="Load"` when `Load` already
+contains total load. Otherwise, the template appends a total summing each
+displayed column across all component rows. Missing values are skipped;
+all-missing columns stay missing. A custom label without a matching input
+column simply names this calculated sum. The total label and values are bold
+with a top border in every renderer.
+
+Linked total plots use the supplied total series or the sum of component
+histories. Table totals sum the displayed aggregates, so unequal missing dates
+do not change their meaning into the average of the summed history.
+`row_plot_links` selections use the displayed row labels.
+`all_plots_link=False` disables the heading's link to all charts. Row links
+and generated plots are unchanged by this switch.
+`all_plots_link` and `row_plot_links` also accept a string containing an
+absolute HTTP(S) URL or a relative report-page URL. The string is used as the
+link destination verbatim; it does not name or create a generated plot page.
+For example, `all_plots_link="../power.html"` links the heading to that page,
+and `row_plot_links="/reports/power"` links every row to the supplied route.
+A bare string is a relative URL, not a report-ID lookup. For Runbook's default
+report route, use `all_plots_link=f"/report/{report_id}"`; the target report's
+layout controls which plots appear on that page.
+
+Set `include_total=False` to omit the total and its companion plots. A matching
+precomputed total column is removed; all component columns are retained. This
+works for `rollup_table_hst`, `rollup_table_fcst` and `eu_power_rollup_table`.
+
+```python
+payload = rollup_table_fcst(power_ts, include_total=False)["Roll-up"]
+```
 
 ```python
 from runbook.core.table.templates import rollup_table_hst
@@ -156,19 +190,32 @@ heading links to all generated figures, with the ordinary `plot_names` and
 calculation as the table. `row_plot_links=False` and `all_plots_link=False`
 disable links; the generated figures remain available in `plots`.
 
-Columns are centered by default. **Every moving-average column**, including
-historical references, uses the general linked table's z-score highlighting.
-`Latest` itself is excluded. The signal is Latest minus the displayed column's
-mean, divided by its reference sample standard deviation:
+Columns are centered by default. **Latest and 20d MA receive z-score
+highlighting by default**, when present in the displayed columns.
+`use_highlighting` can select any displayed column, including historical
+references. Each column has its own signal and reference series: subtract
+that series' reference mean from the displayed value, then divide by its
+reference sample standard deviation.
 
-- Current MAs use observations in that column's calendar window.
-- `Y-1` (or `Y-N`) uses observations in the matching window of that prior year.
-- `5Y` (or `NY`) uses the prior yearly window averages, giving each available
-  year equal weight and respecting `exclude_years`.
+- Latest uses the trailing 20-calendar-day observations ending at the Latest date,
+  even when the 20d MA column is not displayed.
+- Current MAs use the trailing 20 calendar days of their rolling-average series.
+  For example, 20d MA is compared with the recent history of 20d moving averages,
+  independently of Latest's raw-data reference.
+- `Y-1` (or `Y-N`) uses that MA series' trailing 20 calendar days at the prior-year date.
+- `5Y` (or `NY`) reconstructs the same prior-year average at each recent
+  observation date, giving available years equal weight and respecting
+  `exclude_years`, then scores the current value against that recent history.
+
+Both Latest and 20d MA being green indicates that the latest level and smoothed
+trend are elevated relative to their own recent histories. The colours can
+also disagree, for example after a pullback while the MA remains elevated.
+This is a pair of deviation indicators used to assess momentum, not a literal
+percentage rate-of-change calculation.
 
 By default, above +1/+2 SD is light green/green; below -1/-2 SD is orange/red.
 Set `std_limits=(1.5, 2.5)` to move those bands to ±1.5/±2.5 SD for every
-highlighted average column. Both limits must be finite and positive, with the
+highlighted column. Both limits must be finite and positive, with the
 mild limit smaller than the strong limit. Comparisons are strict: a value
 exactly on a limit does not trigger that band. This changes only highlighting,
 not the averages or standard deviations used in the calculations.
@@ -182,11 +229,18 @@ payload = rollup_table_hst(power_ts, std_limits=(1.5, 2.5))["Roll-up"]
 Missing or zero dispersion produces no z-score highlight. Rules work on underlying
 numeric values, regardless of whether they display as prices, volumes,
 percentages or other numeric formats. Hidden helper columns carry the statistics.
-Use `highlight_columns` to select a subset of current/historical MA columns,
-or `highlight_columns=[]` to disable bands. `Latest` cannot be selected.
+Omit `use_highlighting` or pass `None` for Latest and 20d MA; pass a list to
+select any displayed columns, or `use_highlighting=[]` to disable bands.
+`highlight_columns` remains a compatible spelling; `use_highlighting` takes
+precedence when supplied. Columns absent from custom `params` are skipped by
+the default selection; explicitly selecting an absent column raises an error.
 Negative numbers continue to use the shared red-text rule.
 
-Use `format_spec` for precision or percentages,
+By default, integer output columns display 0 decimal places and floating-point
+columns display 2, including floats with whole-number values. Means are float
+columns even when calculated from integers. This changes display only; numeric
+data and z-score statistics retain their full precision.
+Use `format_spec` to override precision or display percentages,
 `rules` for additional shared `TableRule` overrides, `footer`
 for a custom note, and `plot_options` for seasonal chart settings. Roll-ups have
 no footer by default.
@@ -197,13 +251,14 @@ no footer by default.
 time-series DataFrame containing forecasts. It keeps the historical template's
 formats, total row, links, calendar windows and configurable `std_limits`.
 
-All values are calculated from **`df`**. The optional **`df_hst`** selects the
-Latest date using the index of its final supplied row. If it is `None` or empty,
-the final supplied row of **`df`** selects that date. `Latest` reads the exact
-matching row in `df`, including missing values; a missing date stays missing.
-Historical values are not merged into `df`. Every moving average and prior-year
-comparison is anchored to this same Latest date, excluding later observations
-from its window.
+All moving averages are calculated from **`df`**. When **`df_hst`** is supplied,
+its final row provides the **Latest values** and its index provides the anchor
+date. Values are matched to `df` columns by name; missing columns or values stay
+missing. Extra history columns do not add table rows. Without history (None or
+empty), Latest uses today's exact row in `df`; a missing date stays missing,
+without falling back to the final forecast row. Every moving average and
+prior-year comparison uses `df`, anchored to this Latest date and excluding
+later observations. Historical values are not merged into the forecast data.
 
 The default columns, in order, are **Current Month**, **Latest**, **5d MA**,
 **20d MA**, **3m MA**, **Y-1 20d MA**, and **5Y 20d MA**. `params` selects and
@@ -212,18 +267,20 @@ orders them, with the same customizable MA windows as `rollup_table_hst`.
 **Current Month** averages all supplied observations in today's calendar month,
 including future dates in that month. This month is independent of the Latest
 date. `today` optionally fixes the current date for a reproducible report;
-otherwise the date is read in `df`'s timezone. It does not change the Latest
-date or the MA anchor. Missing observations are skipped without filling.
+otherwise `datetime.today()` supplies the current calendar date, interpreted
+in `df`'s timezone. This also sets the Latest/MA anchor when no history is supplied;
+with history, its final row continues to set that anchor. Missing observations are skipped without filling.
 
 ```python
 from runbook.core.table import rollup_table_fcst
 
 payload = rollup_table_fcst(
     forecast_ts,
-    df_hst=historical_ts,  # Optional; otherwise use forecast_ts's final row date.
+    df_hst=historical_ts,  # Latest values and date; omit to use today in forecast_ts.
     header="EU power forecast",
     std_limits=(1.5, 2.5),
-    format_spec="{:,.1f}",
+    use_highlighting=["Latest", "20d MA"],  # These are also the defaults.
+    all_plots_link="../power.html",
 )["EU power forecast"]
 ```
 
@@ -232,10 +289,18 @@ Current Month uses all supplied July observations, while Latest and every MA
 reference June 20. The linked history and seasonal charts retain all supplied
 data, including forecasts after that date.
 
-Current Month also receives z-score highlighting, comparing Latest with the
-month's mean and sample standard deviation. `std_limits` applies to it and
-all MA columns. `highlight_columns` can select average columns or disable
-highlighting with `[]`; Latest itself remains excluded.
+**Latest and 20d MA are highlighted by default.** Omitting `use_highlighting`
+or passing `None` uses those columns when present; a list selects any displayed
+columns, and `[]` disables the colours. Latest uses the trailing
+20-calendar-day raw-data reference mean and sample standard deviation from
+`df_hst` when provided, otherwise `df`. MAs use their rolling-average histories
+from `df` over the trailing 20 calendar days. Both windows end at the Latest anchor;
+earlier or future observations are excluded from the z-score reference sample.
+Current Month is opt-in: its value is scored against monthly averages in the
+last 20 calendar months, including the current month. Every selected column
+uses its own value and reference with the configured `std_limits`.
+`highlight_columns` remains supported.
+Negative values remain red in every column; values and averages are unchanged.
 
 ## Calendar balance tables
 
@@ -285,7 +350,9 @@ table.** Monthly, quarterly and seasonal tables alternate blue/white rows;
 annual tables use solid blue, matching the reference. The period label is
 the first visible column, with no extra index-name row. No total row is added.
 
-The shared options include `header`, `format_spec` (default `"{:,.0f}"`),
+Integer output columns default to 0 decimal places and float columns to 2.
+These tables calculate means, so their numeric results are normally floats.
+The shared options include `header`, `format_spec` (an optional override),
 `column_formats` for per-column formats, `column_width`/`index_width` (85 pixels
 each), and `rules` for additional style overrides. Formatting leaves numeric
 values intact. Each template returns `{header: {"data": frame, "style": plan,
@@ -319,6 +386,9 @@ explicit opt-in for interactive table output; it is not the default table
 representation.
 
 All columns are centered by default in HTML, native Dash, and AG Grid.
+HTML index cells have explicit table-scoped alignment so notebook CSS cannot
+replace the default with right alignment. Unformatted numeric columns display
+integers at 0 decimal places and floats at 2; explicit formats take precedence.
 Explicit `TableAction(text_align="left")` or `text_align="right"` rules override
 the default for selected cells. Header alignment uses
 `TableGlobalStyle.header_text_align`, which also defaults to `"center"`.
@@ -509,6 +579,22 @@ label column cells, even when the table headings are periods; its
 `all_plots_link=True` links that label column's header. A filtered-out series
 has no row link; aggregation labels such as `Brent [MA]` are used as the
 displayed cell value.
+
+For these builders and their report presets, string link options target an
+absolute HTTP(S) URL or relative report page instead of generated plot pages.
+`column_plot_links="../detail.html"` links all general-table column headings
+to that page; `row_plot_links="/reports/power"` links all monthly-table row
+labels. `all_plots_link` accepts the same
+strings for the label heading. `True` retains generated plot links and
+`False` disables them. Custom destinations are not added to `all_plots_name`
+or validated as plot artifacts. Existing companion plots are still returned.
+
+`highlight_columns` selects the columns receiving z-score colours: data series
+columns in the general table and rolling-window columns in monthly summaries.
+Roll-ups support `use_highlighting` (or `highlight_columns`) for any displayed
+column, defaulting to Latest and 20d MA. `None` keeps the default selection; `[]` disables
+the colours. Invalid column names raise an error. Negative values remain red,
+and formatting choices do not change the calculations.
 
 For example, link every input series or select only one while keeping the
 aggregate link:
@@ -738,8 +824,14 @@ html = render_table_html(payload["data"], plan)
 table_ref = ctx.artifact.table(payload["data"], name="cot", style=plan)
 ```
 
-Omit `group_column` or `plot_links` when unused. Plot link values must name
-artifacts/pages that the report publishes. The template keeps values numeric;
+Omit `group_column` or `plot_links` when unused. A string `plot_links` links all
+assets to that absolute HTTP(S) URL or relative report page. In an asset mapping,
+bare names retain named plot-artifact routing; values containing `/`, `.`, `?`,
+`#` or `:` are page URLs, e.g. `{"Brent Fut": "../brent.html"}`. Legacy
+`plots/name.json` references retain plot routing. Custom pages
+do not need to be published plot artifacts. `highlight_columns` selects the
+columns receiving the report's existing score/percentile colour rules;
+`[]` disables those colours and retains red negatives. The template keeps values numeric;
 it returns data, style and an empty `plots` list, without writing files or
 creating companion figures. `position_label` optionally changes the displayed
 net-position heading for dealers or investment funds. Optional

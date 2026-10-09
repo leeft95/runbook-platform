@@ -872,7 +872,7 @@ def _display_value(value: Any, semantic: PDLColumn, resolved: Any, row_pos: int 
                 thousands=resolved.thousands,
             )
         )
-    if semantic.format is None and resolved.links:
+    if semantic.format is None:
         return _display_scalar(format_table_value(value, na_rep=resolved.na_rep, default=True))
     return _format_pdl_value(value, semantic.format)
 

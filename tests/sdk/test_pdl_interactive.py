@@ -802,4 +802,4 @@ def test_native_and_html_linked_unformatted_numeric_values_match() -> None:
     html_match = re.search(r"<a\b[^>]*>([^<]*)</a>", html)
 
     assert html_match is not None
-    assert native_text == html_match.group(1) == "1.234568"
+    assert native_text == html_match.group(1) == "1.23"

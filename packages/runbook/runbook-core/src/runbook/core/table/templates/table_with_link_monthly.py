@@ -30,7 +30,13 @@ from ..models import (
     TableTarget,
     TargetScope,
 )
-from .common import _aligned_moving_average, _build_plot_link_metadata, color_negative_red, highlight_zscore
+from .common import (
+    _aligned_moving_average,
+    _build_plot_link_metadata,
+    _select_highlight_columns,
+    color_negative_red,
+    highlight_zscore,
+)
 
 
 def _month_end(ts: pd.Timestamp) -> pd.Timestamp:
@@ -306,6 +312,7 @@ def _build_monthly_style(
     window_columns: list[str],
     plot_target_column: str | None = None,
     links: list[TableLink] | None = None,
+    highlight_columns: tp.Sequence[str] | None = None,
 ) -> dict[str, tp.Any]:
     """Build monthly style."""
     all_columns = [str(col) for col in ret_df.columns]
@@ -337,10 +344,15 @@ def _build_monthly_style(
         data_col_positions = [idx for idx, col in enumerate(all_columns) if col in data_cols]
         rules.extend(color_negative_red(list(ret_df.columns), [(pos, pos) for pos in data_col_positions]))
 
+    highlighted = _select_highlight_columns(window_columns, highlight_columns)
     rules.extend(
         highlight_zscore(
             all_columns,
-            [(col, f"_mean{i if i else ''}", f"_std{i if i else ''}") for i, col in enumerate(window_columns)],
+            [
+                (col, f"_mean{i if i else ''}", f"_std{i if i else ''}")
+                for i, col in enumerate(window_columns)
+                if col in highlighted
+            ],
         )
     )
 
@@ -394,8 +406,8 @@ def table_with_linked_plots_monthly(
     benchmark_quarter: tp.Any = None,
     fill_na: str | None = None,
     na_rep: str | None = "-",
-    row_plot_links: bool | list[str] = False,
-    all_plots_link: bool = False,
+    row_plot_links: bool | list[str] | str = False,
+    all_plots_link: bool | str = False,
     *,
     windows: tuple[int, ...] = (10, 20),
     history_months: int = 5,
@@ -407,6 +419,7 @@ def table_with_linked_plots_monthly(
     as_of: str | pd.Timestamp | None = None,
     smooth: int | None = None,
     mtd: bool = False,
+    highlight_columns: tp.Sequence[str] | None = None,
 ) -> dict[str, dict[str, tp.Any]]:
     """Build the predefined monthly summary table with linked seasonal plots.
 
@@ -416,6 +429,9 @@ def table_with_linked_plots_monthly(
     input series whose displayed row labels receive those plot links.
     Auxiliary ``_mean``/``_std`` columns are retained for rule evaluation and
     hidden at render time.
+    String link options target absolute URLs or relative report pages.
+    ``highlight_columns`` selects rolling-window highlights; [] disables
+    coloured highlights while retaining red negative values.
 
     ``windows`` counts observations for daily inputs and calendar months for
     monthly inputs. Use ``windows=(20,), history_months=3, comparison_years=5``
@@ -448,7 +464,9 @@ def table_with_linked_plots_monthly(
     if mtd and smooth is not None:
         raise ValueError("mtd and smooth cannot be combined")
     moving_average_type = MovingAvgModes(moving_average_type)
-    link_requested = bool(row_plot_links or all_plots_link)
+    link_requested = (
+        bool(row_plot_links or all_plots_link) or isinstance(row_plot_links, str) or isinstance(all_plots_link, str)
+    )
     if link_requested and (header is None or not str(header).strip()):
         raise ValueError("table/header name must not be blank when plot links are requested")
 
@@ -507,6 +525,7 @@ def table_with_linked_plots_monthly(
     plot_names: list[str] | None = None
     all_plots_name: str | None = None
     selected_plot_targets: dict[str, str] = {}
+    heading_destination: TableLinkDestination | None = None
     if link_requested:
         plot_type = "seasonal-mva" if moving_average_window is not None else "seasonal"
         plot_names, plot_metadata_links, all_plots_name = _build_plot_link_metadata(
@@ -522,6 +541,9 @@ def table_with_linked_plots_monthly(
             for link in plot_metadata_links
             if link.area == "header" and link.field is not None and link.destination.value is not None
         }
+        heading_destination = next(
+            (link.destination for link in plot_metadata_links if link.area == "index_header"), None
+        )
 
     label_column = _unique_column_name(str(header) if header is not None else "index", table_df.columns)
     table_df.index.name = label_column
@@ -536,16 +558,19 @@ def table_with_linked_plots_monthly(
             TableLink(
                 area="cells",
                 field=label_column,
-                destination=TableLinkDestination(kind=TableLinkKind.plot, value_field=plot_target_column),
+                destination=TableLinkDestination(
+                    kind=TableLinkKind.url if isinstance(row_plot_links, str) else TableLinkKind.plot,
+                    value_field=plot_target_column,
+                ),
             )
         ]
-    if all_plots_name is not None:
+    if heading_destination is not None:
         links = [*(links or ())]
         links.append(
             TableLink(
                 area="header",
                 field=label_column,
-                destination=TableLinkDestination(kind=TableLinkKind.plot, value=all_plots_name),
+                destination=heading_destination,
             )
         )
     payload: dict[str, tp.Any] = {
@@ -557,6 +582,7 @@ def table_with_linked_plots_monthly(
             window_columns=window_columns,
             plot_target_column=plot_target_column,
             links=links,
+            highlight_columns=highlight_columns,
         ),
         "plots": seasonal_plots,
     }

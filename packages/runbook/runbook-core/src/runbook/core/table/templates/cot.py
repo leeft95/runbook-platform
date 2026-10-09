@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pandas as pd
@@ -24,8 +24,9 @@ from ..models import (
     TableStylePlan,
     TableTarget,
     TargetScope,
+    validate_link_url,
 )
-from .common import color_negative_red, highlight
+from .common import _select_highlight_columns, color_negative_red, highlight
 
 
 def cot_summary_table(
@@ -37,7 +38,8 @@ def cot_summary_table(
     position_label: str | None = None,
     internal_change_label: str = "Internal Change",
     group_column: str | None = None,
-    plot_links: Mapping[str, str] | None = None,
+    plot_links: Mapping[str, str] | str | None = None,
+    highlight_columns: Sequence[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Style full or filtered ``cot_summary`` rows, retaining numeric semantics.
 
@@ -49,7 +51,12 @@ def cot_summary_table(
     Optional noncommercial positions are displayed next to the asset name.
     ``group_column`` adds a separator after each contiguous instrument group;
     it is hidden along with calculation helpers. ``plot_links`` maps asset
-    labels to existing named plot artifacts or aggregate plot pages. No files
+    labels to existing named plot artifacts or custom URLs/relative report
+    pages. A single string links every asset to that page. Bare mapping values
+    remain plot names; values containing /, ., ?, # or : are page URLs.
+    Legacy ``plots/name.json`` artifact references retain plot routing.
+    ``highlight_columns`` selects coloured columns; [] disables highlights,
+    retaining red negative values. No files
     are written, and the source summary is not modified.
     """
     if not summary.columns.is_unique or not all(isinstance(col, str) for col in summary.columns):
@@ -82,22 +89,40 @@ def cot_summary_table(
     ]
     links = None
     if plot_links is not None:
-        unknown = set(plot_links) - set(frame[label_column])
+        targets = dict.fromkeys(frame[label_column], plot_links) if isinstance(plot_links, str) else plot_links
+        if isinstance(plot_links, str):
+            validate_link_url(plot_links)
+        unknown = set(targets) - set(frame[label_column])
         if unknown:
             raise ValueError(f"Unknown linked assets: {sorted(unknown)}")
-        # Validate fixed targets even when an empty/filtered frame has no link cells.
-        for name in plot_links.values():
-            TableLinkDestination(kind=TableLinkKind.plot, value=name)
-        frame["_plot_link"] = frame[label_column].map(plot_links)
-        hidden = [*hidden, "_plot_link"]
-        links = [
-            TableLink(
-                area="cells",
-                field=label_column,
-                destination=TableLinkDestination(kind=TableLinkKind.plot, value_field="_plot_link"),
+        destinations: dict[TableLinkKind, dict[str, str]] = {}
+        for asset, name in targets.items():
+            kind = (
+                TableLinkKind.url
+                if isinstance(plot_links, str)
+                or (
+                    any(char in name for char in "/.?#:") and not (name.startswith("plots/") and name.endswith(".json"))
+                )
+                else TableLinkKind.plot
             )
-        ]
+            if kind == TableLinkKind.url:
+                validate_link_url(name)
+            TableLinkDestination(kind=kind, value=name)
+            destinations.setdefault(kind, {})[asset] = name
+        links = []
+        for kind, target_values in destinations.items():
+            field = f"_{kind.value}_link"
+            frame[field] = frame[label_column].map(target_values)
+            hidden.append(field)
+            links.append(
+                TableLink(
+                    area="cells",
+                    field=label_column,
+                    destination=TableLinkDestination(kind=kind, value_field=field),
+                )
+            )
     visible = [col for col in frame if col not in hidden]
+    highlighted = _select_highlight_columns(visible, highlight_columns)
     percents = {
         "% OI",
         "Weekly Price Change",
@@ -148,16 +173,20 @@ def cot_summary_table(
         highlight(
             list(frame.columns),
             [
-                (label_column, "net pos rank", "_thr_high", "_thr_low"),
-                ("% OI", "net/oi pct rank", "_thr_high", "_thr_low"),
-                ("Weekly Price Change", "_price_chg", "_thr_high", "_thr_low"),
-                ("Weekly Delta Change", "net change z score", "_z_high", "_z_low"),
-                ("4w change of price", "4w price change z score", "_z_high", "_z_low"),
-                ("4w change of net position", "4w delta change z score", "_z_high", "_z_low"),
-                ("Net percentile", "_thr_net"),
-                ("Net/OI percentile", "_thr_net"),
-                ("Long percentile", "_thr_high8", "_thr_low8"),
-                ("Short percentile", "_thr_high8", "_thr_low8"),
+                target
+                for target in [
+                    (label_column, "net pos rank", "_thr_high", "_thr_low"),
+                    ("% OI", "net/oi pct rank", "_thr_high", "_thr_low"),
+                    ("Weekly Price Change", "_price_chg", "_thr_high", "_thr_low"),
+                    ("Weekly Delta Change", "net change z score", "_z_high", "_z_low"),
+                    ("4w change of price", "4w price change z score", "_z_high", "_z_low"),
+                    ("4w change of net position", "4w delta change z score", "_z_high", "_z_low"),
+                    ("Net percentile", "_thr_net"),
+                    ("Net/OI percentile", "_thr_net"),
+                    ("Long percentile", "_thr_high8", "_thr_low8"),
+                    ("Short percentile", "_thr_high8", "_thr_low8"),
+                ]
+                if target[0] in highlighted
             ],
         )
     )

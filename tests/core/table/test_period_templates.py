@@ -101,6 +101,7 @@ def test_period_templates_use_all_supplied_observations_for_calendar_means_and_y
     assert payload["plots"] == []
     resolved = table.resolve_table_style(result, payload["style"])
     assert resolved.formats["Ratio"].digits == 2
+    assert resolved.formats["Level"].digits == 2
     assert resolved.global_style.one_bg_color == (period == "annual")
     for row in range(len(result)):
         if pd.notna(result.Negative.iloc[row]):

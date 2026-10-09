@@ -28,11 +28,13 @@ NonEmptyRef = Annotated[str, StringConstraints(min_length=1)]
 
 def validate_link_url(value: str) -> str:
     """Validate a link URL accepted by table and standalone link renderers."""
-    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in value):
-        raise ValueError(f"table URL contains whitespace or control characters: {value!r}")
+    if not value or "\\" in value or any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        raise ValueError(f"table URL is empty or contains whitespace, backslashes or control characters: {value!r}")
     parsed = urlsplit(value)
+    if not parsed.scheme and not parsed.netloc and not value.startswith("//"):
+        return value
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
-        raise ValueError(f"table URL must use an http or https scheme: {value!r}")
+        raise ValueError(f"table URL must use http or https, or a local page path: {value!r}")
     return value
 
 

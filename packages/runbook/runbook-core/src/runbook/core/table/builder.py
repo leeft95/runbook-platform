@@ -737,7 +737,7 @@ def format_table_value(
         return formatted.replace(",", thousands) if thousands and thousands != "," else formatted
 
     if default and isinstance(value, Real) and not isinstance(value, Integral):
-        return f"{value:.6f}"
+        return f"{value:.2f}"
 
     return value
 
@@ -745,6 +745,15 @@ def format_table_value(
 def _formatter_from_spec(spec: TableFormatSpec) -> Callable[[Any], Any]:
     """Return a renderer-neutral table scalar formatter for pandas Styler."""
     return lambda value: format_table_value(value, spec)
+
+
+def _default_numeric_formats(df: pd.DataFrame, *, thousands: bool = False) -> dict[str, TableFormatSpec]:
+    """Use zero decimals for integer columns and two for floating-point columns."""
+    return {
+        str(column): TableFormatNumber(digits=0 if pd.api.types.is_integer_dtype(dtype) else 2, thousands=thousands)
+        for column, dtype in df.dtypes.items()
+        if pd.api.types.is_integer_dtype(dtype) or pd.api.types.is_float_dtype(dtype)
+    }
 
 
 def link_anchor(display: str, destination: TableLinkDestination) -> str:
@@ -915,6 +924,10 @@ def render_table_html(
             ],
         },
         {
+            "selector": ".row_heading",
+            "props": [("text-align", "center")],
+        },
+        {
             "selector": "",
             "props": [
                 ("border", global_style.table_border),
@@ -955,9 +968,10 @@ def render_table_html(
         if css:
             table_styles.append({"selector": f".row_heading.row{row_pos}", "props": list(css.items())})
 
+    formats = _default_numeric_formats(visible_df) if resolved.precision is None and resolved.thousands is None else {}
+    formats.update(resolved.formats)
     formatter_map = {
-        visible_df.columns[visible_col_lookup[col]]: _formatter_from_spec(spec)
-        for col, spec in resolved.formats.items()
+        visible_df.columns[visible_col_lookup[col]]: _formatter_from_spec(spec) for col, spec in formats.items()
     }
 
     table_attrs = f'class="{escape(table_class)}" data-style-schema="{escape(resolved.schema_version)}"'

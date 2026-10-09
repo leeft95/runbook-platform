@@ -55,6 +55,36 @@ def test_internal_change_placeholder_can_be_overridden_without_changing_summary_
     assert style.formats["Model change"].digits == 2
 
 
+def test_cot_custom_pages_and_selected_highlights_preserve_negative_text() -> None:
+    frame = pd.read_csv("data/fixtures/cot/summary.csv")
+    assets = frame.iloc[:, 0].tolist()
+    pages = {
+        assets[0]: "plots/cot-brent.json",
+        assets[1]: "../reports/brent.html",
+        assets[2]: "https://example.test/wti",
+    }
+    payload = cot_cme_summary_table(frame, header="COT", plot_links=pages, highlight_columns=["Weekly Delta Change"])[
+        "COT"
+    ]
+    resolved = resolve_table_style(payload["data"], payload["style"])
+    links = [resolved.cell_links[(row, frame.columns[0])] for row in range(3)]
+    assert [link.kind.value for link in links] == ["plot", "url", "url"]
+    assert [link.value for link in links] == list(pages.values())
+    assert (3, frame.columns[0]) not in resolved.cell_links
+    assert {column for (_, column), css in resolved.cell_css.items() if "background-color" in css} == {
+        "Weekly Delta Change"
+    }
+    assert resolved.cell_css[(2, "Weekly Delta Change")]["color"] == "red"
+    assert 'href="../reports/brent.html"' in render_table_html(payload["data"], payload["style"])
+    shared = cot_cme_summary_table(frame, header="COT", plot_links="./positioning.html", highlight_columns=[])["COT"]
+    shared_style = resolve_table_style(shared["data"], shared["style"])
+    assert len(shared_style.cell_links) == len(frame)
+    assert all(
+        link.kind.value == "url" and link.value == "./positioning.html" for link in shared_style.cell_links.values()
+    )
+    assert not any("background-color" in css for css in shared_style.cell_css.values())
+
+
 def test_cot_template_handles_reordered_columns_and_empty_screeners() -> None:
     frame = pd.read_csv("data/fixtures/cot/summary.csv").rename(
         columns={"24-Jun to 01-Jul": "Asset", "Net Position (MM)": "Net Position"}

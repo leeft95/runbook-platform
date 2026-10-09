@@ -230,6 +230,13 @@ def build_ag_grid_column_defs(
                 na_rep=na_rep,
                 thousands_separator=resolved.thousands,
             )
+        elif pa.types.is_integer(schema.field(semantic.field).type) or pa.types.is_floating(
+            schema.field(semantic.field).type
+        ):
+            definition["valueFormatter"] = _formatter(
+                TableFormatNumber(digits=0 if pa.types.is_integer(schema.field(semantic.field).type) else 2),
+                na_rep=na_rep,
+            )
         if cell_formats_field is not None:
             values = f"params.data[{json.dumps(cell_formats_field)}]"
             fallback = definition.get("valueFormatter", {}).get("function", "params.value")

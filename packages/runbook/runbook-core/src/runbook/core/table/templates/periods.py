@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 import pandas as pd
 
+from ..builder import _default_numeric_formats
 from ..models import (
     TableColumnSizing,
     TableFormatSpec,
@@ -30,8 +31,8 @@ from .table_with_link_monthly import _normalize_input_frame
 def monthly_table(df: pd.DataFrame, header: str = "Monthly", **options: Any) -> dict[str, dict[str, Any]]:
     """Average observations by calendar month, displaying labels such as Apr26.
 
-    Shared options: ``format_spec`` defaults to
-    ``'{:,.0f}'``; ``column_formats`` overrides individual series, e.g.
+    By default, integer output columns use 0 decimals and floats use 2.
+    ``format_spec`` overrides all columns; ``column_formats`` overrides individual series, e.g.
     ``{'NATL_GS': '{:.2f}'}``. ``column_width``/``index_width`` default to
     85/85 pixels, and ``rules`` appends shared style overrides.
 
@@ -120,7 +121,7 @@ def period_table(
     header: str | None = None,
     *,
     yoy: bool = False,
-    format_spec: TableFormatSpec | str = "{:,.0f}",
+    format_spec: TableFormatSpec | str | None = None,
     column_formats: Mapping[str, TableFormatSpec | str] | None = None,
     column_width: int = 85,
     index_width: int = 85,
@@ -185,7 +186,11 @@ def period_table(
 
     if unknown := set(column_formats or {}) - set(result.columns):
         raise ValueError(f"Unknown column_formats columns: {sorted(unknown)}")
-    formats = {column: format_spec for column in result}
+    formats: dict[str, TableFormatSpec | str] = (
+        dict(_default_numeric_formats(result, thousands=True))
+        if format_spec is None
+        else {column: format_spec for column in result}
+    )
     formats.update(column_formats or {})
     plan = TableStylePlan(
         format=TableStyleFormat(

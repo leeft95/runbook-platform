@@ -23,7 +23,13 @@ from ..models import (
     TableTarget,
     TargetScope,
 )
-from .common import _aligned_moving_average, _build_plot_link_metadata, color_negative_red, highlight_zscore
+from .common import (
+    _aligned_moving_average,
+    _build_plot_link_metadata,
+    _select_highlight_columns,
+    color_negative_red,
+    highlight_zscore,
+)
 
 
 def _normalize_input_frame(
@@ -193,6 +199,7 @@ def _build_general_style(
     footer: str | None,
     na_rep: str | None,
     links: list[TableLink] | None = None,
+    highlight_columns: tp.Sequence[str] | None = None,
 ) -> dict[str, tp.Any]:
     """Build general style."""
     visible_data_cols = [str(col) for col in ret_df.columns if str(col) not in helper_columns]
@@ -223,7 +230,7 @@ def _build_general_style(
     rules.extend(color_negative_red(list(ret_df.columns), [(pos, pos) for pos in data_col_positions]))
 
     zscore_targets: list[tuple[int, int, str, str]] = []
-    for visible_col in visible_data_cols:
+    for visible_col in _select_highlight_columns(visible_data_cols, highlight_columns):
         target_pos = tp.cast(int, ret_df.columns.get_loc(visible_col))
         signal_pos = tp.cast(int, ret_df.columns.get_loc(f"{visible_col}_chg"))
         zscore_targets.append(
@@ -274,10 +281,11 @@ def general_table_with_link(
     data_column_width: int = 60,
     fill_na: str | None = None,
     na_rep: str | None = "-",
-    column_plot_links: bool | list[str] = False,
-    all_plots_link: bool = False,
+    column_plot_links: bool | list[str] | str = False,
+    all_plots_link: bool | str = False,
     *,
     exclude_years: list[int] | None = None,
+    highlight_columns: tp.Sequence[str] | None = None,
 ) -> dict[str, dict[str, tp.Any]]:
     """Build a daily table with linked plots using legacy mixed-row highlight semantics.
 
@@ -287,6 +295,10 @@ def general_table_with_link(
 
     - dated rows by testing 1-day change versus rolling change mean/std
     - the final summary row by testing raw level versus a Bollinger-style band
+
+    ``highlight_columns`` selects coloured columns; [] disables highlights,
+    retaining red negative values. String link options point to custom page
+    URLs; True uses generated plots, False disables the corresponding links.
 
     The returned payload matches the predefined helper contract:
     ``{table_key: {"data": df, "style": style_payload, "plots": plots}}``.
@@ -298,7 +310,11 @@ def general_table_with_link(
     if change_zscore_window < 2:
         raise ValueError("change_zscore_window must be >= 2")
 
-    link_requested = bool(column_plot_links or all_plots_link)
+    link_requested = (
+        bool(column_plot_links or all_plots_link)
+        or isinstance(column_plot_links, str)
+        or isinstance(all_plots_link, str)
+    )
     if link_requested and header is not None and not str(header).strip():
         raise ValueError("table/header name must not be blank when plot links are requested")
     header_label = header or "table"
@@ -372,6 +388,7 @@ def general_table_with_link(
             footer=footer,
             na_rep=na_rep,
             links=links,
+            highlight_columns=highlight_columns,
         ),
         "plots": plots,
     }

@@ -193,6 +193,25 @@ def test_flat_index_heading_shares_the_column_header_row(name) -> None:
     pd.testing.assert_frame_equal(frame, original)
 
 
+@pytest.mark.parametrize("grouped", [False, True])
+def test_html_index_alignment_is_scoped_against_notebook_css_and_preserves_overrides(grouped) -> None:
+    index = pd.MultiIndex.from_tuples([("EU", "Gas"), ("EU", "Coal")]) if grouped else pd.Index(["Gas", "Coal"])
+    frame = pd.DataFrame({"Value": [1, 2]}, index=index)
+    style = {
+        "options": {"global_style": {"header_text_align": "right"}},
+        "rules": [{"id": "align_row", "target": {"scope": "rows", "positions": [1]}, "action": {"text_align": "left"}}],
+        "links": [{"area": "index", "field": str(index[0]), "destination": {"kind": "plot", "value": "gas"}}],
+    }
+    html = render_table_html(frame, style)
+    table_id = re.search(r'<table id="([^"]+)"', html).group(1)
+    styles = {selector: props for selectors, props in _extract_css_blocks(html) for selector in selectors}
+    # A table-ID selector wins over host notebook th rules, for every index level.
+    assert styles[f"#{table_id} .row_heading"]["text-align"] == "center"
+    assert styles[f"#{table_id} thead th"]["text-align"] == "right"
+    assert styles[f"#{table_id} .row_heading.row1"]["text-align"] == "left"
+    assert 'data-runbook-plot-name="gas">Gas</a>' in html
+
+
 def test_index_links_resolve_row_labels_and_render_index_anchors() -> None:
     df = pd.DataFrame({"value": [1, 2]}, index=pd.Index(["A", "B"], name="Asset"))
     style = TableStylePlan(links=[TableLink(area="index", field="B", destination={"kind": "plot", "value": "asset-b"})])
@@ -238,7 +257,7 @@ def test_linked_html_keeps_typed_numeric_header_formatting() -> None:
         ),
     )
 
-    assert ">1.234568<" in html
+    assert ">1.23<" in html
     assert 'href="/report/summary"' in html
 
 
@@ -253,7 +272,7 @@ def test_linked_html_keeps_typed_numeric_cell_formatting() -> None:
     )
 
     assert 'data-runbook-report-id="detail"' in html
-    assert ">1.234568</a>" in html
+    assert ">1.23</a>" in html
 
 
 def test_mixed_linked_and_unlinked_numeric_cells_keep_style_formatting() -> None:

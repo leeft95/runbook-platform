@@ -8,6 +8,7 @@ from html import escape
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from urllib.parse import parse_qs
 
 import numpy as np
 import pandas as pd
@@ -467,6 +468,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         index=dates,
     )
     power["Load"] = power.sum(axis=1)
+    rollup_power = power.rename(columns={"Load": "Total"})
     balances = power.copy()
     balances["Gas share"] = power.Gas / (power.Gas + power.Coal)
     balances["Net balance"] = power.Load - 108
@@ -490,31 +492,30 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     table(
         "rollup-power",
         "Power · calendar roll-ups",
-        "Z-score highlighting on every current and historical average; Latest stays outside the bands. Each row opens full history and seasonal base/average panels.",
+        "Latest and 20d MA receive z-score highlights by default. Any displayed column can be selected with use_highlighting. Each row opens full history and seasonal base/average panels.",
         eu_power_rollup_table,
-        power,
+        rollup_power,
         header="EU power",
     )
     table(
         "rollup-share",
         "Power shares · calendar roll-ups",
-        "The same numeric z-score rules apply to shares, displayed as percentages. All averages are eligible for highlighting; Latest is excluded.",
+        "The same numeric z-score rules apply to shares, displayed as percentages. Latest and 20d MA are highlighted by default; other columns can be selected.",
         eu_power_rollup_table,
-        power.div(power.Load, axis=0),
+        rollup_power.div(rollup_power.Total, axis=0),
         header="EU power share",
         format_spec="{:.1%}",
     )
     table(
         "rollup-forecast",
         "Power forecast · current month and calendar roll-ups",
-        "Current Month averages all June forecasts. Latest and the MAs reference the final historical row, 18 June; linked charts retain the full series. Highlights use configurable ±1.5/±2.5 SD limits.",
+        "Current Month averages all June forecasts. Latest and the MAs reference the final historical row, 18 June; linked charts retain the full series. Latest and 20d MA receive z-score highlights using configurable ±1.5/±2.5 SD limits. Other columns, including Current Month, are opt-in.",
         rollup_table_fcst,
-        power,
-        df_hst=power.loc[:"2025-06-18"],
+        rollup_power,
+        df_hst=rollup_power.loc[:"2025-06-18"],
         today="2025-06-20",
         header="EU power forecast",
         std_limits=(1.5, 2.5),
-        format_spec="{:,.1f}",
     )
     chart(
         "rollup-seasonal",
@@ -553,7 +554,13 @@ def plot_html(figure: go.Figure, key: str) -> str:
     )
 
 
-def write_gallery(output: Path, tables: list[dict[str, Any]], charts: list[dict[str, Any]], *, serve: bool) -> None:
+def write_gallery(
+    output: Path,
+    tables: list[dict[str, Any]],
+    charts: list[dict[str, Any]],
+    *,
+    serve: bool,
+) -> None:
     """Export the gallery, style plans and working companion-plot links."""
     output.mkdir(parents=True, exist_ok=True)
     (output / "plots").mkdir(exist_ok=True)
@@ -583,6 +590,8 @@ def write_gallery(output: Path, tables: list[dict[str, Any]], charts: list[dict[
                     f"<pre><code>{escape(plan_json)}</code></pre></details>"
                     f'<div class="meta"><a href="styles/{key}.json" download="{key}.json">Download style plan JSON</a></div>'
                 )
+                if serve:
+                    content += f'<p><a href="/renderers/?table={key}">Compare HTML / native Dash</a></p>'
                 for name, figure in zip(
                     payload.get("plot_names", []), payload.get("plots", []), strict=bool(payload.get("plot_names"))
                 ):
@@ -591,6 +600,8 @@ def write_gallery(output: Path, tables: list[dict[str, Any]], charts: list[dict[
                     linked[payload["all_plots_name"]] = payload["plots"]
             else:
                 content = '<div class="plot">' + plot_html(item["figure"], key) + "</div>"
+            if item.get("code"):
+                content = f'<pre style="overflow:auto">{escape(item["code"])}</pre>' + content
             cards.append(
                 f'<article id="{key}"><h2>{escape(item["title"])}</h2><p>{escape(item["description"])}</p>'
                 f'<p class="badge">Template: <code>{escape(item["template"])}</code></p>{content}</article>'
@@ -672,16 +683,22 @@ def serve_gallery(output: Path, tables: list[dict[str, Any]], port: int) -> None
             html.P(
                 "The same data and style plan in static HTML, native Dash, and AG Grid. All observations are synthetic."
             ),
+            dcc.Location(id="preview-location", refresh=False),
             dcc.Dropdown(
                 id="table-choice",
                 options=[{"label": x["title"], "value": x["key"]} for x in tables],
-                value="price-range",
+                value="price-range" if "price-range" in examples else tables[0]["key"],
                 clearable=False,
             ),
             html.Div(id="table-comparison"),
         ],
         style={"fontFamily": "system-ui", "padding": "24px", "maxWidth": "1450px", "margin": "auto"},
     )
+
+    @app.callback(Output("table-choice", "value"), Input("preview-location", "search"))
+    def select_example(search: str | None) -> str:
+        key = parse_qs((search or "").lstrip("?")).get("table", [None])[0]
+        return key if key in examples else "price-range" if "price-range" in examples else tables[0]["key"]
 
     @app.callback(Output("table-comparison", "children"), Input("table-choice", "value"))
     def comparison(key: str) -> list[Any]:
@@ -697,6 +714,7 @@ def serve_gallery(output: Path, tables: list[dict[str, Any]], port: int) -> None
         grid = _build_ag_grid(frame, block, ctx, route, plot_refs)
         return [
             html.P(item["description"]),
+            html.Pre(item["code"], style={"overflow": "auto"}) if item.get("code") else None,
             html.Details(
                 [
                     html.Summary("View style plan", style={"cursor": "pointer", "color": "#166d83"}),

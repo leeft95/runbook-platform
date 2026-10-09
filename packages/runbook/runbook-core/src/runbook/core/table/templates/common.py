@@ -22,9 +22,21 @@ from ..models import (
     TableTarget,
     TableZScoreRHS,
     TargetScope,
+    validate_link_url,
 )
 
 ColumnRef = int | str
+
+
+def _select_highlight_columns(available: tp.Sequence[str], selected: tp.Sequence[str] | None) -> list[str]:
+    """Validate a selection of eligible highlight targets; None keeps defaults."""
+    if selected is None:
+        return list(available)
+    if isinstance(selected, str):
+        raise ValueError("highlight_columns must be a sequence of column names, not a string")
+    if unknown := set(selected) - set(available):
+        raise ValueError(f"highlight_columns contains ineligible columns: {sorted(unknown)}")
+    return list(dict.fromkeys(selected))
 
 
 def _aligned_moving_average(series: pd.Series, window: int, kind: MovingAvgModes | str) -> pd.Series:
@@ -48,12 +60,14 @@ def _build_plot_link_metadata(
     plot_columns: tp.Sequence[tuple[str, str]],
     rendered_columns: tp.Sequence[str],
     *,
-    column_plot_links: bool | list[str],
-    all_plots_link: bool,
+    column_plot_links: bool | list[str] | str,
+    all_plots_link: bool | str,
     link_area: tp.Literal["header", "index"] = "header",
     rendered_link_fields: tp.Mapping[str, str] | None = None,
 ) -> tuple[list[str], list[TableLink], str | None]:
-    """Build deterministic plot names and semantic table links."""
+    """Build plot names and links; strings target custom pages verbatim."""
+    page = validate_link_url(column_plot_links) if isinstance(column_plot_links, str) else None
+    all_page = validate_link_url(all_plots_link) if isinstance(all_plots_link, str) else None
     table_slug = _slugify_link_part(table_name)
     if not table_slug:
         raise ValueError("table/header name must contain a slug when plot links are requested")
@@ -80,7 +94,7 @@ def _build_plot_link_metadata(
         else rendered_link_fields
     )
     eligible = [column for column, _ in plot_columns if str(column) in link_fields]
-    if column_plot_links is True:
+    if column_plot_links is True or page is not None:
         selected = set(eligible)
     elif isinstance(column_plot_links, list):
         selected = set()
@@ -98,17 +112,23 @@ def _build_plot_link_metadata(
         TableLink(
             area=link_area,
             field=link_fields[column],
-            destination=TableLinkDestination(kind=TableLinkKind.plot, value=plot_columns_by_name[column]),
+            destination=TableLinkDestination(
+                kind=TableLinkKind.url if page is not None else TableLinkKind.plot,
+                value=page if page is not None else plot_columns_by_name[column],
+            ),
         )
         for column in eligible
         if column in selected
     ]
-    all_plots_name = f"{table_slug}-plots" if all_plots_link else None
-    if all_plots_name is not None:
+    all_plots_name = f"{table_slug}-plots" if all_plots_link is True else None
+    if all_plots_name is not None or all_page is not None:
         links.append(
             TableLink(
                 area="index_header",
-                destination=TableLinkDestination(kind=TableLinkKind.plot, value=all_plots_name),
+                destination=TableLinkDestination(
+                    kind=TableLinkKind.url if all_page is not None else TableLinkKind.plot,
+                    value=all_page if all_page is not None else all_plots_name,
+                ),
             )
         )
     return plot_names, links, all_plots_name

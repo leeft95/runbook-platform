@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 import pandas as pd
 
 from ...plotting.templates import plot_rollup_seasonal
-from ...timeseries.rollup import _calendar_offset
+from ...timeseries.rollup import _calendar_offset, calendar_moving_average
+from ..builder import _default_numeric_formats
 from ..models import (
     TableAction,
     TableColumnSizing,
@@ -23,7 +25,7 @@ from ..models import (
     TargetScope,
     parse_python_format_string,
 )
-from .common import _build_plot_link_metadata, color_negative_red, highlight_zscore
+from .common import _build_plot_link_metadata, _select_highlight_columns, color_negative_red, highlight_zscore
 from .table_with_link_monthly import _normalize_input_frame
 
 
@@ -34,11 +36,13 @@ def rollup_table_hst(
     *,
     as_of: str | pd.Timestamp | None = None,
     exclude_years: Sequence[int] = (),
-    format_spec: TableFormatSpec | str = "{:,.0f}",
-    total_label: str | None = "Total",
-    row_plot_links: bool | list[str] = True,
-    all_plots_link: bool = True,
+    format_spec: TableFormatSpec | str | None = None,
+    total_label: str | None = None,
+    include_total: bool = True,
+    row_plot_links: bool | list[str] | str = True,
+    all_plots_link: bool | str = True,
     highlight_columns: Sequence[str] | None = None,
+    use_highlighting: Sequence[str] | None = None,
     std_limits: tuple[float, float] = (1.0, 2.0),
     rules: Sequence[TableRule] = (),
     footer: str | None = None,
@@ -58,24 +62,34 @@ def rollup_table_hst(
     averages available window means from the previous five calendar years,
     excluding ``exclude_years``. Missing years are not replaced with older ones.
 
-    The final input series is the supplied total, displayed as ``total_label``
-    (default "Total") with bold text and a top border across the entire row.
-    No total is calculated or appended. Set ``total_label=None`` for inputs
-    without a total series. Plot-link selections accept the original series name.
+    By default, append a Total row summing each displayed column (skipping
+    missing values; all-missing columns stay missing). If an input column
+    matches ``total_label`` (None means "Total"), use that precomputed series
+    instead and move it to the last row. The total is bold with a top border.
+    ``include_total=False`` omits either total and its companion plots.
+    A custom label without a matching input column names the calculated total.
 
     Each row links to full base history plus seasonal base/MA panels. The index
     heading links to all figures. ``plot_options`` goes to ``plot_rollup_seasonal``;
     historical summary columns reuse their base window's seasonal panel.
-    Every MA column uses the general table's summary-band highlights: compare
-    Latest with that column's mean and sample standard deviation. Current and
-    Y-N columns use observations in their matching calendar window; NY columns
-    use the N prior yearly window averages. Latest itself is never highlighted.
-    ``highlight_columns`` selects a subset of MA columns; [] disables bands.
+    String link options target an absolute URL or relative report page;
+    booleans retain the generated-plot links or disable them.
+    Each selected column is scored against its own history. Latest uses the
+    trailing 20-calendar-day observations; an MA uses the trailing 20 calendar
+    days of that rolling-average series. Y-N uses that MA history at the prior
+    date; NY uses the history of the equal-weight prior-year average. Thus
+    Latest and 20d MA are independent short-term and smoothed trend signals.
+    ``use_highlighting=None`` defaults to Latest and 20d MA, when present.
+    A list can select any displayed column; [] disables bands. The earlier
+    ``highlight_columns`` spelling remains supported; ``use_highlighting``
+    takes precedence when supplied.
     ``std_limits`` sets the mild/strong thresholds symmetrically above and
-    below the mean, defaulting to (1, 2) standard deviations for every MA column.
+    below the mean, defaulting to (1, 2) standard deviations for selected columns.
     Highlights use numeric values independently of display format; missing or
     zero dispersion leaves a cell without z-score highlighting.
     Use ``format_spec='{:.1%}'`` for shares and ``rules`` for domain overrides.
+    By default, integer output columns use 0 decimals and float columns use 2.
+    Formatting does not round the underlying values or highlighting statistics.
     Returns the ordinary named data/style/plots payload, with numeric values.
     """
     frame = _normalize_input_frame(data, columns_filter=None, fill_na=None, as_of=as_of)
@@ -88,9 +102,11 @@ def rollup_table_hst(
         exclude_years=exclude_years,
         format_spec=format_spec,
         total_label=total_label,
+        include_total=include_total,
         row_plot_links=row_plot_links,
         all_plots_link=all_plots_link,
         highlight_columns=highlight_columns,
+        use_highlighting=use_highlighting,
         std_limits=std_limits,
         rules=rules,
         footer=footer,
@@ -106,37 +122,69 @@ def rollup_table_fcst(
     *,
     today: str | pd.Timestamp | None = None,
     std_limits: tuple[float, float] = (1.0, 2.0),
+    include_total: bool = True,
+    highlight_columns: Sequence[str] | None = None,
+    use_highlighting: Sequence[str] | None = None,
     **options: Any,
 ) -> dict[str, dict[str, Any]]:
-    """Roll up forecast data using the last supplied historical or forecast date.
+    """Roll forecast averages alongside the latest historical observations.
 
     Default columns are Current Month, Latest, 5d MA, 20d MA, 3m MA,
-    Y-1 20d MA and 5Y 20d MA. All values come from ``df``. ``df_hst`` only
-    selects the Latest date: its final supplied row's index when populated,
-    or the final supplied row of ``df`` when absent/empty. Latest uses the exact matching row of ``df``;
-    missing dates and values remain missing. All MA windows reference that date.
+    Y-1 20d MA and 5Y 20d MA. Averages always use ``df``. When populated,
+    ``df_hst`` supplies Latest values from its final supplied row, matched to
+    ``df`` columns by name, and that row's date anchors every MA window.
+    Without history, today's date anchors the windows and Latest reads that
+    exact row in ``df``. Missing dates, columns and values remain missing.
 
     Current Month averages all supplied observations in today's calendar month,
     including future dates, independently of the Latest date. ``today`` pins
-    the calendar date for reproducible reports; it defaults to the current date
-    in ``df``'s timezone. Linked charts retain the full supplied time series.
+    the calendar date for reproducible reports; None uses ``datetime.today()``.
+    Dates are interpreted in ``df``'s timezone. Linked charts retain the full
+    supplied time series.
 
     ``std_limits`` and other presentation options work as in ``rollup_table_hst``.
-    Current Month is also eligible for z-score highlighting; Latest is excluded.
-    The final input series is the supplied Total unless ``total_label=None``.
+    Highlighting defaults to Latest and 20d MA, when present. ``use_highlighting``
+    can select any displayed column, including Current Month, or [] to disable
+    coloured bands. Current Month uses the last 20 calendar months of monthly
+    averages, including the current month; Latest and MAs use their own series'
+    trailing 20-calendar-day reference windows, anchored to the Latest date.
+    Latest uses ``df_hst`` for its reference when supplied, otherwise ``df``.
+    ``highlight_columns`` remains supported; red negatives are independent.
+    String link options target custom pages.
+    Totals work as in ``rollup_table_hst``: sum the displayed columns, or use
+    the input series matching ``total_label`` and place it last.
+    ``include_total=False`` omits the total from the table and linked plots.
     """
     frame = _normalize_input_frame(df, columns_filter=None, fill_na=None)
-    current_date = _rollup_date(
-        pd.Timestamp.now(tz=frame.index.tz) if today is None else today, frame.index
-    ).normalize()
+    current_date = _rollup_date(datetime.today() if today is None else today, frame.index).normalize()
     if df_hst is not None and not isinstance(df_hst, pd.DataFrame):
         raise TypeError("df_hst must be a DataFrame or None")
-    anchor = df.index[-1]
+    anchor = current_date
+    latest_history = None
     if df_hst is not None and not df_hst.empty:
         if not isinstance(df_hst.index, pd.DatetimeIndex) or df_hst.index.hasnans:
             raise ValueError("df_hst must have a DatetimeIndex without NaT")
         anchor = _rollup_date(df_hst.index[-1], frame.index)
-    return _rollup_table(frame, anchor, params, header, current_month=current_date, std_limits=std_limits, **options)
+        latest_history = _normalize_input_frame(df_hst, columns_filter=None, fill_na=None)
+        if frame.index.tz is not None:
+            latest_history.index = (
+                latest_history.index.tz_localize(frame.index.tz)
+                if latest_history.index.tz is None
+                else latest_history.index.tz_convert(frame.index.tz)
+            )
+    return _rollup_table(
+        frame,
+        anchor,
+        params,
+        header,
+        current_month=current_date,
+        latest_history=latest_history,
+        std_limits=std_limits,
+        include_total=include_total,
+        highlight_columns=highlight_columns,
+        use_highlighting=use_highlighting,
+        **options,
+    )
 
 
 def _rollup_date(value: str | pd.Timestamp, index: pd.DatetimeIndex) -> pd.Timestamp:
@@ -158,12 +206,15 @@ def _rollup_table(
     header: str,
     *,
     current_month: pd.Timestamp | None = None,
+    latest_history: pd.DataFrame | None = None,
     exclude_years: Sequence[int] = (),
-    format_spec: TableFormatSpec | str = "{:,.0f}",
-    total_label: str | None = "Total",
-    row_plot_links: bool | list[str] = True,
-    all_plots_link: bool = True,
+    format_spec: TableFormatSpec | str | None = None,
+    total_label: str | None = None,
+    include_total: bool = True,
+    row_plot_links: bool | list[str] | str = True,
+    all_plots_link: bool | str = True,
     highlight_columns: Sequence[str] | None = None,
+    use_highlighting: Sequence[str] | None = None,
     std_limits: tuple[float, float] = (1.0, 2.0),
     rules: Sequence[TableRule] = (),
     footer: str | None = None,
@@ -180,32 +231,60 @@ def _rollup_table(
         raise ValueError("params must be a non-empty sequence of roll-up column names")
     if len({label.strip().casefold() for label in params}) != len(params):
         raise ValueError("params must contain distinct column names")
+    selected = use_highlighting if use_highlighting is not None else highlight_columns
+    if selected is None:
+        selected = [label for label in params if label.strip().casefold() in {"latest", "20d ma"}]
+    highlighted = _select_highlight_columns(list(params), selected)
     frame = frame.apply(pd.to_numeric, errors="raise")
-    if total_label is not None:
-        if not total_label.strip() or total_label in frame.columns[:-1]:
-            raise ValueError("total_label must be non-blank and distinct from the other series names")
-        total_column = frame.columns[-1]
-        frame = frame.rename(columns={total_column: total_label})
+    total_label = "Total" if total_label is None else total_label
+    if not total_label.strip():
+        raise ValueError("total_label must not be blank")
+    calculate_total = include_total and total_label not in frame
+    if include_total:
+        total = frame.pop(total_label) if total_label in frame else frame.sum(axis=1, min_count=1)
+        frame[total_label] = total
+    else:
+        frame = frame.drop(columns=total_label, errors="ignore")
         if isinstance(row_plot_links, list):
-            row_plot_links = [total_label if column == total_column else column for column in row_plot_links]
+            row_plot_links = [column for column in row_plot_links if column != total_label]
+        total_label = None
     values: dict[str, pd.Series] = {}
     windows: list[str] = []
     benchmarks: dict[str, tuple[pd.Series, pd.Series]] = {}
-    latest = frame.reindex([anchor]).iloc[0]
+    rolling_history: dict[str, pd.DataFrame] = {}
+    latest_frame = frame
+    if latest_history is not None:
+        latest_frame = latest_history.reindex(columns=frame.columns).apply(pd.to_numeric, errors="raise")
+        if include_total and total_label not in latest_history:
+            latest_frame[total_label] = latest_frame.drop(columns=total_label).sum(axis=1, min_count=1)
+    latest = latest_frame.reindex([anchor]).iloc[0]
 
     def sample_at(window: str, date: pd.Timestamp) -> pd.DataFrame:
         """Select observations in a calendar window, including its end date."""
         return frame.loc[(frame.index > date - _calendar_offset(window)) & (frame.index <= date)]
 
+    def reference(
+        history: pd.DataFrame, date: pd.Timestamp, *, monthly: bool = False, sum_components: bool = True
+    ) -> tuple[pd.Series, pd.Series]:
+        """Score each column against its own recent observations, including totals."""
+        offset = pd.DateOffset(months=20) if monthly else pd.DateOffset(days=20)
+        sample = history.loc[(history.index > date - offset) & (history.index <= date)].copy()
+        if calculate_total and sum_components:
+            sample[total_label] = sample.drop(columns=total_label).sum(axis=1, min_count=1)
+        return sample.mean(), sample.std()
+
     for label in params:
         if label.strip().casefold() == "latest":
             values[label] = latest
+            if label in highlighted:
+                benchmarks[label] = reference(latest_frame, anchor, sum_components=False)
             continue
         if current_month is not None and label.strip().casefold() == "current month":
             month_start = current_month.replace(day=1)
             sample = frame.loc[(frame.index >= month_start) & (frame.index < month_start + pd.DateOffset(months=1))]
             values[label] = sample.mean()
-            benchmarks[label] = (values[label], sample.std())
+            if label in highlighted:
+                benchmarks[label] = reference(frame.resample("MS").mean(), month_start, monthly=True)
             continue
         match = re.fullmatch(r"(?:(Y-[1-9]\d*|[1-9]\d*Y)\s+)?([1-9]\d*[dm])\s+MA", label.strip(), re.IGNORECASE)
         if match is None:
@@ -216,7 +295,6 @@ def _rollup_table(
         if history is None:
             sample = sample_at(window, anchor)
             values[label] = sample.mean()
-            benchmarks[label] = (values[label], sample.std())
         else:
             history = history.upper()
             years = [int(history[2:])] if history.startswith("Y-") else range(1, int(history[:-1]) + 1)
@@ -227,25 +305,49 @@ def _rollup_table(
             ]
             annual_means = pd.DataFrame([sample.mean() for sample in samples], columns=frame.columns)
             values[label] = annual_means.mean()
-            dispersion = samples[0].std() if history.startswith("Y-") and samples else annual_means.std()
-            benchmarks[label] = (values[label], dispersion)
+        if label in highlighted:
+            if history is None or history.startswith("Y-"):
+                if window not in rolling_history:
+                    rolling_history[window] = calendar_moving_average(frame, window)
+                reference_date = anchor if history is None else anchor - pd.DateOffset(years=int(history[2:]))
+                benchmarks[label] = reference(rolling_history[window], reference_date)
+            else:
+                # Reconstruct this same prior-year average at recent observation
+                # dates, rather than scoring it against today's raw level.
+                dates = sample_at("20d", anchor).index
+                historical = pd.DataFrame(
+                    [
+                        pd.DataFrame(
+                            [
+                                sample_at(window, date - pd.DateOffset(years=year)).mean()
+                                for year in range(1, int(history[:-1]) + 1)
+                                if date.year - year not in exclude_years
+                            ],
+                            columns=frame.columns,
+                        ).mean()
+                        for date in dates
+                    ],
+                    index=dates,
+                    columns=frame.columns,
+                )
+                benchmarks[label] = reference(historical, anchor)
+    if calculate_total:
+        # Sum the displayed aggregates: averaging summed observations would
+        # give different answers when components have different missing dates.
+        for label, series in values.items():
+            # Latest already has its own supplied or calculated history total.
+            if label.strip().casefold() != "latest":
+                series.loc[total_label] = series.drop(total_label).sum(min_count=1)
     result = pd.DataFrame(values)
     result.index.name = header
-    highlighted = list(benchmarks) if highlight_columns is None else list(highlight_columns)
-    if set(highlighted) - benchmarks.keys():
-        raise ValueError("highlight_columns must select average columns; Latest is not highlighted")
     hidden: list[str] = []
     targets: list[tuple[str, str, str, str]] = []
     for i, label in enumerate(highlighted):
-        signal, mean, std = f"_rollup_{i}_latest", f"_rollup_{i}_mean", f"_rollup_{i}_std"
+        mean, std = f"_rollup_{i}_mean", f"_rollup_{i}_std"
         reference_mean, reference_std = benchmarks[label]
-        result[signal], result[mean], result[std] = (
-            latest,
-            reference_mean,
-            reference_std.where(reference_std > 0),
-        )
-        hidden.extend([signal, mean, std])
-        targets.append((label, signal, mean, std))
+        result[mean], result[std] = reference_mean, reference_std.where(reference_std > 0)
+        hidden.extend([mean, std])
+        targets.append((label, label, mean, std))
     columns = list(result.columns)
     style_rules = color_negative_red(columns, [(label, label) for label in params])
     style_rules.extend(highlight_zscore(columns, targets, std_limits=std_limits))
@@ -263,12 +365,17 @@ def _rollup_table(
         [(column, "rollup-seasonal") for column in frame],
         list(frame.columns),
         column_plot_links=row_plot_links,
-        all_plots_link=all_plots_link,
+        all_plots_link=all_plots_link if len(frame.columns) > 0 else False,
         link_area="index",
     )
     spec = parse_python_format_string(format_spec) if isinstance(format_spec, str) else format_spec
+    formats = (
+        {label: spec for label in params}
+        if spec is not None
+        else _default_numeric_formats(result[list(params)], thousands=True)
+    )
     plan = TableStylePlan(
-        format=TableStyleFormat(na_rep="-", columns={label: spec for label in params}),
+        format=TableStyleFormat(na_rep="-", columns=formats),
         sizing=TableSizing(
             index_width_px=180, columns=[TableColumnSizing(label=label, width_px=95) for label in params]
         ),

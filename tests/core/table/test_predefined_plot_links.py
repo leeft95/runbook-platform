@@ -3,7 +3,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from runbook.core.table import general_table_with_link, render_table_html, table_with_linked_plots_monthly
+from runbook.core.table import (
+    general_table_with_link,
+    render_table_html,
+    resolve_table_style,
+    rollup_table_hst,
+    rollup_table_fcst,
+    table_with_linked_plots_monthly,
+)
 from runbook.core.table.builder import link_anchor
 from runbook.core.table.models import TableLinkDestination, TableLinkKind
 
@@ -163,3 +170,71 @@ def test_monthly_without_moving_average_uses_seasonal_plot_type() -> None:
 def test_monthly_row_plot_links_are_disabled_by_default() -> None:
     output = table_with_linked_plots_monthly(_frame("A"), header="Monthly")["Monthly"]
     assert "links" not in output["style"]
+
+
+@pytest.mark.parametrize("page", ["https://example.test/power?view=all#gas", "../power/details.html", "/reports/power"])
+@pytest.mark.parametrize(
+    "template, option",
+    [
+        (general_table_with_link, "column_plot_links"),
+        (table_with_linked_plots_monthly, "row_plot_links"),
+        (rollup_table_hst, "row_plot_links"),
+        (rollup_table_fcst, "row_plot_links"),
+    ],
+)
+def test_template_string_links_target_pages_without_generated_plot_routing(template, option, page) -> None:
+    payload = template(_frame("A", "B", periods=80), header="Power", **{option: page, "all_plots_link": page})["Power"]
+    resolved = resolve_table_style(payload["data"], payload["style"])
+    destinations = [*resolved.header_links.values(), *resolved.cell_links.values(), *resolved.index_links.values()]
+    if resolved.index_header_link is not None:
+        destinations.append(resolved.index_header_link)
+    assert len(destinations) >= 3
+    assert all(link.kind == TableLinkKind.url and link.value == page for link in destinations)
+    assert "all_plots_name" not in payload
+    assert len(payload["plot_names"]) == len(payload["plots"])
+    html = render_table_html(payload["data"], payload["style"])
+    assert f'href="{page}"' in html
+    assert "data-runbook-plot-name=" not in html
+
+
+@pytest.mark.parametrize(
+    "page", ["", "javascript:alert(1)", "data:text/html,x", "//example.test", "\\\\example.test", " page.html"]
+)
+def test_custom_page_links_reject_unsafe_or_empty_urls(page) -> None:
+    with pytest.raises(ValueError):
+        general_table_with_link(_frame("A", periods=30), header="Power", all_plots_link=page)
+
+
+@pytest.mark.parametrize(
+    "template, options, selected",
+    [
+        (general_table_with_link, {}, "A"),
+        (
+            table_with_linked_plots_monthly,
+            {"aggregation_type": "MovingAverage", "highlighting_rules": {"window": 30}},
+            "10d MA",
+        ),
+        (rollup_table_fcst, {"params": ["Latest", "5d MA", "20d MA"]}, "5d MA"),
+    ],
+)
+def test_highlight_selection_preserves_negative_text_and_numeric_columns(template, options, selected) -> None:
+    frame = -_frame("A", "B", periods=90) - 100
+    frame.iloc[-1] = -1000
+    if template is rollup_table_fcst:
+        options = {**options, "today": frame.index[-1]}
+    default = template(frame, header="Power", **options)["Power"]
+    chosen = template(frame, header="Power", highlight_columns=[selected], **options)["Power"]
+    disabled = template(frame, header="Power", highlight_columns=[], **options)["Power"]
+    default_style = resolve_table_style(default["data"], default["style"])
+    chosen_style = resolve_table_style(chosen["data"], chosen["style"])
+    disabled_style = resolve_table_style(disabled["data"], disabled["style"])
+    assert any("background-color" in css for css in default_style.cell_css.values())
+    assert {column for (_, column), css in chosen_style.cell_css.items() if "background-color" in css} == {selected}
+    assert not any("background-color" in css for css in disabled_style.cell_css.values())
+    for payload, resolved in [(chosen, chosen_style), (disabled, disabled_style)]:
+        pd.testing.assert_frame_equal(
+            payload["data"][list(resolved.visible_columns)], default["data"][list(resolved.visible_columns)]
+        )
+        assert any(css.get("color") == "red" for css in resolved.cell_css.values())
+    with pytest.raises(ValueError, match="highlight_columns"):
+        template(frame, header="Power", highlight_columns=["Missing"], **options)
