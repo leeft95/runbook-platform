@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 import typing as tp
 import unicodedata
+from math import isfinite
+from numbers import Real
 
 import pandas as pd
 
@@ -140,8 +142,21 @@ def highlight_zscore(
     zscore_targets: tp.Sequence[
         tuple[ColumnRef, ColumnRef, ColumnRef] | tuple[ColumnRef, ColumnRef, ColumnRef, ColumnRef]
     ],
+    *,
+    std_limits: tuple[float, float] = (1.0, 2.0),
 ) -> list[TableRule]:
-    """Build z-score band rules from 3-item and 4-item tuple forms."""
+    """Build symmetric mild/strong z-score bands from 3-item and 4-item targets.
+
+    ``std_limits`` contains two finite, positive, increasing standard-deviation
+    multipliers; the defaults are 1 and 2 on either side of the mean.
+    """
+    if (
+        len(std_limits) != 2
+        or not all(isinstance(limit, Real) and not isinstance(limit, bool) and isfinite(limit) for limit in std_limits)
+        or not 0 < std_limits[0] < std_limits[1]
+    ):
+        raise ValueError("std_limits must contain two finite, positive, increasing numbers")
+    mild, strong = std_limits
     rules: list[TableRule] = []
     for target in zscore_targets:
         lhs_column: str | None = None
@@ -173,7 +188,7 @@ def highlight_zscore(
                     condition=TableCondition(
                         op=ConditionOp.z_gt,
                         lhs_column=lhs_column,
-                        rhs=TableZScoreRHS(mean_column=mean_col, std_column=std_col, num_std=1.0),
+                        rhs=TableZScoreRHS(mean_column=mean_col, std_column=std_col, num_std=mild),
                     ),
                     action=TableAction(background_color="lightgreen"),
                 ),
@@ -183,7 +198,7 @@ def highlight_zscore(
                     condition=TableCondition(
                         op=ConditionOp.z_gt,
                         lhs_column=lhs_column,
-                        rhs=TableZScoreRHS(mean_column=mean_col, std_column=std_col, num_std=2.0),
+                        rhs=TableZScoreRHS(mean_column=mean_col, std_column=std_col, num_std=strong),
                     ),
                     action=TableAction(background_color="green"),
                 ),
@@ -193,7 +208,7 @@ def highlight_zscore(
                     condition=TableCondition(
                         op=ConditionOp.z_lt,
                         lhs_column=lhs_column,
-                        rhs=TableZScoreRHS(mean_column=mean_col, std_column=std_col, num_std=1.0),
+                        rhs=TableZScoreRHS(mean_column=mean_col, std_column=std_col, num_std=mild),
                     ),
                     action=TableAction(background_color="#FFA94D"),
                 ),
@@ -203,7 +218,7 @@ def highlight_zscore(
                     condition=TableCondition(
                         op=ConditionOp.z_lt,
                         lhs_column=lhs_column,
-                        rhs=TableZScoreRHS(mean_column=mean_col, std_column=std_col, num_std=2.0),
+                        rhs=TableZScoreRHS(mean_column=mean_col, std_column=std_col, num_std=strong),
                     ),
                     action=TableAction(background_color="#FF8787"),
                 ),

@@ -39,6 +39,7 @@ def rollup_table_hst(
     row_plot_links: bool | list[str] = True,
     all_plots_link: bool = True,
     highlight_columns: Sequence[str] | None = None,
+    std_limits: tuple[float, float] = (1.0, 2.0),
     rules: Sequence[TableRule] = (),
     footer: str | None = None,
     plot_options: dict[str, Any] | None = None,
@@ -70,6 +71,8 @@ def rollup_table_hst(
     Y-N columns use observations in their matching calendar window; NY columns
     use the N prior yearly window averages. Latest itself is never highlighted.
     ``highlight_columns`` selects a subset of MA columns; [] disables bands.
+    ``std_limits`` sets the mild/strong thresholds symmetrically above and
+    below the mean, defaulting to (1, 2) standard deviations for every MA column.
     Highlights use numeric values independently of display format; missing or
     zero dispersion leaves a cell without z-score highlighting.
     Use ``format_spec='{:.1%}'`` for shares and ``rules`` for domain overrides.
@@ -147,7 +150,7 @@ def rollup_table_hst(
         targets.append((label, signal, mean, std))
     columns = list(result.columns)
     style_rules = color_negative_red(columns, [(label, label) for label in params])
-    style_rules.extend(highlight_zscore(columns, targets))
+    style_rules.extend(highlight_zscore(columns, targets, std_limits=std_limits))
     if total_label is not None:
         style_rules.append(
             TableRule(

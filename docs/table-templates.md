@@ -164,8 +164,20 @@ mean, divided by its reference sample standard deviation:
 - `5Y` (or `NY`) uses the prior yearly window averages, giving each available
   year equal weight and respecting `exclude_years`.
 
-Above +1/+2 SD is light green/green; below -1/-2 SD is orange/red. Missing or
-zero dispersion produces no z-score highlight. Rules work on underlying
+By default, above +1/+2 SD is light green/green; below -1/-2 SD is orange/red.
+Set `std_limits=(1.5, 2.5)` to move those bands to ±1.5/±2.5 SD for every
+highlighted average column. Both limits must be finite and positive, with the
+mild limit smaller than the strong limit. Comparisons are strict: a value
+exactly on a limit does not trigger that band. This changes only highlighting,
+not the averages or standard deviations used in the calculations.
+
+```python
+payload = rollup_table_hst(power_ts, std_limits=(1.5, 2.5))["Roll-up"]
+# The report preset accepts the same option:
+# eu_power_rollup_table(power_ts, std_limits=(1.5, 2.5))
+```
+
+Missing or zero dispersion produces no z-score highlight. Rules work on underlying
 numeric values, regardless of whether they display as prices, volumes,
 percentages or other numeric formats. Hidden helper columns carry the statistics.
 Use `highlight_columns` to select a subset of current/historical MA columns,

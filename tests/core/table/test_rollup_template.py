@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from runbook.core.table import render_table_html, resolve_table_style, rollup_table_hst
+from runbook.core.table.templates import eu_power_rollup_table
 from runbook.core.timeseries.rollup import calendar_moving_average
 
 
@@ -111,6 +112,38 @@ def test_rollup_highlights_are_independent_of_format_and_skip_missing_or_zero_di
     assert payload["data"].filter(regex="_std$").isna().all().all()
     style = resolve_table_style(payload["data"], payload["style"])
     assert all("background-color" not in css for css in style.cell_css.values())
+
+
+def test_rollup_std_limits_change_both_sides_of_all_average_bands_without_changing_values() -> None:
+    dates = pd.to_datetime([f"{year}-06-{day}" for year in range(2020, 2026) for day in range(16, 21)])
+    values = np.tile(np.arange(-2.0, 3.0), 6) + np.repeat(np.arange(6), 5)
+    frame = pd.DataFrame({"Positive": values, "Negative": -values}, index=dates)
+    default = rollup_table_hst(frame, header="Power", total_label=None)["Power"]
+    stronger = eu_power_rollup_table(frame, header="Power", total_label=None, std_limits=(0.5, 1.0))["Power"]
+    quieter = eu_power_rollup_table(frame, header="Power", total_label=None, std_limits=(4.0, 5.0))["Power"]
+    for payload in (stronger, quieter):
+        pd.testing.assert_frame_equal(payload["data"], default["data"])
+    default_style = resolve_table_style(default["data"], default["style"])
+    strong_style = resolve_table_style(stronger["data"], stronger["style"])
+    quiet_style = resolve_table_style(quieter["data"], quieter["style"])
+    assert default_style.cell_css[(0, "5d MA")]["background-color"] == "lightgreen"
+    assert default_style.cell_css[(1, "5d MA")]["background-color"] == "#FFA94D"
+    for row, color in ((0, "green"), (1, "#FF8787")):
+        for column in strong_style.visible_columns:
+            assert "background-color" not in quiet_style.cell_css.get((row, column), {})
+            if column == "Latest":
+                assert "background-color" not in strong_style.cell_css.get((row, column), {})
+            else:
+                assert strong_style.cell_css[(row, column)]["background-color"] == color
+
+
+@pytest.mark.parametrize(
+    "limits", [(), (1,), (1, 2, 3), (0, 2), (-1, 2), (2, 1), (1, 1), (np.nan, 2), (1, np.inf), (True, 2)]
+)
+def test_rollup_rejects_invalid_std_limits(limits) -> None:
+    frame = pd.DataFrame({"Value": [1.0]}, index=pd.to_datetime(["2025-01-01"]))
+    with pytest.raises(ValueError, match="std_limits"):
+        rollup_table_hst(frame, std_limits=limits)
 
 
 def test_rollup_missing_years_are_not_filled_and_latest_keeps_missing_values() -> None:
