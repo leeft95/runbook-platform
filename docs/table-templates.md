@@ -70,7 +70,7 @@ The original generic presets remain available with their existing defaults:
 `daily_prices_table`, `inventory_summary_table`, `flow_quarterly_table`,
 `flow_monthly_table`, `monthly_consensus_table`, `mtd_inventory_table`,
 `grouped_metrics_table` and `rollup_table_hst`. The forecast variation is
-`rollup_table_fst`. The monthly-sum and true-MTD
+`rollup_table_fcst`. The monthly-sum and true-MTD
 gallery cards are explicitly generic examples: no matching
 source report was found for those exact presets. In particular, the source
 `oil_on_water.py` names a row **Total MTD Chg** but calculates a 20-observation
@@ -193,7 +193,7 @@ no footer by default.
 
 ## Forecast roll-up table
 
-`rollup_table_fst(df, df_hst=None, params=None)` is the variation for a
+`rollup_table_fcst(df, df_hst=None, params=None)` is the variation for a
 time-series DataFrame containing forecasts. It keeps the historical template's
 formats, total row, links, calendar windows and configurable `std_limits`.
 
@@ -216,9 +216,9 @@ otherwise the date is read in `df`'s timezone. It does not change the Latest
 date or the MA anchor. Missing observations are skipped without filling.
 
 ```python
-from runbook.core.table import rollup_table_fst
+from runbook.core.table import rollup_table_fcst
 
-payload = rollup_table_fst(
+payload = rollup_table_fcst(
     forecast_ts,
     df_hst=historical_ts,  # Optional; otherwise use forecast_ts's final row date.
     header="EU power forecast",

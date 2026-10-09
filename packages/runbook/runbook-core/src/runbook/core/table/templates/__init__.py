@@ -8,7 +8,7 @@ from runbook.core.table.templates.table_with_link_monthly import (
     table_with_linked_plots_monthly as table_with_link_monthly,
 )
 from runbook.core.table.templates.cot import cot_summary_table, cot_table
-from runbook.core.table.templates.rollup import rollup_table_fst, rollup_table_hst
+from runbook.core.table.templates.rollup import rollup_table_fcst, rollup_table_hst
 from runbook.core.table.templates.periods import (
     period_table,
     monthly_table,
@@ -113,7 +113,7 @@ __all__ = [
     "oil_on_water_table",
     "eu_power_rollup_table",
     "rollup_table_hst",
-    "rollup_table_fst",
+    "rollup_table_fcst",
     "cot_summary_table",
     "cot_timeseries_table",
     "cot_analysis_summary_table",

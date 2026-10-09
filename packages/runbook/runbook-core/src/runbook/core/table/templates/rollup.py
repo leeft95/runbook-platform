@@ -98,7 +98,7 @@ def rollup_table_hst(
     )
 
 
-def rollup_table_fst(
+def rollup_table_fcst(
     df: pd.DataFrame,
     df_hst: pd.DataFrame | None = None,
     params: Sequence[str] | None = None,

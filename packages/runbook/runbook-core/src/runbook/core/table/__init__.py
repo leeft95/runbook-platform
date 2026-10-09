@@ -51,7 +51,7 @@ from runbook.core.table.models import (
     validate_link_url,
 )
 from runbook.core.table.templates import (
-    rollup_table_fst,
+    rollup_table_fcst,
     rollup_table_hst,
     table_with_link_monthly,
     period_table,
@@ -101,7 +101,7 @@ __all__ = [
     "annual_table",
     "annual_table_yoy",
     "rollup_table_hst",
-    "rollup_table_fst",
+    "rollup_table_fcst",
     "TABLE_STYLE_SCHEMA_VERSION",
     "ConditionOp",
     "FormatKind",

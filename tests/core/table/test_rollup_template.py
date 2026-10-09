@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from runbook.core.table import render_table_html, resolve_table_style, rollup_table_fst, rollup_table_hst
+from runbook.core.table import render_table_html, resolve_table_style, rollup_table_fcst, rollup_table_hst
 from runbook.core.table.templates import eu_power_rollup_table
 from runbook.core.timeseries.rollup import calendar_moving_average
 
@@ -119,7 +119,7 @@ def test_rollup_std_limits_change_both_sides_of_all_average_bands_without_changi
     dates = pd.to_datetime([f"{year}-06-{day}" for year in range(2020, 2026) for day in range(16, 21)])
     values = np.tile(np.arange(-2.0, 3.0), 6) + np.repeat(np.arange(6), 5)
     frame = pd.DataFrame({"Positive": values, "Negative": -values}, index=dates)
-    template = rollup_table_fst if forecast else eu_power_rollup_table
+    template = rollup_table_fcst if forecast else eu_power_rollup_table
     options = {"today": "2025-06-20"} if forecast else {}
     default = template(frame, header="Power", total_label=None, **options)["Power"]
     stronger = template(frame, header="Power", total_label=None, std_limits=(0.5, 1.0), **options)["Power"]
@@ -246,7 +246,7 @@ def test_forecast_rollup_anchors_all_averages_to_history_but_keeps_current_month
     # The final supplied historical row determines the date; its values are not used.
     history = pd.DataFrame({"Gas": [-999, -888]}, index=pd.to_datetime(["2025-06-22", "2025-06-20"]))
     original, original_history = frame.copy(), history.copy()
-    payload = rollup_table_fst(frame, history, today="2025-07-10", total_label=None)["Roll-up"]
+    payload = rollup_table_fcst(frame, history, today="2025-07-10", total_label=None)["Roll-up"]
     resolved = resolve_table_style(payload["data"], payload["style"])
     assert list(resolved.visible_columns) == [
         "Current Month",
@@ -281,7 +281,7 @@ def test_forecast_rollup_without_history_uses_final_df_row_not_today(history) ->
         {"System load": [100.0, 10.0, 20.0]},
         index=pd.to_datetime(["2025-02-01", "2025-01-30", "2025-01-31"]),
     )
-    payload = rollup_table_fst(
+    payload = rollup_table_fcst(
         frame, history, ["Current Month", "Latest", "5d MA"], today="2025-02-10", format_spec="{:,.2f}"
     )["Roll-up"]
     assert payload["data"].loc["Total", ["Current Month", "Latest", "5d MA"]].tolist() == [100, 20, 15]
@@ -296,7 +296,7 @@ def test_forecast_rollup_missing_latest_date_does_not_fill_from_history_or_anoth
         {"Value": [10.0, 14.0, 100.0]}, index=pd.to_datetime(["2025-01-29", "2025-01-30", "2025-02-01"])
     )
     history = pd.DataFrame({"Value": [50.0]}, index=pd.to_datetime(["2025-01-31"]))
-    payload = rollup_table_fst(frame, history, ["Latest", "5d MA"], total_label=None)["Roll-up"]
+    payload = rollup_table_fcst(frame, history, ["Latest", "5d MA"], total_label=None)["Roll-up"]
     assert pd.isna(payload["data"].loc["Value", "Latest"])
     assert payload["data"].loc["Value", "5d MA"] == 12
     assert all(
@@ -313,7 +313,7 @@ def test_forecast_rollup_current_month_and_history_anchor_use_df_timezone() -> N
         ).tz_localize("Europe/London"),
     )
     history = pd.DataFrame({"Value": [999.0]}, index=pd.to_datetime(["2025-04-01 11:00Z"]))
-    payload = rollup_table_fst(
+    payload = rollup_table_fcst(
         frame, history, ["Current Month", "Latest", "5d MA"], today="2025-03-31 23:30Z", total_label=None
     )["Roll-up"]
     assert payload["data"].loc["Value", ["Current Month", "Latest", "5d MA"]].tolist() == [60, 20, 15]
@@ -325,4 +325,4 @@ def test_forecast_rollup_current_month_and_history_anchor_use_df_timezone() -> N
 def test_forecast_rollup_rejects_invalid_history_dates(history) -> None:
     frame = pd.DataFrame({"Value": [1.0]}, index=pd.to_datetime(["2025-01-01"]))
     with pytest.raises(ValueError, match="df_hst must have a DatetimeIndex without NaT"):
-        rollup_table_fst(frame, history)
+        rollup_table_fcst(frame, history)
