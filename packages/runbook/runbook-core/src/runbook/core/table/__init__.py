@@ -50,7 +50,24 @@ from runbook.core.table.models import (
     parse_python_format_string,
     validate_link_url,
 )
-from runbook.core.table.templates import rollup_table_fst, rollup_table_hst, table_with_link_monthly
+from runbook.core.table.templates import (
+    rollup_table_fst,
+    rollup_table_hst,
+    table_with_link_monthly,
+    period_table,
+    monthly_table,
+    monthly_table_yoy,
+    quarterly_table,
+    quarterly_table_yoy,
+    seasonal_table,
+    seasonal_table_yoy,
+    summer_table,
+    summer_table_yoy,
+    winter_table,
+    winter_table_yoy,
+    annual_table,
+    annual_table_yoy,
+)
 from runbook.core.table.templates.cot import cot_summary_table, cot_table
 from runbook.core.table.templates.common import (
     band_compare_rules,
@@ -70,6 +87,19 @@ from runbook.core.table.templates.table_with_link_monthly import (
 )
 
 __all__ = [
+    "period_table",
+    "monthly_table",
+    "monthly_table_yoy",
+    "quarterly_table",
+    "quarterly_table_yoy",
+    "seasonal_table",
+    "seasonal_table_yoy",
+    "summer_table",
+    "summer_table_yoy",
+    "winter_table",
+    "winter_table_yoy",
+    "annual_table",
+    "annual_table_yoy",
     "rollup_table_hst",
     "rollup_table_fst",
     "TABLE_STYLE_SCHEMA_VERSION",

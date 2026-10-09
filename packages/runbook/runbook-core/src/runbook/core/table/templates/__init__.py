@@ -9,6 +9,21 @@ from runbook.core.table.templates.table_with_link_monthly import (
 )
 from runbook.core.table.templates.cot import cot_summary_table, cot_table
 from runbook.core.table.templates.rollup import rollup_table_fst, rollup_table_hst
+from runbook.core.table.templates.periods import (
+    period_table,
+    monthly_table,
+    monthly_table_yoy,
+    quarterly_table,
+    quarterly_table_yoy,
+    seasonal_table,
+    seasonal_table_yoy,
+    summer_table,
+    summer_table_yoy,
+    winter_table,
+    winter_table_yoy,
+    annual_table,
+    annual_table_yoy,
+)
 from runbook.core.table.templates.reports import (
     cot_cme_summary_table,
     cot_cme_timeseries_table,
@@ -57,6 +72,19 @@ from runbook.core.table.templates.reports import (
 )
 
 __all__ = [
+    "period_table",
+    "monthly_table",
+    "monthly_table_yoy",
+    "quarterly_table",
+    "quarterly_table_yoy",
+    "seasonal_table",
+    "seasonal_table_yoy",
+    "summer_table",
+    "summer_table_yoy",
+    "winter_table",
+    "winter_table_yoy",
+    "annual_table",
+    "annual_table_yoy",
     "cot_cme_summary_table",
     "cot_cme_timeseries_table",
     "cot_ice_summary_table",

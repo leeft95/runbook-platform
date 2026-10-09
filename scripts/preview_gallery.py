@@ -53,6 +53,18 @@ from runbook.core.table.templates import (
     futures_price_range_table,
     eu_power_rollup_table,
     rollup_table_fst,
+    monthly_table,
+    monthly_table_yoy,
+    quarterly_table,
+    quarterly_table_yoy,
+    seasonal_table,
+    seasonal_table_yoy,
+    summer_table,
+    summer_table_yoy,
+    winter_table,
+    winter_table_yoy,
+    annual_table,
+    annual_table_yoy,
 )
 from runbook.core.cot import analysis, analysis_mifid
 from runbook.core.timeseries.cot import prepare_cot_data
@@ -455,6 +467,26 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         index=dates,
     )
     power["Load"] = power.sum(axis=1)
+    balances = power.copy()
+    balances["Gas share"] = power.Gas / (power.Gas + power.Coal)
+    balances["Net balance"] = power.Load - 108
+    for key, title, level_template, yoy_template, start in [
+        ("monthly", "Monthly", monthly_table, monthly_table_yoy, "2023-07-01"),
+        ("quarterly", "Quarterly", quarterly_table, quarterly_table_yoy, "2023-01-01"),
+        ("seasonal", "Seasonal", seasonal_table, seasonal_table_yoy, "2019-04-01"),
+        ("summer", "Summer", summer_table, summer_table_yoy, "2019-04-01"),
+        ("winter", "Winter", winter_table, winter_table_yoy, "2019-04-01"),
+        ("annual", "Annual", annual_table, annual_table_yoy, "2019-01-01"),
+    ]:
+        for template, suffix in [(level_template, ""), (yoy_template, "-yoy")]:
+            table(
+                f"balance-{key}{suffix}",
+                f"Power balance · {title}" + (" YoY" if suffix else ""),
+                "Dates are selected on the input data upstream. YoY compares matching periods in the supplied data; missing comparisons are dashes. Negative values are red in every table. Summers cover April–October; winters cover November–March.",
+                template,
+                balances.loc[start:"2025-06-30"],
+                column_formats={"Gas share": "{:.2f}"},
+            )
     table(
         "rollup-power",
         "Power · calendar roll-ups",

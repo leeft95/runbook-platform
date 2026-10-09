@@ -237,6 +237,61 @@ month's mean and sample standard deviation. `std_limits` applies to it and
 all MA columns. `highlight_columns` can select average columns or disable
 highlighting with `[]`; Latest itself remains excluded.
 
+## Calendar balance tables
+
+`period_table` builds monthly, quarterly, seasonal, summer, winter and annual
+tables from one dated DataFrame. The named templates below are predefined
+wrappers around that shared calculation and style builder. Import them from
+`runbook.core.table` or `runbook.core.table.templates`.
+
+| Level table | Absolute YoY difference table | Period / row labels |
+| --- | --- | --- |
+| `monthly_table` | `monthly_table_yoy` | Calendar months, e.g. `Apr26` |
+| `quarterly_table` | `quarterly_table_yoy` | Calendar quarters, e.g. `Q2 2026` |
+| `seasonal_table` | `seasonal_table_yoy` | Both summers and winters, in chronological order |
+| `summer_table` | `summer_table_yoy` | April–October, e.g. `Sum19` |
+| `winter_table` | `winter_table_yoy` | November–March, e.g. `Win19` for Nov 2019–Mar 2020 |
+| `annual_table` | `annual_table_yoy` | Calendar years, e.g. `2026` |
+
+All numeric columns are averaged directly from the supplied observations;
+non-numeric columns are ignored. Quarters, seasons and years are not averages
+of monthly averages. Partial periods are included, missing values skipped,
+and missing periods are not filled. Dates are parsed and sorted on a copy;
+timezone removal preserves local clock time. Duplicate or missing dates are
+rejected, including duplicates introduced by parsing or timezone removal.
+
+YoY means the current period's mean minus the **same period one calendar year
+earlier**, in the original units. Winter is compared with winter, summer with
+summer, and quarter with the same quarter. A missing prior period produces a
+missing difference, displayed as `-`; another available period is never
+substituted. Date selection is an upstream responsibility: the templates use
+all supplied observations. Prior-year comparisons require the corresponding
+history in the supplied frame.
+
+```python
+from runbook.core.table import monthly_table, monthly_table_yoy, winter_table, period_table
+
+options = dict(column_formats={"NATL_GS": "{:.2f}"})
+monthly = monthly_table(g, **options)["Monthly"]
+monthly_yoy = monthly_table_yoy(g, **options)["Monthly YoY"]
+winter = winter_table(g, **options)["Winter"]
+
+# The shared builder produces the same payload as quarterly_table_yoy(g, ...).
+quarterly_yoy = period_table(g, period="quarterly", yoy=True, **options)["Quarterly YoY"]
+```
+
+All columns are centered. **Negative values are red in every level and YoY
+table.** Monthly, quarterly and seasonal tables alternate blue/white rows;
+annual tables use solid blue, matching the reference. The period label is
+the first visible column, with no extra index-name row. No total row is added.
+
+The shared options include `header`, `format_spec` (default `"{:,.0f}"`),
+`column_formats` for per-column formats, `column_width`/`index_width` (85 pixels
+each), and `rules` for additional style overrides. Formatting leaves numeric
+values intact. Each template returns `{header: {"data": frame, "style": plan,
+"plots": []}}`, usable in HTML, native Dash and AG Grid. All twelve templates
+have examples in the preview gallery.
+
 ## Shared migration builders
 
 The recovered ECM core and report callers use the following capabilities.
