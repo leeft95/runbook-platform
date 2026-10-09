@@ -32,8 +32,8 @@ def test_gallery_uses_public_templates_with_resolvable_links_and_serializable_ou
     tables, charts = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts/preview_gallery.py"))[
         "build_examples"
     ]()
-    assert len(tables) == 17 and len(charts) == 18
-    assert len({item["template"] for item in tables}) == 16
+    assert len(tables) == 18 and len(charts) == 18
+    assert len({item["template"] for item in tables}) == 17
     assert len({item["template"] for item in charts}) == 18
     chart_names = {item["key"] for item in charts}
     for item in [*tables, *charts]:

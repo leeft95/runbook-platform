@@ -50,7 +50,7 @@ from runbook.core.table.models import (
     parse_python_format_string,
     validate_link_url,
 )
-from runbook.core.table.templates import rollup_table_hst, table_with_link_monthly
+from runbook.core.table.templates import rollup_table_fst, rollup_table_hst, table_with_link_monthly
 from runbook.core.table.templates.cot import cot_summary_table, cot_table
 from runbook.core.table.templates.common import (
     band_compare_rules,
@@ -71,6 +71,7 @@ from runbook.core.table.templates.table_with_link_monthly import (
 
 __all__ = [
     "rollup_table_hst",
+    "rollup_table_fst",
     "TABLE_STYLE_SCHEMA_VERSION",
     "ConditionOp",
     "FormatKind",

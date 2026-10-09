@@ -52,6 +52,7 @@ from runbook.core.table.templates import (
     oil_on_water_table,
     futures_price_range_table,
     eu_power_rollup_table,
+    rollup_table_fst,
 )
 from runbook.core.cot import analysis, analysis_mifid
 from runbook.core.timeseries.cot import prepare_cot_data
@@ -470,6 +471,18 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         power.div(power.Load, axis=0),
         header="EU power share",
         format_spec="{:.1%}",
+    )
+    table(
+        "rollup-forecast",
+        "Power forecast · current month and calendar roll-ups",
+        "Current Month averages all June forecasts. Latest and the MAs reference the final historical row, 18 June; linked charts retain the full series. Highlights use configurable ±1.5/±2.5 SD limits.",
+        rollup_table_fst,
+        power,
+        df_hst=power.loc[:"2025-06-18"],
+        today="2025-06-20",
+        header="EU power forecast",
+        std_limits=(1.5, 2.5),
+        format_spec="{:,.1f}",
     )
     chart(
         "rollup-seasonal",

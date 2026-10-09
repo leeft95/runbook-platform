@@ -69,7 +69,8 @@ flows = russia_exports_table(flow_history, "Flows", benchmark_quarter="2025Q4")
 The original generic presets remain available with their existing defaults:
 `daily_prices_table`, `inventory_summary_table`, `flow_quarterly_table`,
 `flow_monthly_table`, `monthly_consensus_table`, `mtd_inventory_table`,
-`grouped_metrics_table` and `rollup_table_hst`. The monthly-sum and true-MTD
+`grouped_metrics_table` and `rollup_table_hst`. The forecast variation is
+`rollup_table_fst`. The monthly-sum and true-MTD
 gallery cards are explicitly generic examples: no matching
 source report was found for those exact presets. In particular, the source
 `oil_on_water.py` names a row **Total MTD Chg** but calculates a 20-observation
@@ -144,7 +145,8 @@ non-leap years. Calendar offsets preserve local clock time across DST.
 `params` selects and orders roll-ups. Other positive lengths work too, such as
 `10d MA`, `6m MA`, `Y-2 20d MA` and `3Y 5d MA`. No completed-month/quarter
 columns are added. The screenshot's separately supplied **Current Month Base**
-is not inferred from the six requested roll-ups.
+is not inferred by this historical template; the forecast variation below
+adds a calculated **Current Month** column.
 
 Each series name links to a figure with its **full base history**, **seasonal
 base data**, and **seasonal rolling averages** for the requested windows.
@@ -188,6 +190,52 @@ Use `format_spec` for precision or percentages,
 `rules` for additional shared `TableRule` overrides, `footer`
 for a custom note, and `plot_options` for seasonal chart settings. Roll-ups have
 no footer by default.
+
+## Forecast roll-up table
+
+`rollup_table_fst(df, df_hst=None, params=None)` is the variation for a
+time-series DataFrame containing forecasts. It keeps the historical template's
+formats, total row, links, calendar windows and configurable `std_limits`.
+
+All values are calculated from **`df`**. The optional **`df_hst`** selects the
+Latest date using the index of its final supplied row. If it is `None` or empty,
+the final supplied row of **`df`** selects that date. `Latest` reads the exact
+matching row in `df`, including missing values; a missing date stays missing.
+Historical values are not merged into `df`. Every moving average and prior-year
+comparison is anchored to this same Latest date, excluding later observations
+from its window.
+
+The default columns, in order, are **Current Month**, **Latest**, **5d MA**,
+**20d MA**, **3m MA**, **Y-1 20d MA**, and **5Y 20d MA**. `params` selects and
+orders them, with the same customizable MA windows as `rollup_table_hst`.
+
+**Current Month** averages all supplied observations in today's calendar month,
+including future dates in that month. This month is independent of the Latest
+date. `today` optionally fixes the current date for a reproducible report;
+otherwise the date is read in `df`'s timezone. It does not change the Latest
+date or the MA anchor. Missing observations are skipped without filling.
+
+```python
+from runbook.core.table import rollup_table_fst
+
+payload = rollup_table_fst(
+    forecast_ts,
+    df_hst=historical_ts,  # Optional; otherwise use forecast_ts's final row date.
+    header="EU power forecast",
+    std_limits=(1.5, 2.5),
+    format_spec="{:,.1f}",
+)["EU power forecast"]
+```
+
+For example, if `today="2025-07-10"` and the last `df_hst` row is dated June 20,
+Current Month uses all supplied July observations, while Latest and every MA
+reference June 20. The linked history and seasonal charts retain all supplied
+data, including forecasts after that date.
+
+Current Month also receives z-score highlighting, comparing Latest with the
+month's mean and sample standard deviation. `std_limits` applies to it and
+all MA columns. `highlight_columns` can select average columns or disable
+highlighting with `[]`; Latest itself remains excluded.
 
 ## Shared migration builders
 

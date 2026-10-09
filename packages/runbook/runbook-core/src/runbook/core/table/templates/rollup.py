@@ -78,17 +78,108 @@ def rollup_table_hst(
     Use ``format_spec='{:.1%}'`` for shares and ``rules`` for domain overrides.
     Returns the ordinary named data/style/plots payload, with numeric values.
     """
+    frame = _normalize_input_frame(data, columns_filter=None, fill_na=None, as_of=as_of)
+    anchor = data.index[data.index.isin(frame.index)][-1]
+    return _rollup_table(
+        frame.loc[frame.index <= anchor],
+        anchor,
+        params,
+        header,
+        exclude_years=exclude_years,
+        format_spec=format_spec,
+        total_label=total_label,
+        row_plot_links=row_plot_links,
+        all_plots_link=all_plots_link,
+        highlight_columns=highlight_columns,
+        std_limits=std_limits,
+        rules=rules,
+        footer=footer,
+        plot_options=plot_options,
+    )
+
+
+def rollup_table_fst(
+    df: pd.DataFrame,
+    df_hst: pd.DataFrame | None = None,
+    params: Sequence[str] | None = None,
+    header: str = "Roll-up",
+    *,
+    today: str | pd.Timestamp | None = None,
+    std_limits: tuple[float, float] = (1.0, 2.0),
+    **options: Any,
+) -> dict[str, dict[str, Any]]:
+    """Roll up forecast data using the last supplied historical or forecast date.
+
+    Default columns are Current Month, Latest, 5d MA, 20d MA, 3m MA,
+    Y-1 20d MA and 5Y 20d MA. All values come from ``df``. ``df_hst`` only
+    selects the Latest date: its final supplied row's index when populated,
+    or the final supplied row of ``df`` when absent/empty. Latest uses the exact matching row of ``df``;
+    missing dates and values remain missing. All MA windows reference that date.
+
+    Current Month averages all supplied observations in today's calendar month,
+    including future dates, independently of the Latest date. ``today`` pins
+    the calendar date for reproducible reports; it defaults to the current date
+    in ``df``'s timezone. Linked charts retain the full supplied time series.
+
+    ``std_limits`` and other presentation options work as in ``rollup_table_hst``.
+    Current Month is also eligible for z-score highlighting; Latest is excluded.
+    The final input series is the supplied Total unless ``total_label=None``.
+    """
+    frame = _normalize_input_frame(df, columns_filter=None, fill_na=None)
+    current_date = _rollup_date(
+        pd.Timestamp.now(tz=frame.index.tz) if today is None else today, frame.index
+    ).normalize()
+    if df_hst is not None and not isinstance(df_hst, pd.DataFrame):
+        raise TypeError("df_hst must be a DataFrame or None")
+    anchor = df.index[-1]
+    if df_hst is not None and not df_hst.empty:
+        if not isinstance(df_hst.index, pd.DatetimeIndex) or df_hst.index.hasnans:
+            raise ValueError("df_hst must have a DatetimeIndex without NaT")
+        anchor = _rollup_date(df_hst.index[-1], frame.index)
+    return _rollup_table(frame, anchor, params, header, current_month=current_date, std_limits=std_limits, **options)
+
+
+def _rollup_date(value: str | pd.Timestamp, index: pd.DatetimeIndex) -> pd.Timestamp:
+    """Resolve a calendar/anchor date in the input time series' timezone."""
+    date = pd.Timestamp(value)
+    if pd.isna(date):
+        raise ValueError("roll-up dates must not be NaT")
+    if index.tz is not None:
+        return date.tz_localize(index.tz) if date.tzinfo is None else date.tz_convert(index.tz)
+    if date.tzinfo is not None:
+        raise ValueError("roll-up dates must be timezone-naive when df has a timezone-naive index")
+    return date
+
+
+def _rollup_table(
+    frame: pd.DataFrame,
+    anchor: pd.Timestamp,
+    params: Sequence[str] | None,
+    header: str,
+    *,
+    current_month: pd.Timestamp | None = None,
+    exclude_years: Sequence[int] = (),
+    format_spec: TableFormatSpec | str = "{:,.0f}",
+    total_label: str | None = "Total",
+    row_plot_links: bool | list[str] = True,
+    all_plots_link: bool = True,
+    highlight_columns: Sequence[str] | None = None,
+    std_limits: tuple[float, float] = (1.0, 2.0),
+    rules: Sequence[TableRule] = (),
+    footer: str | None = None,
+    plot_options: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Build shared calendar statistics, highlights and linked roll-up plots."""
     if not header.strip():
         raise ValueError("header must not be blank")
     if params is None:
         params = ("Latest", "5d MA", "20d MA", "3m MA", "Y-1 20d MA", "5Y 20d MA")
+        if current_month is not None:
+            params = ("Current Month", *params)
     if isinstance(params, str) or not params or any(not isinstance(label, str) for label in params):
         raise ValueError("params must be a non-empty sequence of roll-up column names")
     if len({label.strip().casefold() for label in params}) != len(params):
         raise ValueError("params must contain distinct column names")
-    frame = _normalize_input_frame(data, columns_filter=None, fill_na=None, as_of=as_of)
-    anchor = data.index[data.index.isin(frame.index)][-1]
-    frame = frame.loc[frame.index <= anchor]
     frame = frame.apply(pd.to_numeric, errors="raise")
     if total_label is not None:
         if not total_label.strip() or total_label in frame.columns[:-1]:
@@ -100,6 +191,7 @@ def rollup_table_hst(
     values: dict[str, pd.Series] = {}
     windows: list[str] = []
     benchmarks: dict[str, tuple[pd.Series, pd.Series]] = {}
+    latest = frame.reindex([anchor]).iloc[0]
 
     def sample_at(window: str, date: pd.Timestamp) -> pd.DataFrame:
         """Select observations in a calendar window, including its end date."""
@@ -107,7 +199,13 @@ def rollup_table_hst(
 
     for label in params:
         if label.strip().casefold() == "latest":
-            values[label] = frame.iloc[-1]
+            values[label] = latest
+            continue
+        if current_month is not None and label.strip().casefold() == "current month":
+            month_start = current_month.replace(day=1)
+            sample = frame.loc[(frame.index >= month_start) & (frame.index < month_start + pd.DateOffset(months=1))]
+            values[label] = sample.mean()
+            benchmarks[label] = (values[label], sample.std())
             continue
         match = re.fullmatch(r"(?:(Y-[1-9]\d*|[1-9]\d*Y)\s+)?([1-9]\d*[dm])\s+MA", label.strip(), re.IGNORECASE)
         if match is None:
@@ -135,14 +233,14 @@ def rollup_table_hst(
     result.index.name = header
     highlighted = list(benchmarks) if highlight_columns is None else list(highlight_columns)
     if set(highlighted) - benchmarks.keys():
-        raise ValueError("highlight_columns must select moving-average columns; Latest is not highlighted")
+        raise ValueError("highlight_columns must select average columns; Latest is not highlighted")
     hidden: list[str] = []
     targets: list[tuple[str, str, str, str]] = []
     for i, label in enumerate(highlighted):
         signal, mean, std = f"_rollup_{i}_latest", f"_rollup_{i}_mean", f"_rollup_{i}_std"
         reference_mean, reference_std = benchmarks[label]
         result[signal], result[mean], result[std] = (
-            frame.iloc[-1],
+            latest,
             reference_mean,
             reference_std.where(reference_std > 0),
         )
