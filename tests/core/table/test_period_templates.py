@@ -58,11 +58,6 @@ def test_period_templates_use_all_supplied_observations_for_calendar_means_and_y
     }
     expected_yoy = {
         "monthly": {
-            "Mar19": np.nan,
-            "Apr19": np.nan,
-            "Oct19": np.nan,
-            "Nov19": np.nan,
-            "Jan20": np.nan,
             "Mar20": 86,
             "Apr20": 4,
             "Oct20": 4,
@@ -71,18 +66,15 @@ def test_period_templates_use_all_supplied_observations_for_calendar_means_and_y
             "Mar21": 15,
         },
         "quarterly": {
-            "Q1 2019": np.nan,
-            "Q2 2019": np.nan,
-            "Q4 2019": np.nan,
             "Q1 2020": 76,
             "Q2 2020": 4,
             "Q4 2020": 9.5,
             "Q1 2021": 15,
         },
-        "seasonal": {"Win18": np.nan, "Sum19": np.nan, "Win19": 66, "Sum20": 4, "Win20": 15},
-        "summer": {"Sum19": np.nan, "Sum20": 4},
-        "winter": {"Win18": np.nan, "Win19": 66, "Win20": 15},
-        "annual": {2019: np.nan, 2020: 317 / 6 - 134 / 5, 2021: 95 - 317 / 6},
+        "seasonal": {"Win19": 66, "Sum20": 4, "Win20": 15},
+        "summer": {"Sum20": 4},
+        "winter": {"Win19": 66, "Win20": 15},
+        "annual": {2020: 317 / 6 - 134 / 5, 2021: 95 - 317 / 6},
     }
     options = dict(column_formats={"Ratio": "{:.2f}"})
     template = getattr(table, period + "_table" + ("_yoy" if yoy else ""))
@@ -102,7 +94,7 @@ def test_period_templates_use_all_supplied_observations_for_calendar_means_and_y
     resolved = table.resolve_table_style(result, payload["style"])
     assert resolved.formats["Ratio"].digits == 2
     assert resolved.formats["Level"].digits == 2
-    assert resolved.global_style.one_bg_color == (period == "annual")
+    assert resolved.global_style.one_bg_color is False
     for row in range(len(result)):
         if pd.notna(result.Negative.iloc[row]):
             assert resolved.cell_css[(row, "Negative")]["color"] == "red"
@@ -119,7 +111,26 @@ def test_yoy_does_not_substitute_previous_available_period_when_a_year_is_missin
         index=pd.to_datetime(["2019-04-01", "2019-11-01", "2021-04-01", "2021-11-01"]),
     )
     payload = next(iter(table.period_table(frame, period, yoy=True).values()))
-    assert payload["data"].Value.isna().all()
+    assert payload["data"].empty
+    assert "<table" in table.render_table_html(payload["data"], payload["style"])
+
+
+@pytest.mark.parametrize("period", ["monthly", "quarterly", "seasonal", "summer", "winter", "annual"])
+def test_yoy_omits_null_rows_but_preserves_partial_rows_and_zero_changes(period) -> None:
+    month = "11" if period == "winter" else "04"
+    frame = pd.DataFrame(
+        {"Value": [1.0, 1.0, np.nan, 4.0, 3.0], "Missing": [np.nan] * 5},
+        index=pd.to_datetime([f"{year}-{month}-01" for year in range(2020, 2025)]),
+    )
+    original = frame.copy()
+    payload = next(iter(getattr(table, period + "_table_yoy")(frame).values()))
+    result = payload["data"]
+    assert result.Value.tolist() == [0.0, -1.0]
+    assert result.Missing.isna().all()
+    assert table.resolve_table_style(result, payload["style"]).cell_css[(1, "Value")]["color"] == "red"
+    html = table.render_table_html(result, payload["style"])
+    assert "0.00" in html and html.split("<tbody>")[1].split("</tbody>")[0].count("<tr>") == 2
+    pd.testing.assert_frame_equal(frame, original)
 
 
 def test_periods_keep_local_dates_skip_missing_values_and_preserve_partial_periods() -> None:

@@ -328,8 +328,10 @@ rejected, including duplicates introduced by parsing or timezone removal.
 YoY means the current period's mean minus the **same period one calendar year
 earlier**, in the original units. Winter is compared with winter, summer with
 summer, and quarter with the same quarter. A missing prior period produces a
-missing difference, displayed as `-`; another available period is never
-substituted. Date selection is an upstream responsibility: the templates use
+missing difference; another available period is never substituted. YoY rows
+where every numeric value is missing are omitted. Partially populated rows
+and zero changes are retained, with missing cells displayed as `-`.
+Date selection is an upstream responsibility: the templates use
 all supplied observations. Prior-year comparisons require the corresponding
 history in the supplied frame.
 
@@ -346,8 +348,7 @@ quarterly_yoy = period_table(g, period="quarterly", yoy=True, **options)["Quarte
 ```
 
 All columns are centered. **Negative values are red in every level and YoY
-table.** Monthly, quarterly and seasonal tables alternate blue/white rows;
-annual tables use solid blue, matching the reference. The period label is
+table.** All period tables alternate blue/white rows. The period label is
 the first visible column, with no extra index-name row. No total row is added.
 
 Integer output columns default to 0 decimal places and float columns to 2.

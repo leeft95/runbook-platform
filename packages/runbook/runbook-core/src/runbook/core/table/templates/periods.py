@@ -16,7 +16,6 @@ from ..builder import _default_numeric_formats
 from ..models import (
     TableColumnSizing,
     TableFormatSpec,
-    TableGlobalStyle,
     TableRule,
     TableSizing,
     TableStyleFormat,
@@ -42,9 +41,9 @@ def monthly_table(df: pd.DataFrame, header: str = "Monthly", **options: Any) -> 
     and include partial periods. There is no filling or equal-month weighting.
     Date selection belongs to the caller; all supplied observations are used.
     YoY variants subtract the matching period one calendar year earlier.
-    Missing comparisons stay missing, displayed as
-    a dash. Values remain numeric, all columns are centered and negatives red.
-    Annual tables use a solid blue background; other tables alternate rows.
+    YoY rows with no available comparisons are omitted. Missing comparisons in
+    retained rows display as a dash. Values remain numeric, all columns are centered and negatives red.
+    All period tables use alternating row backgrounds.
     """
     return period_table(df, "monthly", header, **options)
 
@@ -183,6 +182,8 @@ def period_table(
         result.index = pd.Index(
             [f"{'Sum' if date.month == 4 else 'Win'}{date:%y}" for date in period_dates], name="Season"
         )
+    if yoy:
+        result = result.dropna(how="all")
 
     if unknown := set(column_formats or {}) - set(result.columns):
         raise ValueError(f"Unknown column_formats columns: {sorted(unknown)}")
@@ -205,8 +206,6 @@ def period_table(
             columns=[TableColumnSizing(label=column, width_px=column_width) for column in result],
         ),
         rules=[*color_negative_red(list(result), [(column, column) for column in result]), *rules],
-        options=TableStyleOptions(
-            max_rows=max(1, len(result)), global_style=TableGlobalStyle(one_bg_color=period == "annual")
-        ),
+        options=TableStyleOptions(max_rows=max(1, len(result))),
     )
     return {header: {"data": result, "style": plan.model_dump(mode="python", exclude_none=True), "plots": []}}
