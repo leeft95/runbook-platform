@@ -406,8 +406,8 @@ def table_with_linked_plots_monthly(
     benchmark_quarter: tp.Any = None,
     fill_na: str | None = None,
     na_rep: str | None = "-",
-    row_plot_links: bool | list[str] | str = False,
-    all_plots_link: bool | str = False,
+    row_plot_links: bool | list[str] | str = True,
+    all_plots_link: bool | str = True,
     *,
     windows: tuple[int, ...] = (10, 20),
     history_months: int = 5,
@@ -429,7 +429,9 @@ def table_with_linked_plots_monthly(
     input series whose displayed row labels receive those plot links.
     Auxiliary ``_mean``/``_std`` columns are retained for rule evaluation and
     hidden at render time.
-    String link options target absolute URLs or relative report pages.
+    ``row_plot_links`` and ``all_plots_link`` default to ``True``. String link
+    options target absolute URLs or relative report pages; ``False`` disables
+    the corresponding links.
     ``highlight_columns`` selects rolling-window highlights; [] disables
     coloured highlights while retaining red negative values.
 

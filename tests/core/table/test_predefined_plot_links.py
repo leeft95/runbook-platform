@@ -7,12 +7,13 @@ from runbook.core.table import (
     general_table_with_link,
     render_table_html,
     resolve_table_style,
-    rollup_table_hst,
     rollup_table_fcst,
+    rollup_table_hst,
     table_with_linked_plots_monthly,
 )
 from runbook.core.table.builder import link_anchor
 from runbook.core.table.models import TableLinkDestination, TableLinkKind
+from runbook.core.table.templates import daily_prices_table, eu_power_rollup_table, inventory_summary_table
 
 
 def _frame(*columns: str, periods: int = 900) -> pd.DataFrame:
@@ -20,8 +21,19 @@ def _frame(*columns: str, periods: int = 900) -> pd.DataFrame:
     return pd.DataFrame({column: np.arange(periods, dtype=float) for column in columns}, index=index)
 
 
+_LINKED_TABLE_VARIANTS = [
+    (general_table_with_link, "column_plot_links", {}),
+    (table_with_linked_plots_monthly, "row_plot_links", {}),
+    (rollup_table_hst, "row_plot_links", {}),
+    (rollup_table_fcst, "row_plot_links", {"today": pd.Timestamp("2020-03-20")}),
+    (daily_prices_table, "column_plot_links", {}),
+    (inventory_summary_table, "row_plot_links", {}),
+    (eu_power_rollup_table, "row_plot_links", {}),
+]
+
+
 def test_plot_link_options_false_preserve_payload_shape() -> None:
-    output = general_table_with_link(_frame("A"), header="Asset")
+    output = general_table_with_link(_frame("A"), header="Asset", column_plot_links=False, all_plots_link=False)
     assert set(output["Asset"]) == {"data", "style", "plots"}
     assert "links" not in output["Asset"]["style"]
 
@@ -59,7 +71,9 @@ def test_general_plot_links_are_named_in_figure_order_and_include_modes() -> Non
 
 
 def test_general_plot_links_can_select_a_subset() -> None:
-    output = general_table_with_link(_frame("A", "B"), header="Asset", column_plot_links=["B"])["Asset"]
+    output = general_table_with_link(_frame("A", "B"), header="Asset", column_plot_links=["B"], all_plots_link=False)[
+        "Asset"
+    ]
 
     assert [link["field"] for link in output["style"]["links"]] == ["B"]
     assert output["plot_names"] == ["asset-a-seasonal", "asset-b-seasonal"]
@@ -125,6 +139,7 @@ def test_monthly_plot_subset_links_aggregation_label() -> None:
         header="Monthly",
         aggregation_columns={"A": "MovingAverage"},
         row_plot_links=["A"],
+        all_plots_link=False,
     )["Monthly"]
 
     assert [link["field"] for link in output["style"]["links"]] == ["Monthly"]
@@ -167,9 +182,79 @@ def test_monthly_without_moving_average_uses_seasonal_plot_type() -> None:
     assert output["plot_names"] == ["monthly-a-seasonal"]
 
 
-def test_monthly_row_plot_links_are_disabled_by_default() -> None:
+def test_monthly_row_plot_links_are_enabled_by_default() -> None:
     output = table_with_linked_plots_monthly(_frame("A"), header="Monthly")["Monthly"]
-    assert "links" not in output["style"]
+    assert output["style"]["links"]
+    assert output["all_plots_name"] == "monthly-plots"
+
+
+@pytest.mark.parametrize("template, link_option, options", _LINKED_TABLE_VARIANTS)
+@pytest.mark.parametrize(
+    "row_links, all_link, expected_rows, expected_kind",
+    [
+        (True, True, [0, 1, 2], TableLinkKind.plot),
+        (False, True, [], TableLinkKind.plot),
+        (["B"], False, [1], TableLinkKind.plot),
+        ("/reports/series", "../reports/power.html", [0, 1, 2], TableLinkKind.url),
+    ],
+)
+def test_linked_table_variants_share_the_link_contract(
+    template, link_option, options, row_links, all_link, expected_rows, expected_kind
+) -> None:
+    payload = template(
+        _frame("A", "B", periods=80),
+        header="Power",
+        **{link_option: row_links},
+        all_plots_link=all_link,
+        **options,
+    )["Power"]
+    resolved = resolve_table_style(payload["data"], payload["style"])
+
+    item_links = (
+        resolved.header_links
+        if link_option == "column_plot_links"
+        else resolved.cell_links
+        if template in (table_with_linked_plots_monthly, inventory_summary_table)
+        else resolved.index_links
+    )
+    expected_count = len(payload["plots"]) if row_links is True or isinstance(row_links, str) else len(expected_rows)
+    assert len(item_links) == expected_count
+    assert all(link.kind == expected_kind for link in item_links.values())
+    if all_link is True:
+        aggregate_link = resolved.index_header_link or next(iter(resolved.header_links.values()), None)
+        assert aggregate_link is not None
+        assert aggregate_link.kind == TableLinkKind.plot
+        assert payload["all_plots_name"] == "power-plots"
+    elif all_link is False:
+        assert resolved.index_header_link is None
+        if template in (table_with_linked_plots_monthly, inventory_summary_table):
+            assert not resolved.header_links
+        assert "all_plots_name" not in payload
+    else:
+        aggregate_link = resolved.index_header_link or next(iter(resolved.header_links.values()), None)
+        assert aggregate_link is not None
+        assert aggregate_link.kind == TableLinkKind.url
+        assert aggregate_link.value == all_link
+        assert "all_plots_name" not in payload
+    if expected_kind == TableLinkKind.url:
+        assert all(link.value == row_links for link in item_links.values())
+
+
+@pytest.mark.parametrize("template, link_option, options", _LINKED_TABLE_VARIANTS)
+def test_linked_table_variants_enable_generated_links_by_default(template, link_option, options) -> None:
+    payload = template(_frame("A", "B", periods=80), header="Power", **options)["Power"]
+    resolved = resolve_table_style(payload["data"], payload["style"])
+    item_links = (
+        resolved.header_links
+        if link_option == "column_plot_links"
+        else resolved.cell_links
+        if template in (table_with_linked_plots_monthly, inventory_summary_table)
+        else resolved.index_links
+    )
+    assert len(item_links) == len(payload["plots"])
+    aggregate_link = resolved.index_header_link or next(iter(resolved.header_links.values()), None)
+    assert aggregate_link is not None and aggregate_link.kind == TableLinkKind.plot
+    assert payload["all_plots_name"] == "power-plots"
 
 
 @pytest.mark.parametrize("page", ["https://example.test/power?view=all#gas", "../power/details.html", "/reports/power"])

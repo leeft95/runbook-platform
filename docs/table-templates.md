@@ -24,7 +24,16 @@ pixi run python scripts/preview_gallery.py --serve --port 8766
 Open `http://127.0.0.1:8766/`. The gallery includes working companion-chart
 links and a live HTML / native Dash / AG Grid comparison for every table.
 Without `--serve`, it exports the gallery to `/tmp/runbook-gallery/index.html`.
-Every preview card names its public template function.
+Every preview card names its public template function. The linked-table review
+cards cover the general, monthly, historical roll-up and forecast variants,
+the linked report presets, and compact default, disabled, selected-subset and
+custom-local-destination examples. Linked variants default both link controls
+to `True`; the roll-up cards also compare the default `Latest`/`20d MA`
+highlights with selected columns and `use_highlighting=[]`. The card
+descriptions identify each orientation's argument names. Dedicated cards also
+show the valid spaced `"10d MA"` calendar-window label for historical and
+forecast roll-ups, with matching highlighted and `use_highlighting=[]`
+comparisons.
 
 For the roll-up options, including totals, highlighting, formatting and custom
 page links, generate the focused HTML / native Dash comparison:
@@ -263,6 +272,14 @@ later observations. Historical values are not merged into the forecast data.
 The default columns, in order, are **Current Month**, **Latest**, **5d MA**,
 **20d MA**, **3m MA**, **Y-1 20d MA**, and **5Y 20d MA**. `params` selects and
 orders them, with the same customizable MA windows as `rollup_table_hst`.
+
+Forecast roll-ups use the same link arguments and defaults as historical
+roll-ups: `row_plot_links=True` links every displayed row to its generated
+series plot, while `all_plots_link=True` links the heading to the generated
+aggregate page. Set `row_plot_links=False` or `all_plots_link=False` to disable
+the corresponding links; use `row_plot_links=[...]` to select a subset of
+displayed row labels. Either option accepts a valid absolute or relative URL
+to use a custom destination.
 
 **Current Month** averages all supplied observations in today's calendar month,
 including future dates in that month. This month is independent of the Latest
@@ -571,24 +588,27 @@ style = {
 }
 ```
 
-`general_table_with_link` and `table_with_linked_plots_monthly` can derive
-stable plot names. In the general table, `column_plot_links=True` links
-rendered column headers to individual pages, and `all_plots_link=True` links
-the index header to the deterministic aggregate page. The monthly template's
-`row_plot_links` selects original input series names and links the displayed
-label column cells, even when the table headings are periods; its
-`all_plots_link=True` links that label column's header. A filtered-out series
-has no row link; aggregation labels such as `Brent [MA]` are used as the
-displayed cell value.
+`general_table_with_link`, `table_with_linked_plots_monthly`, and the roll-up
+templates can derive stable plot names. In the general table,
+`column_plot_links=True` links rendered column headers to individual pages, and
+`all_plots_link=True` links the index header to the deterministic aggregate
+page. The monthly template's `row_plot_links` selects original input series
+names and links the displayed label-column cells; its `all_plots_link=True`
+links that label column's header. Roll-up templates use `row_plot_links` to
+select displayed row labels and link index cells; `all_plots_link=True` links
+the index heading. A filtered-out series has no row link; aggregation labels
+such as `Brent [MA]` are used as the displayed cell value.
 
 For these builders and their report presets, string link options target an
 absolute HTTP(S) URL or relative report page instead of generated plot pages.
 `column_plot_links="../detail.html"` links all general-table column headings
-to that page; `row_plot_links="/reports/power"` links all monthly-table row
-labels. `all_plots_link` accepts the same
-strings for the label heading. `True` retains generated plot links and
-`False` disables them. Custom destinations are not added to `all_plots_name`
-or validated as plot artifacts. Existing companion plots are still returned.
+to that page; `row_plot_links="/reports/power"` links all monthly-table
+label cells or roll-up index cells. `all_plots_link` accepts the same strings
+for the monthly label-column header or roll-up index heading. `True` retains
+generated plot links and `False` disables them. Custom destinations are not
+added to `all_plots_name` or validated as plot artifacts.
+Existing companion plots are still returned. General, monthly, historical and
+forecast roll-up templates default both link options to `True`.
 
 `highlight_columns` selects the columns receiving z-score colours: data series
 columns in the general table and rolling-window columns in monthly summaries.

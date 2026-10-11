@@ -281,8 +281,8 @@ def general_table_with_link(
     data_column_width: int = 60,
     fill_na: str | None = None,
     na_rep: str | None = "-",
-    column_plot_links: bool | list[str] | str = False,
-    all_plots_link: bool | str = False,
+    column_plot_links: bool | list[str] | str = True,
+    all_plots_link: bool | str = True,
     *,
     exclude_years: list[int] | None = None,
     highlight_columns: tp.Sequence[str] | None = None,
@@ -297,8 +297,9 @@ def general_table_with_link(
     - the final summary row by testing raw level versus a Bollinger-style band
 
     ``highlight_columns`` selects coloured columns; [] disables highlights,
-    retaining red negative values. String link options point to custom page
-    URLs; True uses generated plots, False disables the corresponding links.
+    retaining red negative values. ``column_plot_links`` and ``all_plots_link``
+    default to ``True``; string options point to custom page URLs, ``True``
+    uses generated plots, and ``False`` disables the corresponding links.
 
     The returned payload matches the predefined helper contract:
     ``{table_key: {"data": df, "style": style_payload, "plots": plots}}``.

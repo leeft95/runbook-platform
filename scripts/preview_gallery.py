@@ -14,60 +14,67 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.offline import get_plotlyjs
-
+from runbook.core.cot import analysis, analysis_mifid
 from runbook.core.plotting.templates import (
-    plot_line_with_moving_average,
-    plot_line_with_comparison,
-    plot_seasonal_comparison,
-    plot_reversed_seasonal_forecast,
-    plot_seasonal_with_history,
-    plot_cot_positions,
     plot_cot_long_short,
     plot_cot_net,
-    plot_market_ohlc,
-    plot_market_holdings,
-    plot_regression_origin,
-    plot_regression_intercept,
-    plot_weekly_price_position,
-    plot_four_week_price_position,
-    plot_spread_position_changes,
+    plot_cot_positions,
     plot_forecast_bars,
+    plot_four_week_price_position,
     plot_highlighted_bar,
+    plot_line_with_comparison,
+    plot_line_with_moving_average,
+    plot_market_holdings,
+    plot_market_ohlc,
+    plot_regression_intercept,
+    plot_regression_origin,
+    plot_reversed_seasonal_forecast,
     plot_rollup_seasonal,
+    plot_seasonal_comparison,
+    plot_seasonal_with_history,
+    plot_spread_position_changes,
+    plot_weekly_price_position,
 )
 from runbook.core.table import TableStylePlan, render_table_html
 from runbook.core.table.templates import (
-    cot_cme_summary_table,
-    cot_ice_mifid_summary_table,
-    cot_cme_timeseries_table,
-    cot_ice_mifid_timeseries_table,
+    annual_table,
+    annual_table_yoy,
     cot_cme_position_change_table,
     cot_cme_position_divergence_table,
-    oil_dashboard_table,
-    kpler_inventory_table,
-    russia_exports_table,
-    flow_monthly_table,
-    kpler_inventory_consensus_table,
-    product_inventory_consensus_table,
-    mtd_inventory_table,
-    oil_on_water_table,
-    futures_price_range_table,
+    cot_cme_summary_table,
+    cot_cme_timeseries_table,
+    cot_ice_mifid_summary_table,
+    cot_ice_mifid_timeseries_table,
+    daily_prices_table,
     eu_power_rollup_table,
-    rollup_table_fcst,
+    flow_monthly_table,
+    flow_quarterly_table,
+    futures_price_range_table,
+    inventory_summary_table,
+    kpler_inventory_consensus_table,
+    kpler_inventory_table,
+    monthly_consensus_table,
     monthly_table,
     monthly_table_yoy,
+    mtd_inventory_table,
+    oil_dashboard_table,
+    oil_on_water_table,
+    product_inventory_consensus_table,
+    product_inventory_table,
     quarterly_table,
     quarterly_table_yoy,
+    rollup_table_fcst,
+    rollup_table_hst,
+    russia_exports_table,
     seasonal_table,
     seasonal_table_yoy,
     summer_table,
     summer_table_yoy,
     winter_table,
     winter_table_yoy,
-    annual_table,
-    annual_table_yoy,
 )
-from runbook.core.cot import analysis, analysis_mifid
+from runbook.core.table.templates.table_with_link import general_table_with_link
+from runbook.core.table.templates.table_with_link_monthly import table_with_linked_plots_monthly
 from runbook.core.timeseries.cot import prepare_cot_data
 
 
@@ -113,6 +120,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         description: str,
         template: Callable[..., dict[str, dict[str, Any]]],
         *args: Any,
+        code: str | None = None,
         **kwargs: Any,
     ) -> None:
         payload = next(iter(template(*args, **kwargs).values()))
@@ -122,7 +130,8 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                 title=title,
                 description=description,
                 payload=payload,
-                template=f"runbook.core.table.templates.{template.__name__}",
+                code=code,
+                template=f"{template.__module__}.{template.__name__}",
             )
         )
 
@@ -225,6 +234,25 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         price.tail(130),
         footer="Synthetic observations · 1 July 2025",
     )
+    table(
+        "linked-general",
+        "Core linked variant · general",
+        "The general linked table defaults to column_plot_links=True and all_plots_link=True: each column and the aggregate heading open local companion-plot pages.",
+        general_table_with_link,
+        price.tail(130),
+        header="General prices",
+        chart_columns={"Brent": "line", "WTI": "seasonal"},
+    )
+    table(
+        "linked-disabled",
+        "Linked review · both link types disabled",
+        "Explicit False for column_plot_links and all_plots_link leaves the table without companion links while retaining its generated plot payload.",
+        general_table_with_link,
+        price.tail(130),
+        header="Links disabled",
+        column_plot_links=False,
+        all_plots_link=False,
+    )
     chart(
         "daily-ma",
         "Daily line with moving average",
@@ -278,6 +306,43 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         consensus,
     )
     table(
+        "linked-monthly",
+        "Core linked variant · monthly",
+        "The monthly linked table defaults to row_plot_links=True and all_plots_link=True: row labels and the aggregate heading open local seasonal-plot pages.",
+        table_with_linked_plots_monthly,
+        consensus,
+        header="Monthly stocks",
+        windows=(1,),
+        aggregation_type="diff",
+        history_months=3,
+        history_quarters=2,
+        include_qtd=True,
+        comparison_years=5,
+    )
+    table(
+        "linked-subset",
+        "Linked review · selected row subset",
+        'row_plot_links=["Crude stocks"] links only the selected row; all_plots_link=True keeps the aggregate heading linked.',
+        table_with_linked_plots_monthly,
+        consensus,
+        header="Subset links",
+        windows=(1,),
+        aggregation_type="diff",
+        history_months=3,
+        history_quarters=2,
+        include_qtd=True,
+        comparison_years=5,
+        row_plot_links=["Crude stocks"],
+        all_plots_link=True,
+    )
+    table(
+        "linked-monthly-preset",
+        "Linked preset · monthly consensus",
+        "The public monthly_consensus_table preset inherits the shared row and aggregate link contract and defaults both link types to True.",
+        monthly_consensus_table,
+        consensus,
+    )
+    table(
         "product-consensus",
         "Product inventory · monthly consensus levels",
         "oil/product_inventory.py: US product balances as monthly and quarter-end levels, with QTD and three quarters of history.",
@@ -291,6 +356,35 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         mtd_inventory_table,
         daily[["Crude stocks", "Product stocks"]],
         as_of="2025-06-24",
+    )
+    table(
+        "linked-daily-preset",
+        "Linked preset · daily prices",
+        "The public daily_prices_table preset uses the general linked variant with both link types enabled by default.",
+        daily_prices_table,
+        price.tail(130),
+    )
+    table(
+        "linked-inventory-preset",
+        "Linked preset · inventory summary",
+        "The public inventory_summary_table preset uses monthly row links and an aggregate link by default.",
+        inventory_summary_table,
+        daily,
+    )
+    table(
+        "linked-flow-preset",
+        "Linked preset · quarterly flow",
+        "The public flow_quarterly_table preset uses monthly row links and an aggregate link by default.",
+        flow_quarterly_table,
+        flows,
+        benchmark_quarter="2025Q1",
+    )
+    table(
+        "linked-product-preset",
+        "Linked preset · product inventory",
+        "The public product_inventory_table preset retains the shared monthly link contract for daily product balances.",
+        product_inventory_table,
+        daily,
     )
 
     water = daily[["Crude stocks", "Product stocks"]].copy()
@@ -498,6 +592,70 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         header="EU power",
     )
     table(
+        "linked-custom",
+        "Linked review · custom destinations",
+        "Custom row_plot_links and all_plots_link URLs point to local gallery anchors; this confirms callers can replace generated destinations independently.",
+        rollup_table_hst,
+        rollup_power,
+        params=["Latest", "5d MA", "20d MA", "3m MA"],
+        header="Custom destinations",
+        row_plot_links="/gallery/index.html#linked-general",
+        all_plots_link="/gallery/index.html#linked-monthly",
+    )
+    table(
+        "linked-rollup-hst",
+        "Core linked variant · historical roll-up",
+        "The historical roll-up defaults to row_plot_links=True and all_plots_link=True: each displayed series and the index heading open local history/seasonal plot pages.",
+        rollup_table_hst,
+        rollup_power,
+        params=["Latest", "5d MA", "20d MA", "3m MA"],
+        header="History roll-up",
+    )
+    table(
+        "rollup-highlight-hst",
+        "Roll-up review · selected historical highlights",
+        "The default roll-up card highlights Latest and 20d MA. This comparison selects 5d MA and 3m MA instead; the exact use_highlighting argument is shown below.",
+        rollup_table_hst,
+        rollup_power,
+        params=["Latest", "5d MA", "20d MA", "3m MA"],
+        header="Selected history highlights",
+        use_highlighting=["5d MA", "3m MA"],
+        code='rollup_table_hst(rollup_power, params=["Latest", "5d MA", "20d MA", "3m MA"],\n    header="Selected history highlights", use_highlighting=["5d MA", "3m MA"])',
+    )
+    table(
+        "rollup-highlight-hst-none",
+        "Roll-up review · historical highlights disabled",
+        "use_highlighting=[] disables colored highlight bands for every historical roll-up column; red negative-value formatting remains active.",
+        rollup_table_hst,
+        rollup_power,
+        params=["Latest", "5d MA", "20d MA", "3m MA"],
+        header="No history highlights",
+        use_highlighting=[],
+        code='rollup_table_hst(rollup_power, params=["Latest", "5d MA", "20d MA", "3m MA"],\n    header="No history highlights", use_highlighting=[])',
+    )
+    table(
+        "rollup-10d-hst",
+        "Roll-up review · 10d historical MA",
+        "10d MA is a valid calendar-window label: this card highlights Latest and 10d MA alongside 20d MA. The exact spaced label is shown in the call below.",
+        rollup_table_hst,
+        rollup_power,
+        params=["Latest", "10d MA", "20d MA"],
+        header="10d history",
+        use_highlighting=["Latest", "10d MA"],
+        code='rollup_table_hst(rollup_power, params=["Latest", "10d MA", "20d MA"],\n    header="10d history", use_highlighting=["Latest", "10d MA"])',
+    )
+    table(
+        "rollup-10d-hst-none",
+        "Roll-up review · 10d historical MA without highlights",
+        "The same 10d MA inputs with use_highlighting=[] provide the direct no-color comparison; red negative-value formatting remains active.",
+        rollup_table_hst,
+        rollup_power,
+        params=["Latest", "10d MA", "20d MA"],
+        header="10d history no highlights",
+        use_highlighting=[],
+        code='rollup_table_hst(rollup_power, params=["Latest", "10d MA", "20d MA"],\n    header="10d history no highlights", use_highlighting=[])',
+    )
+    table(
         "rollup-share",
         "Power shares · calendar roll-ups",
         "The same numeric z-score rules apply to shares, displayed as percentages. Latest and 20d MA are highlighted by default; other columns can be selected.",
@@ -509,13 +667,70 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     table(
         "rollup-forecast",
         "Power forecast · current month and calendar roll-ups",
-        "Current Month averages all June forecasts. Latest and the MAs reference the final historical row, 18 June; linked charts retain the full series. Latest and 20d MA receive z-score highlights using configurable ±1.5/±2.5 SD limits. Other columns, including Current Month, are opt-in.",
+        "Current Month averages all June forecasts. Latest and the MAs reference the final historical row, 18 June; linked charts retain the full series. Latest and 20d MA receive z-score highlights using configurable ±1/±2 SD limits. Other columns, including Current Month, are opt-in.",
         rollup_table_fcst,
         rollup_power,
+        params=["Current Month", "Latest", "5d MA", "20d MA", "3m MA", "Y-1 20d MA", "5Y 20d MA"],
         df_hst=rollup_power.loc[:"2025-06-18"],
         today="2025-06-20",
         header="EU power forecast",
-        std_limits=(1.5, 2.5),
+        std_limits=(1.0, 2.0),
+    )
+    table(
+        "rollup-highlight-fcst",
+        "Roll-up review · selected forecast highlights",
+        "The default forecast card highlights Latest and 20d MA. This comparison selects Current Month and 5d MA instead; the exact use_highlighting argument is shown below.",
+        rollup_table_fcst,
+        rollup_power,
+        params=["Current Month", "Latest", "5d MA", "20d MA", "3m MA", "Y-1 20d MA", "5Y 20d MA"],
+        df_hst=rollup_power.loc[:"2025-06-18"],
+        today="2025-06-20",
+        header="Selected forecast highlights",
+        std_limits=(1.0, 2.0),
+        use_highlighting=["Current Month", "5d MA"],
+        code='rollup_table_fcst(rollup_power, df_hst=rollup_power.loc[:"2025-06-18"],\n    params=["Current Month", "Latest", "5d MA", "20d MA", "3m MA", "Y-1 20d MA", "5Y 20d MA"],\n    today="2025-06-20", header="Selected forecast highlights",\n    std_limits=(1.0, 2.0), use_highlighting=["Current Month", "5d MA"])',
+    )
+    table(
+        "rollup-highlight-fcst-none",
+        "Roll-up review · forecast highlights disabled",
+        "use_highlighting=[] disables colored highlight bands for every forecast roll-up column; red negative-value formatting remains active.",
+        rollup_table_fcst,
+        rollup_power,
+        params=["Current Month", "Latest", "5d MA", "20d MA", "3m MA", "Y-1 20d MA", "5Y 20d MA"],
+        df_hst=rollup_power.loc[:"2025-06-18"],
+        today="2025-06-20",
+        header="No forecast highlights",
+        std_limits=(1.0, 2.0),
+        use_highlighting=[],
+        code='rollup_table_fcst(rollup_power, df_hst=rollup_power.loc[:"2025-06-18"],\n    params=["Current Month", "Latest", "5d MA", "20d MA", "3m MA", "Y-1 20d MA", "5Y 20d MA"],\n    today="2025-06-20", header="No forecast highlights",\n    std_limits=(1.0, 2.0), use_highlighting=[])',
+    )
+    table(
+        "rollup-10d-fcst",
+        "Roll-up review · 10d forecast MA",
+        "10d MA is a valid calendar-window label: this forecast card highlights Latest and 10d MA alongside Current Month and 20d MA. The exact spaced label is shown in the call below.",
+        rollup_table_fcst,
+        rollup_power,
+        params=["Current Month", "Latest", "10d MA", "20d MA"],
+        df_hst=rollup_power.loc[:"2025-06-18"],
+        today="2025-06-20",
+        header="10d forecast",
+        std_limits=(1.0, 2.0),
+        use_highlighting=["Latest", "10d MA"],
+        code='rollup_table_fcst(rollup_power, df_hst=rollup_power.loc[:"2025-06-18"],\n    params=["Current Month", "Latest", "10d MA", "20d MA"],\n    today="2025-06-20", header="10d forecast",\n    std_limits=(1.0, 2.0), use_highlighting=["Latest", "10d MA"])',
+    )
+    table(
+        "rollup-10d-fcst-none",
+        "Roll-up review · 10d forecast MA without highlights",
+        "The same 10d MA forecast inputs with use_highlighting=[] provide the direct no-color comparison; red negative-value formatting remains active.",
+        rollup_table_fcst,
+        rollup_power,
+        params=["Current Month", "Latest", "10d MA", "20d MA"],
+        df_hst=rollup_power.loc[:"2025-06-18"],
+        today="2025-06-20",
+        header="10d forecast no highlights",
+        std_limits=(1.0, 2.0),
+        use_highlighting=[],
+        code='rollup_table_fcst(rollup_power, df_hst=rollup_power.loc[:"2025-06-18"],\n    params=["Current Month", "Latest", "10d MA", "20d MA"],\n    today="2025-06-20", header="10d forecast no highlights",\n    std_limits=(1.0, 2.0), use_highlighting=[])',
     )
     chart(
         "rollup-seasonal",
@@ -660,18 +875,18 @@ function filterGallery(kind){
 
 def serve_gallery(output: Path, tables: list[dict[str, Any]], port: int) -> None:
     """Serve the bundle and a live comparison using the production renderers."""
-    from dash import Dash, Input, Output, dcc, html
     import dash_ag_grid as dag
+    from dash import Dash, Input, Output, dcc, html
     from flask import Flask, redirect
-    from werkzeug.serving import make_server
     from runbook.core.pdl.models import PDLTableBlock
     from runbook.core.storage import BlobStore
     from runbook.sdk.extensions.dash.renderer import _build_ag_grid, _build_native_table
     from runbook.sdk.extensions.dash.tables import ag_grid_default_col_def, register_ag_grid_components
+    from werkzeug.serving import make_server
 
     server = Flask(__name__, static_folder=str(output), static_url_path="/gallery")
     server.add_url_rule("/", "gallery", lambda: redirect("/gallery/index.html"))
-    app = Dash(__name__, server=server, url_base_pathname="/renderers/")
+    app = Dash(__name__, server=server, url_base_pathname="/renderers/")  # type: ignore[arg-type]
     register_ag_grid_components(app)
     ctx = SimpleNamespace(_artifact_store=BlobStore(f"file:{output}"), _artifact_prefix="")
     plot_refs = {path.stem: f"plots/{path.name}" for path in (output / "plots").glob("*.json")}
@@ -698,7 +913,9 @@ def serve_gallery(output: Path, tables: list[dict[str, Any]], port: int) -> None
     @app.callback(Output("table-choice", "value"), Input("preview-location", "search"))
     def select_example(search: str | None) -> str:
         key = parse_qs((search or "").lstrip("?")).get("table", [None])[0]
-        return key if key in examples else "price-range" if "price-range" in examples else tables[0]["key"]
+        if isinstance(key, str) and key in examples:
+            return key
+        return "price-range" if "price-range" in examples else tables[0]["key"]
 
     @app.callback(Output("table-comparison", "children"), Input("table-choice", "value"))
     def comparison(key: str) -> list[Any]:

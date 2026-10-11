@@ -72,6 +72,9 @@ def rollup_table_hst(
     Each row links to full base history plus seasonal base/MA panels. The index
     heading links to all figures. ``plot_options`` goes to ``plot_rollup_seasonal``;
     historical summary columns reuse their base window's seasonal panel.
+    ``row_plot_links`` defaults to ``True`` and accepts ``False``, a list of
+    displayed row labels, or a custom URL. ``all_plots_link`` defaults to
+    ``True`` and accepts ``False`` or a custom URL.
     String link options target an absolute URL or relative report page;
     booleans retain the generated-plot links or disable them.
     Each selected column is scored against its own history. Latest uses the
@@ -123,6 +126,8 @@ def rollup_table_fcst(
     today: str | pd.Timestamp | None = None,
     std_limits: tuple[float, float] = (1.0, 2.0),
     include_total: bool = True,
+    row_plot_links: bool | list[str] | str = True,
+    all_plots_link: bool | str = True,
     highlight_columns: Sequence[str] | None = None,
     use_highlighting: Sequence[str] | None = None,
     **options: Any,
@@ -150,7 +155,10 @@ def rollup_table_fcst(
     trailing 20-calendar-day reference windows, anchored to the Latest date.
     Latest uses ``df_hst`` for its reference when supplied, otherwise ``df``.
     ``highlight_columns`` remains supported; red negatives are independent.
-    String link options target custom pages.
+    ``row_plot_links`` and ``all_plots_link`` use the same defaults as
+    ``rollup_table_hst``. ``row_plot_links`` accepts ``False``, a row-label
+    subset, or a custom URL; ``all_plots_link`` accepts ``False`` or a custom
+    URL.
     Totals work as in ``rollup_table_hst``: sum the displayed columns, or use
     the input series matching ``total_label`` and place it last.
     ``include_total=False`` omits the total from the table and linked plots.
@@ -181,6 +189,8 @@ def rollup_table_fcst(
         latest_history=latest_history,
         std_limits=std_limits,
         include_total=include_total,
+        row_plot_links=row_plot_links,
+        all_plots_link=all_plots_link,
         highlight_columns=highlight_columns,
         use_highlighting=use_highlighting,
         **options,

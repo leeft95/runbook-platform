@@ -1,11 +1,10 @@
+import runpy
 from importlib import import_module
 from pathlib import Path
-import runpy
 
 import numpy as np
 import pandas as pd
 import pytest
-
 from runbook.core.cot import analysis, analysis_mifid
 from runbook.core.plotting.templates import (
     plot_cot_long_short,
@@ -17,12 +16,12 @@ from runbook.core.plotting.templates import (
 from runbook.core.table import render_table_html, resolve_table_style
 from runbook.core.table.templates import (
     cot_cme_summary_table,
-    cot_ice_mifid_summary_table,
     cot_cme_timeseries_table,
+    cot_ice_mifid_summary_table,
     cot_ice_mifid_timeseries_table,
-    cot_timeseries_table,
     cot_macro_summary_table,
     cot_macro_timeseries_table,
+    cot_timeseries_table,
     grouped_metrics_table,
 )
 from runbook.core.timeseries.cot import cot_summary, prepare_cot_data
@@ -32,8 +31,8 @@ def test_gallery_uses_public_templates_with_resolvable_links_and_serializable_ou
     tables, charts = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts/preview_gallery.py"))[
         "build_examples"
     ]()
-    assert len(tables) == 30 and len(charts) == 18
-    assert len({item["template"] for item in tables}) == 29
+    assert len(tables) == 49 and len(charts) == 18
+    assert len({item["template"] for item in tables}) == 37
     assert len({item["template"] for item in charts}) == 18
     chart_names = {item["key"] for item in charts}
     for item in [*tables, *charts]:
@@ -50,7 +49,9 @@ def test_gallery_uses_public_templates_with_resolvable_links_and_serializable_ou
             resolved.index_header_link,
         ]:
             if link is not None:
-                assert link.value in known
+                assert link.value in known or (
+                    link.kind.value == "url" and str(link.value).startswith("/gallery/index.html#")
+                )
         assert "text-align: center" in render_table_html(payload["data"], payload["style"])
         assert all(figure.data and figure.to_json() for figure in payload["plots"])
     assert all(item["figure"].data and item["figure"].to_json() for item in charts)

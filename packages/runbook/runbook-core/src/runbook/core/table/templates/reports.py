@@ -269,7 +269,13 @@ def flow_monthly_table(
         data,
         header,
         benchmark_month=benchmark_month,
-        **{"aggregation_type": "sum", "windows": (5, 10), "row_plot_links": True, **options},
+        **{
+            "aggregation_type": "sum",
+            "windows": (5, 10),
+            "row_plot_links": True,
+            "all_plots_link": True,
+            **options,
+        },
     )
 
 
@@ -315,6 +321,7 @@ def mtd_inventory_table(data: pd.DataFrame, header: str = "MTD stocks", **option
             "mtd": True,
             "highlighting_rules": {"seasonal": 5},
             "row_plot_links": True,
+            "all_plots_link": True,
             **options,
         },
     )
