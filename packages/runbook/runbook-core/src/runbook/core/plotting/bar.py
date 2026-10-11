@@ -184,6 +184,7 @@ def plot_bar_forecast(
             forecast = series.where(series.index >= forecast_from)
 
         subplot_df = pd.DataFrame(index=df.index)
+        offsetgroup = "forecast"
 
         history_name = hist_legend or base_name
         forecast_name = forecast_legend or f"{base_name} Forecast"
@@ -191,11 +192,13 @@ def plot_bar_forecast(
         if history.notna().any():
             subplot_df[history_name] = history
             history_style = _merge_style(dict(trace_style or {}), hist_trace_style)
+            history_style.setdefault("offsetgroup", offsetgroup)
             series_styles[history_name] = _set_marker_defaults(history_style, hist_color, hist_pattern_shape)
 
         if forecast.notna().any():
             subplot_df[forecast_name] = forecast
             forecast_style = _merge_style(dict(trace_style or {}), forecast_trace_style)
+            forecast_style.setdefault("offsetgroup", offsetgroup)
             series_styles[forecast_name] = _set_marker_defaults(forecast_style, forecast_color, forecast_pattern_shape)
 
         forecast_data[subplot_name] = subplot_df

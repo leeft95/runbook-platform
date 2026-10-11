@@ -122,6 +122,8 @@ add ticks. Shared bar-only axes combine their dates; mixed line/bar axes retain
 automatic ticks across the full timeline. Bars and points at the same timestamp
 share the same position on the datetime axis. An explicit `dtick` overrides the
 per-bar ticks, and `tickformat` overrides their formatting.
+Multiple series retain Plotly's native grouped side-by-side layout; split
+history/forecast traces share one slot so that group stays centered.
 To include weekends and holidays on calendar-day charts, use
 `use_rangebreaks=False`.
 
@@ -144,6 +146,11 @@ with layout.section("Forecast") as section:
 
 The result of every helper is a Plotly figure; no helper writes to Runbook
 storage until `ctx.artifact.plot(...)` is called.
+
+History and forecast traces share one bar slot per subplot, so each observed
+date stays centered on its tick even when the two styles are split into
+separate traces. An explicit `offsetgroup` in `trace_style`,
+`hist_trace_style`, or `forecast_trace_style` remains authoritative.
 
 For ECM's selected-single-bar highlighting, pass `highlight_only=True` to
 `plot_bar_forecast`. Only the exact `forecast_from` index value receives the

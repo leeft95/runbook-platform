@@ -14,6 +14,7 @@ from runbook.core.plotting.graphly import (
 )
 from runbook.core.plotting.line import plot_line
 from runbook.core.plotting.mixed import plot_mixed
+from runbook.core.plotting.templates import plot_forecast_bars, plot_highlighted_bar
 
 
 def test_graphly_plotter_applies_trace_style_to_scatter() -> None:
@@ -88,6 +89,17 @@ def test_plot_bar_applies_series_specific_overrides() -> None:
     assert trace_b.marker.pattern.shape == "/"
 
 
+def test_plot_bar_keeps_datetime_group_traces_on_their_observation_dates() -> None:
+    idx = pd.date_range("2025-01-01", periods=3, freq="D")
+    df = pd.DataFrame({"a": [1.0, 2.0, 3.0], "b": [3.0, 2.0, 1.0]}, index=idx)
+
+    fig = plot_bar(df, use_rangebreaks=False)
+
+    assert all(pd.DatetimeIndex(trace.x).equals(idx) for trace in fig.data)
+    assert fig.layout.xaxis.tickmode == "array"
+    assert list(fig.layout.xaxis.tickvals) == list(idx)
+
+
 def test_plot_bar_supports_multi_subplot_dict_input() -> None:
     fig = plot_bar(
         data={
@@ -126,6 +138,30 @@ def test_plot_bar_forecast_splits_single_dataframe_into_two_traces() -> None:
     assert fig.data[0].marker.color == "orange"
     assert fig.data[1].name == "value Forecast"
     assert fig.data[1].marker.color == "purple"
+    assert fig.data[0].offsetgroup and fig.data[0].offsetgroup == fig.data[1].offsetgroup
+
+
+def test_plot_bar_forecast_wrappers_keep_split_bars_in_one_slot() -> None:
+    idx = pd.date_range("2025-01-01", periods=4, freq="D")
+    df = pd.DataFrame({"value": [1.0, 2.0, 3.0, 4.0]}, index=idx)
+
+    figures = [
+        plot_bar_forecast(df, forecast_from=idx[2]),
+        plot_forecast_bars(df, forecast_from=idx[2]),
+        plot_highlighted_bar(df, selected_at=idx[2]),
+    ]
+    for figure in figures:
+        assert len(figure.data) == 2
+        assert figure.data[0].offsetgroup and figure.data[0].offsetgroup == figure.data[1].offsetgroup
+
+
+def test_plot_bar_forecast_preserves_explicit_offsetgroup() -> None:
+    idx = pd.date_range("2025-01-01", periods=4, freq="D")
+    df = pd.DataFrame({"value": [1.0, 2.0, 3.0, 4.0]}, index=idx)
+
+    figure = plot_bar_forecast(df, forecast_from=idx[2], trace_style={"offsetgroup": "caller"})
+
+    assert {trace.offsetgroup for trace in figure.data} == {"caller"}
 
 
 def test_plot_bar_forecast_supports_series_input_and_custom_legends() -> None:
@@ -165,6 +201,7 @@ def test_plot_bar_forecast_omits_empty_history_trace() -> None:
 
     assert len(fig.data) == 1
     assert fig.data[0].name == "value Forecast"
+    assert fig.data[0].offsetgroup is not None
 
 
 def test_plot_bar_forecast_omits_empty_forecast_trace() -> None:
@@ -175,6 +212,7 @@ def test_plot_bar_forecast_omits_empty_forecast_trace() -> None:
 
     assert len(fig.data) == 1
     assert fig.data[0].name == "value"
+    assert fig.data[0].offsetgroup is not None
 
 
 def test_plot_bar_forecast_supports_multi_subplot_dict_input() -> None:
@@ -190,6 +228,10 @@ def test_plot_bar_forecast_supports_multi_subplot_dict_input() -> None:
     )
 
     assert {trace.xaxis for trace in fig.data} == {"x", "x2"}
+    for xaxis in {"x", "x2"}:
+        traces = [trace for trace in fig.data if trace.xaxis == xaxis]
+        assert len(traces) == 2
+        assert traces[0].offsetgroup and traces[0].offsetgroup == traces[1].offsetgroup
 
 
 def test_plot_bar_forecast_rejects_multi_column_subplots() -> None:
