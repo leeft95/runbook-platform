@@ -23,6 +23,9 @@ def test_evolution_aggregates_months_by_release_and_interleaves_full_year_means(
     style = resolve_table_style(result, payload["style"])
     assert style.global_style.one_bg_color is False
     assert style.formats["Oct-05"].digits == 2
+    assert style.index_css == {5: {"border-top": "1px solid black"}}
+    assert all(style.cell_css[(row, "Oct-05")]["border-left"] == "1px solid black" for row in range(len(result)))
+    assert all(style.cell_css[(5, column)]["border-top"] == "1px solid black" for column in result)
     html = render_table_html(result, payload["style"])
     assert ">106.50</td>" in html and ">Date</th>" in html
     pd.testing.assert_frame_equal(frame, original)
@@ -49,7 +52,10 @@ def test_evolution_missing_months_are_not_shifted_into_other_quarters_and_units_
     assert result.index.tolist() == ["2026Q1", "2026Q4", "2026Y"]
     assert result["Oct-05"].tolist() == [3, -3, 1]
     assert pd.isna(result.loc["2026Q4", "Sep-28"])
-    assert resolve_table_style(result, payload["style"]).cell_css[(1, "Oct-05")]["color"] == "red"
+    style = resolve_table_style(result, payload["style"])
+    assert style.cell_css[(1, "Oct-05")]["color"] == "red"
+    # Null rows are removed before choosing the final-two-row separator.
+    assert style.index_css == {1: {"border-top": "1px solid black"}}
 
 
 def test_evolution_uses_today_by_default_and_disambiguates_release_years(monkeypatch) -> None:
@@ -61,6 +67,7 @@ def test_evolution_uses_today_by_default_and_disambiguates_release_years(monkeyp
     payload = ea_evolution_table(frame)["EA Evolution"]
     assert payload["data"].columns.tolist() == ["Oct-05-2026", "Oct-05-2025"]
     assert payload["data"].index.tolist() == ["2026Q2", "2026Y"]
+    assert resolve_table_style(payload["data"], payload["style"]).index_css == {}
 
 
 def test_evolution_yoy_uses_shared_quarterly_baseline_but_each_releases_annual_history() -> None:

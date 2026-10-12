@@ -4,9 +4,18 @@ from types import SimpleNamespace
 import re
 
 import pandas as pd
+import pytest
 from runbook.core.pdl.models import PDLTableBlock
 from runbook.core.storage import BlobStore
-from runbook.core.table import TableFormatNumber, TableStylePlan, render_table_html, rollup_table_hst, rollup_table_fcst
+from runbook.core.table import (
+    TableFormatNumber,
+    TableStylePlan,
+    ea_evolution_table,
+    ea_evolution_table_yoy,
+    render_table_html,
+    rollup_table_hst,
+    rollup_table_fcst,
+)
 from runbook.sdk.extensions.dash.renderer import _build_ag_grid, _build_native_table
 from runbook.sdk.table_style import action, format_number, format_row, rule, table_style, target_columns
 
@@ -138,6 +147,43 @@ def test_numeric_dtype_defaults_match_html_native_dash_and_ag_grid(tmp_path) -> 
         assert 'd3.format(".2f")' in columns[column]["valueFormatter"]["function"]
     assert grid.row_data[0]["Value"] == 12.3456
     pd.testing.assert_frame_equal(frame, original)
+
+
+@pytest.mark.parametrize("template", [ea_evolution_table, ea_evolution_table_yoy])
+def test_ea_evolution_borders_match_html_native_dash_and_ag_grid(tmp_path, template) -> None:
+    dates = pd.date_range("2025-01-01", "2027-12-01", freq="MS")
+    source = pd.DataFrame({"2026-10-05": range(36), "2026-09-28": range(1, 37)}, index=dates)
+    payload = next(iter(template(source, as_of="2026-10-12").values()))
+    frame, style = payload["data"], payload["style"]
+    store = BlobStore(f"file:{tmp_path}")
+    store.put_json("style.json", style)
+    ctx = SimpleNamespace(_artifact_store=store, _artifact_prefix="")
+    block = PDLTableBlock(name="ea", data_ref="ea.parquet", style_ref="style.json", row=1, col=1)
+    native = _build_native_table(frame, block, "ea", ctx)
+    rows = native.children[1].children
+    assert len(rows) == 7
+    for row_pos, row in enumerate(rows):
+        # The first release's left border divides the Date column from the values.
+        assert row.children[1].style["borderLeft"] == "1px solid black"
+        assert "borderLeft" not in row.children[2].style
+        for cell in row.children:
+            assert cell.style.get("borderTop") == ("1px solid black" if row_pos == 5 else None)
+    grid = _build_ag_grid(frame, block, ctx, None, {})
+    for row_pos, row in enumerate(grid.row_data):
+        assert row["__runbook_styles__"]["Oct-05"]["borderLeft"] == "1px solid black"
+        for column in ("__runbook_index__", "Oct-05", "Sep-28"):
+            assert row["__runbook_styles__"].get(column, {}).get("borderTop") == (
+                "1px solid black" if row_pos == 5 else None
+            )
+    rendered = render_table_html(frame, style)
+    css_blocks = re.findall(r"([^{}]+)\{([^{}]+)\}", rendered)
+    for selector in (".row_heading.row5", "_row5_col0", "_row5_col1"):
+        assert any(selector in selectors and "border-top: 1px solid black" in body for selectors, body in css_blocks)
+    for row_pos in range(7):
+        assert any(
+            f"_row{row_pos}_col0" in selectors and "border-left: 1px solid black" in body
+            for selectors, body in css_blocks
+        )
 
 
 def test_rollup_custom_pages_and_selected_zscore_columns_match_all_renderers(tmp_path) -> None:

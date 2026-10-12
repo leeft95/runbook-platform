@@ -10,6 +10,7 @@ import pandas as pd
 
 from ..builder import _default_numeric_formats
 from ..models import (
+    TableAction,
     TableColumnSizing,
     TableFormatSpec,
     TableRule,
@@ -17,6 +18,8 @@ from ..models import (
     TableStyleFormat,
     TableStyleOptions,
     TableStylePlan,
+    TableTarget,
+    TargetScope,
     parse_python_format_string,
 )
 from .common import color_negative_red
@@ -62,7 +65,9 @@ def ea_evolution_table(
     quarters. None shows all supplied quarters. ``as_of=None`` uses today.
     Formatting, widths and rules work like the other period tables. Means
     default to two decimals; all columns are centered, rows alternate colours
-    and negative values are red. Inputs are copied; no releases are fetched,
+    and negative values are red. A vertical border separates Date from the
+    releases; a horizontal border precedes the final two displayed rows when
+    there are more than two rows. Inputs are copied; no releases are fetched,
     stored or synthesized. Returns the named data/style/plots payload.
     """
     if not isinstance(df, pd.DataFrame):
@@ -115,6 +120,21 @@ def ea_evolution_table(
     labels = release_dates.strftime("%b-%d")
     result.columns = labels if labels.is_unique else release_dates.strftime("%b-%d-%Y")
     spec = parse_python_format_string(format_spec) if isinstance(format_spec, str) else format_spec
+    style_rules = [
+        TableRule(
+            id="ea_date_divider",
+            target=TableTarget(scope=TargetScope.columns, positions=[0]),
+            action=TableAction(border_left="1px solid black"),
+        )
+    ]
+    if len(result) > 2:
+        style_rules.append(
+            TableRule(
+                id="ea_final_rows",
+                target=TableTarget(scope=TargetScope.rows, positions=[len(result) - 2]),
+                action=TableAction(border_top="1px solid black"),
+            )
+        )
     plan = TableStylePlan(
         format=TableStyleFormat(
             na_rep="-",
@@ -126,7 +146,7 @@ def ea_evolution_table(
             index_width_px=index_width,
             columns=[TableColumnSizing(label=column, width_px=column_width) for column in result],
         ),
-        rules=[*color_negative_red(list(result), [(column, column) for column in result]), *rules],
+        rules=[*style_rules, *color_negative_red(list(result), [(column, column) for column in result]), *rules],
         options=TableStyleOptions(max_rows=max(1, len(result))),
     )
     return {header: {"data": result, "style": plan.model_dump(mode="python", exclude_none=True), "plots": []}}

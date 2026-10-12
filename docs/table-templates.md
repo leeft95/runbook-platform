@@ -385,7 +385,10 @@ html = render_table_html(balance["data"], balance["style"])
 The YoY function is a preset of `ea_evolution_table(..., yoy=True)`. Values
 remain numeric and display with two decimals by default. All columns,
 including `Date`, are centered, rows alternate blue/white, and negatives are
-red. `format_spec`, `column_width`, `index_width` and `rules` override the
+red. A vertical divider separates Date from the release values, and a
+horizontal border spans the entire table before its final two displayed rows
+(when more than two rows remain after removing null rows).
+`format_spec`, `column_width`, `index_width` and `rules` override the
 shared styling. The returned data/style/plots payload works in HTML, native
 Dash and AG Grid; no plots are generated. The preview gallery includes level
 and YoY examples for both a first release and multiple releases.
