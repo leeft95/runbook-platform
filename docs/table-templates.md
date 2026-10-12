@@ -68,6 +68,7 @@ by the caller; templates contain no fixture data or fixed report dates.
 | `oil/oil_on_water.py` | `oil_on_water_table` | Prepared regional levels; 20-observation means, differences for `Total MTD Chg`, three quarters, QTD |
 | `cross_cmds/futures_price_range.py` | `futures_price_range_table` | Calculated price-range rows; signed percentile bars, two-decimal prices/z-scores and optional group separators |
 | Supplied EU power-stack reference | `eu_power_rollup_table` | One dated frame of levels or ratios; calendar roll-ups and linked history/seasonal plots |
+| `oil/ea_evolution.py` and supplied EA reference | `ea_evolution_table`, `ea_evolution_table_yoy` | Monthly observations indexed by date, one release-date column per snapshot; quarter/year means or absolute YoY differences |
 
 Report names with identical calculations and defaults are aliases of one preset. Their
 source paths are relative to `new_reports/`. `eu_power_rollup_table` comes from
@@ -318,6 +319,76 @@ last 20 calendar months, including the current month. Every selected column
 uses its own value and reference with the configured `std_limits`.
 `highlight_columns` remains supported.
 Negative values remain red in every column; values and averages are unchanged.
+
+## EA evolution tables
+
+`ea_evolution_table` builds the report's Global Liquids Balance and Global
+Crude Balance tables. `ea_evolution_table_yoy` builds its supply/demand YoY
+tables: Global Liquids Supply, OPEC Crude Supply, Global Liquids Demand and
+Non-OPEC Crude+Condensate Supply. Both are exported from `runbook.core.table`
+and `runbook.core.table.templates`.
+
+Pass one metric's monthly DataFrame, with **observation dates in the index and
+release dates in the columns**, for example:
+
+```text
+Date         2026-10-05  2026-09-28
+2024-01-01   -0.316387   -0.340015
+2024-02-01   -0.851246   -0.864641
+...
+```
+
+One release column is enough to start; add more columns to compare releases.
+Every supplied column is retained, newest first, with headings such as
+`Oct-05` and `Sep-28`. Years appear in headings if needed to distinguish them.
+The input is copied and sorted, dates must be unique and non-missing, and
+there can be at most one observation per calendar month. Numeric values and
+units are preserved: pass mbd to display mbd. Provider fetching, component
+aggregation and any unit conversion belong upstream.
+
+Quarter and annual rows are arithmetic means of the available monthly values.
+The default window is **two quarters before through two after today's
+quarter**, with full-year rows inserted after each year's displayed quarters.
+For 12 October 2026 the rows are `2026Q2`, `2026Q3`, `2026Q4`, `2026Y`,
+`2027Q1`, `2027Q2`, `2027Y`. Annual means include all supplied months in that
+year, including months outside the displayed quarter window. Set `as_of` for
+a reproducible report date, or `quarter_window=None` to show all supplied
+quarters. Custom inclusive quarter offsets can be supplied, e.g. `(-1, 3)`.
+
+YoY calculations follow the report's quarterly baseline and the clarified
+annual calculation:
+
+- **Quarterly:** subtract the same quarter one year earlier from the newest
+  release, using that shared baseline for every release column.
+- **Annual:** subtract the preceding year's mean **within the same release
+  column**: 2026 minus 2025, 2027 minus 2026, and so on.
+
+These are absolute differences in the input units, not percentages. A single
+release supports YoY when it contains the corresponding prior-year observations;
+multiple historical releases are not required. Keep those observations in
+the input even when outside the displayed window. Missing comparisons stay
+missing; fully null rows are omitted and partially populated rows display
+missing cells as `-`. There is no filling or fallback to another period.
+
+```python
+from runbook.core.table import ea_evolution_table, ea_evolution_table_yoy, render_table_html
+
+balance = ea_evolution_table(
+    balance_df, header="Global Liquids Balance (mbd)", as_of="2026-10-12"
+)["Global Liquids Balance (mbd)"]
+supply_yoy = ea_evolution_table_yoy(
+    supply_df, header="YoY Global Liquids Supply (mbd)", as_of="2026-10-12"
+)["YoY Global Liquids Supply (mbd)"]
+html = render_table_html(balance["data"], balance["style"])
+```
+
+The YoY function is a preset of `ea_evolution_table(..., yoy=True)`. Values
+remain numeric and display with two decimals by default. All columns,
+including `Date`, are centered, rows alternate blue/white, and negatives are
+red. `format_spec`, `column_width`, `index_width` and `rules` override the
+shared styling. The returned data/style/plots payload works in HTML, native
+Dash and AG Grid; no plots are generated. The preview gallery includes level
+and YoY examples for both a first release and multiple releases.
 
 ## Calendar balance tables
 

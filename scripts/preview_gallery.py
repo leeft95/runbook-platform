@@ -46,6 +46,8 @@ from runbook.core.table.templates import (
     cot_ice_mifid_summary_table,
     cot_ice_mifid_timeseries_table,
     daily_prices_table,
+    ea_evolution_table,
+    ea_evolution_table_yoy,
     eu_power_rollup_table,
     flow_monthly_table,
     flow_quarterly_table,
@@ -583,6 +585,54 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                 balances.loc[start:"2025-06-30"],
                 column_formats={"Gas share": "{:.2f}"},
             )
+    ea_months = pd.date_range("2024-01-01", "2027-12-01", freq="MS")
+    ea_time = np.arange(len(ea_months))
+    ea_balance = pd.DataFrame(
+        {
+            "2026-10-05": 1.8 * np.sin(ea_time / 3) + 0.04 * ea_time - 1,
+            "2026-09-28": 1.7 * np.sin(ea_time / 3) + 0.035 * ea_time - 1.1,
+        },
+        index=ea_months,
+    )
+    ea_supply = pd.DataFrame(
+        {
+            "2026-10-05": 100 + 0.15 * ea_time + 3 * np.sin(ea_time / 3),
+            "2026-09-28": 99.9 + 0.14 * ea_time + 2.9 * np.sin(ea_time / 3),
+        },
+        index=ea_months,
+    )
+    for template, key, title, frame, variable, calculation in [
+        (
+            ea_evolution_table,
+            "ea-evolution",
+            "Global Liquids Balance (mbd)",
+            ea_balance,
+            "ea_balance",
+            "Quarter and full-year means preserve the supplied units.",
+        ),
+        (
+            ea_evolution_table_yoy,
+            "ea-evolution-yoy",
+            "YoY Global Liquids Supply (mbd)",
+            ea_supply,
+            "ea_supply",
+            "Absolute YoY changes: quarters share the newest release's prior-year baseline; annual rows use each release's own preceding year.",
+        ),
+    ]:
+        for single in (True, False):
+            selection = '[["2026-09-28"]]' if single else ""
+            table(
+                key + ("-single" if single else ""),
+                "EA Evolution · " + title + (" · first release" if single else " · release comparison"),
+                "Monthly dates in the index, one release per column. "
+                + calculation
+                + " Two quarters before through two after 12 October 2026, with annual rows after each year.",
+                template,
+                frame[["2026-09-28"]] if single else frame,
+                header=title,
+                as_of="2026-10-12",
+                code=f'{template.__name__}({variable}{selection}, header="{title}", as_of="2026-10-12")',
+            )
     table(
         "rollup-power",
         "Power · calendar roll-ups",
@@ -851,7 +901,7 @@ function filterGallery(kind){
 </script>"""
     (output / "index.html").write_text(
         head
-        + f'<header><div class="eyebrow">RUNBOOK CORE · PREVIEW GALLERY</div><h1>Charts & table templates</h1><p>{len(tables)} table examples · {len(charts)} chart examples · Synthetic data through 1 July 2025<br>All columns are centered by default. Click table links, hover charts, zoom and toggle legend entries.</p></header>'
+        + f'<header><div class="eyebrow">RUNBOOK CORE · PREVIEW GALLERY</div><h1>Charts & table templates</h1><p>{len(tables)} table examples · {len(charts)} chart examples · Synthetic data<br>All columns are centered by default. Click table links, hover charts, zoom and toggle legend entries.</p></header>'
         + navigation
         + "<main>"
         + "".join(sections)

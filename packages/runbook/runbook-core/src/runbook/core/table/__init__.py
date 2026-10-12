@@ -51,6 +51,8 @@ from runbook.core.table.models import (
     validate_link_url,
 )
 from runbook.core.table.templates import (
+    ea_evolution_table,
+    ea_evolution_table_yoy,
     rollup_table_fcst,
     rollup_table_hst,
     table_with_link_monthly,
@@ -87,6 +89,8 @@ from runbook.core.table.templates.table_with_link_monthly import (
 )
 
 __all__ = [
+    "ea_evolution_table",
+    "ea_evolution_table_yoy",
     "period_table",
     "monthly_table",
     "monthly_table_yoy",

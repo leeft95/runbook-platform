@@ -9,6 +9,7 @@ from runbook.core.table.templates.table_with_link_monthly import (
 )
 from runbook.core.table.templates.cot import cot_summary_table, cot_table
 from runbook.core.table.templates.rollup import rollup_table_fcst, rollup_table_hst
+from runbook.core.table.templates.ea_evolution import ea_evolution_table, ea_evolution_table_yoy
 from runbook.core.table.templates.periods import (
     period_table,
     monthly_table,
@@ -72,6 +73,8 @@ from runbook.core.table.templates.reports import (
 )
 
 __all__ = [
+    "ea_evolution_table",
+    "ea_evolution_table_yoy",
     "period_table",
     "monthly_table",
     "monthly_table_yoy",
