@@ -31,6 +31,7 @@ reports
 composable-report-layouts
 plotting-helpers
 table-templates
+range-vol-calculations
 data
 operations
 email-delivery

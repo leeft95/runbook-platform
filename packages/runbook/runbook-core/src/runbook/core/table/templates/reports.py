@@ -353,7 +353,11 @@ def grouped_metrics_table(
     plan = TableStylePlan.model_validate(
         {
             "format": {
-                "columns": {str(col): {"kind": "number", "digits": digits} for col in data.columns},
+                "columns": {
+                    str(col): {"kind": "number", "digits": digits}
+                    for col in data.columns
+                    if pd.api.types.is_numeric_dtype(data[col])
+                },
                 "rows": [
                     {
                         "row_ref": {"mode": "position", "value": row},

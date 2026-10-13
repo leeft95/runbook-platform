@@ -87,6 +87,29 @@ to declare report, URL, or generated-plot destinations; use
 Links are not raw HTML stored in DataFrames. HTML publishes linked plot pages,
 while a host-owned Dash route resolver handles the same logical destinations.
 
+### Bloomberg saved searches
+
+`bsrch` uses the legacy core package's `ExcelGetGridRequest` with a `Domain`
+and `BIKEY` override, returning a DataFrame with Bloomberg's column titles.
+Pass the saved search key explicitly:
+
+```python
+from runbook.core.bloomberg import bbg
+
+result = bbg.bsrch("IPD:DEX", bikey="your-saved-search-key")
+
+# Reuse the same started synchronous blpapi.Session used for bdh/bref/etc.
+result = bbg.bsrch("IPD:DEX", bikey="your-saved-search-key", session=session)
+```
+
+An omitted session uses the standard local Bloomberg connection and closes it
+after the request. A supplied session is neither started nor stopped by this
+helper; its authentication and lifecycle remain with the caller. The request
+opens `//blp/exrsvc`, uses its own event queue, combines partial responses and
+retains column names for empty results. Response waits use a 30-second timeout.
+The migrated helper does not embed the old handler's host, application identity
+or default saved-search key.
+
 ```{eval-rst}
 .. automodule:: runbook.core.data
    :members:
@@ -97,7 +120,7 @@ while a host-owned Dash route resolver handles the same logical destinations.
    :members: build_context_hash
 
 .. automodule:: runbook.core.bloomberg.bbg
-   :members: BBGReturnTypes, IntradayEventType, bdh, bref, bdib, bbulkref, bql
+   :members: BBGReturnTypes, IntradayEventType, bdh, bref, bdib, bbulkref, bql, bsrch
 
 .. automodule:: runbook.core.table
    :members: highlight, highlight_on_key, highlight_on_range, highlight_zscore,
@@ -140,6 +163,9 @@ while a host-owned Dash route resolver handles the same logical destinations.
 
 .. automodule:: runbook.core.timeseries.rollup
    :members: calendar_moving_average
+
+.. automodule:: runbook.core.timeseries.range_vol
+   :members:
 ```
 
 ```{eval-rst}

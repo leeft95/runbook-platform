@@ -199,6 +199,10 @@ data-to-layout boundary in a realistic report.
 
 ### Complex plotting: range volatility
 
+For the migrated market-scan formulas (range/volume spikes, Sharpe, Fisher,
+momentum and KPI), see [Range-Vol calculations](range-vol-calculations.md).
+Those helpers accept supplied data and can feed the report's tables and plots.
+
 The checked-in [`reports/vol_report.py`](https://github.com/leeft95/runbook-platform/blob/main/reports/vol_report.py)
 is the canonical plotting example. It reads the `prices` alias, sorts an
 immutable timestamp column, calculates returns and rolling annualized

@@ -31,9 +31,9 @@ def test_gallery_uses_public_templates_with_resolvable_links_and_serializable_ou
     tables, charts = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts/preview_gallery.py"))[
         "build_examples"
     ]()
-    assert len(tables) == 53 and len(charts) == 18
-    assert len({item["template"] for item in tables}) == 39
-    assert len({item["template"] for item in charts}) == 18
+    assert len(tables) == 59 and len(charts) == 22
+    assert len({item["template"] for item in tables}) == 40
+    assert len({item["template"] for item in charts}) == 20
     chart_names = {item["key"] for item in charts}
     for item in [*tables, *charts]:
         module, name = item["template"].rsplit(".", 1)
@@ -59,6 +59,28 @@ def test_gallery_uses_public_templates_with_resolvable_links_and_serializable_ou
     assert chart_figures["market"].layout.shapes
     assert not chart_figures["market-holdings"].layout.shapes
     examples = {item["key"]: item["payload"] for item in tables}
+    assert all(item.get("code") for item in [*tables, *charts] if item["key"].startswith("range-vol-"))
+    ranges = examples["range-vol-metrics"]["data"]
+    sharpe = examples["range-vol-sharpe"]["data"]
+    assert set(ranges.Convention) == {"FLAT", "SPRD"}
+    assert np.isfinite(ranges.select_dtypes(include="number")).all().all()
+    assert ranges["Range spike"].round(2).nunique() > 1
+    assert np.isfinite(sharpe).all().all()
+    assert "Convention" not in examples["range-vol-metrics"]["style"]["format"]["columns"]
+    assert "FOM breakout" not in examples["range-vol-metrics"]["style"]["format"]["columns"]
+    volume = {trace.name: np.asarray(trace.y) for trace in chart_figures["range-vol-volume"].data}
+    assert ranges.loc["Brent", "Volume 5d"] == pytest.approx(
+        volume["Volume at 12:00"][-1] / volume["Previous 5-session mean"][-1]
+    )
+    assert ranges.loc["Brent", "Volume 20d"] == pytest.approx(
+        volume["Volume at 12:00"][-1] / volume["Previous 20-session mean"][-1]
+    )
+    for trace in chart_figures["range-vol-kpi"].data:
+        np.testing.assert_allclose(trace.y, sharpe[trace.name])
+    risk = examples["range-vol-risk"]["data"]
+    np.testing.assert_allclose(risk.loc["Weighted energy"], risk.loc["Brent"] * 0.6 + risk.loc["WTI"] * 0.4)
+    assert len(examples["range-vol-flies"]["data"]) == 2
+    assert not examples["range-vol-divergence"]["data"].isna().any().any()
     for summary_key, calculated_key in (("cot", "cot-calculated"), ("cot-mifid-summary", "cot-mifid-calculated")):
         summary, calculated = examples[summary_key], examples[calculated_key]
         assert len(summary["data"]) == len(calculated["data"]) == 4

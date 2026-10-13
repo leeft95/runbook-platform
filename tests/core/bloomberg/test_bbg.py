@@ -180,3 +180,121 @@ def test_bdib_serializes_requests_on_supplied_session(monkeypatch):
     session.start.assert_not_called()
     session.stop.assert_not_called()
     assert list(result["security"]) == ["A", "B"]
+
+
+def _grid_response(columns, rows, event="RESPONSE"):
+    """Match blp's serialized ExcelGetGrid sequence and choice containers."""
+    return {
+        "eventTypeName": f"blpapi.Event.{event}",
+        "message": {
+            "element": {
+                "ExcelGetGridResponse": {
+                    "ColumnTitles": columns,
+                    "DataRecords": [
+                        {"DataRecords": {"DataFields": [{"DataFields": {"value": value}} for value in row]}}
+                        for row in rows
+                    ],
+                }
+            }
+        },
+    }
+
+
+@pytest.mark.parametrize("supplied_session", [False, True], ids=["owned-session", "caller-session"])
+@pytest.mark.parametrize("failure", [None, "query", "response"], ids=["success", "query-failure", "response-failure"])
+def test_bsrch_request_and_session_ownership(monkeypatch, supplied_session, failure):
+    session = Mock() if supplied_session else None
+    connection = Mock()
+    original_services = {"HistoricalDataRequest": "//blp/refdata"}
+    connection._SERVICES = original_services
+    connection.__enter__ = Mock(return_value=connection)
+    connection.__exit__ = Mock(return_value=False)
+    query = Mock(return_value=connection)
+    monkeypatch.setattr(bbg, "_blp_types", lambda: (None, query))
+    responses = [
+        _grid_response(["Ticker", "Value"], [["A", 12.5]], "PARTIAL_RESPONSE"),
+        _grid_response(["Ticker", "Value"], [["B", None]]),
+    ]
+    if failure == "response":
+        responses[-1]["message"]["element"] = {"ExcelGetGridResponse": {"responseError": "Not entitled"}}
+
+    def fetch(request, *, parse, collector):
+        assert parse is False
+        if failure == "query":
+            raise ConnectionError("Unexpected blpapi.Event.TIMEOUT")
+        return collector(iter(responses))
+
+    connection.query.side_effect = fetch
+    if failure:
+        with pytest.raises((ConnectionError, RuntimeError), match="TIMEOUT|Not entitled"):
+            bbg.bsrch("IPD:DEX", "saved-search-key", session=session)
+    else:
+        result = bbg.bsrch("IPD:DEX", "saved-search-key", session=session)
+        pd.testing.assert_frame_equal(result, pd.DataFrame({"Ticker": ["A", "B"], "Value": [12.5, np.nan]}))
+    query.assert_called_once_with(timeout=30000)
+    assert connection._SERVICES == {"ExcelGetGridRequest": "//blp/exrsvc"}
+    assert original_services == {"HistoricalDataRequest": "//blp/refdata"}
+    connection.query.assert_called_once_with(
+        {
+            "ExcelGetGridRequest": {
+                "Domain": "IPD:DEX",
+                "Overrides": [
+                    {"Overrides": {"name": "BIKEY", "value": "saved-search-key"}},
+                ],
+            }
+        },
+        parse=False,
+        collector=bbg._normalise_bsrch,
+    )
+    if supplied_session:
+        assert connection.session is session
+        assert connection._started is True
+        connection.start.assert_called_once_with()
+        session.start.assert_not_called()
+        session.stop.assert_not_called()
+        connection.stop.assert_not_called()
+        connection.__enter__.assert_not_called()
+        connection.__exit__.assert_not_called()
+    else:
+        connection.__enter__.assert_called_once()
+        connection.__exit__.assert_called_once()
+
+
+def test_bsrch_grid_types_empty_results_and_partial_headers():
+    date = pd.Timestamp("2026-10-13")
+    columns = ["Name", "Number", "Date", "Flag", "Missing"]
+    first = _grid_response(columns, [["Asset", 1.25, date, True, None]], "PARTIAL_RESPONSE")
+    second = _grid_response(None, [["Next", -2.0, date, False, None]])
+    # CHOICE elements may be serialized directly under their element name.
+    second["message"]["element"]["ExcelGetGridResponse"]["DataRecords"][0]["DataRecords"]["DataFields"][0] = {
+        "DataFields": "Next",
+    }
+    actual = bbg._normalise_bsrch([first, second])
+    expected = pd.DataFrame([["Asset", 1.25, date, True, None], ["Next", -2.0, date, False, None]], columns=columns)
+    pd.testing.assert_frame_equal(actual, expected)
+    empty = bbg._normalise_bsrch([_grid_response(columns, [])])
+    assert empty.empty and empty.columns.tolist() == columns
+
+
+@pytest.mark.parametrize(
+    "responses, error",
+    [
+        ([], "No data"),
+        ([_grid_response([], [])], "no ColumnTitles"),
+        ([_grid_response(["A", "B"], [[1]])], "row length"),
+        ([_grid_response(["A"], [[1]], "PARTIAL_RESPONSE"), _grid_response(["B"], [[2]])], "titles changed"),
+        ([_grid_response(["A"], [[1]], "REQUEST_STATUS")], "request failed"),
+    ],
+)
+def test_bsrch_rejects_failed_or_inconsistent_responses(responses, error):
+    with pytest.raises((RuntimeError, ValueError), match=error):
+        bbg._normalise_bsrch(responses)
+
+
+@pytest.mark.parametrize("dataset,bikey", [("", "key"), ("IPD:DEX", None), ("IPD:DEX", " ")])
+def test_bsrch_validates_search_before_loading_bloomberg(monkeypatch, dataset, bikey):
+    loader = Mock(side_effect=AssertionError("Runtime should not be imported"))
+    monkeypatch.setattr(bbg, "_blp_types", loader)
+    with pytest.raises(ValueError, match="nonempty"):
+        bbg.bsrch(dataset, bikey)
+    loader.assert_not_called()

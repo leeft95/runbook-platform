@@ -92,12 +92,15 @@ def _custom_api_parser() -> tp.Any:
 
 
 @contextmanager
-def _blp_connection(BlpQuery, *, timeout: int, parser, session):
+def _blp_connection(BlpQuery, *, timeout: int, parser, session, services=None):
     """Yield a query connection, reusing a caller-owned started session when supplied."""
     if parser is None:
         conn = BlpQuery(timeout=timeout)
     else:
         conn = BlpQuery(timeout=timeout, parser=parser)
+    if services is not None:
+        # Override only this connection; do not change BlpQuery's global map.
+        conn._SERVICES = services
     if session is None:
         with conn as started_conn:
             yield started_conn
@@ -623,4 +626,80 @@ def bql(query: str, pivot: bool = True, session: tp.Any = None):
     return raw_data
 
 
-# TODO(LT):>> Add BSRCH
+def _bsrch_value(field):
+    """Unwrap blp's named sequence/choice containers, retaining typed cell values."""
+    while isinstance(field, dict):
+        if not field:
+            return None
+        if len(field) != 1:
+            raise ValueError(f"Invalid Bloomberg BSRCH cell: {field!r}")
+        field = next(iter(field.values()))
+    return field
+
+
+def _normalise_bsrch(responses) -> pd.DataFrame:
+    """Collect ExcelGetGrid ColumnTitles/DataRecords, including partial responses."""
+    columns = None
+    rows = []
+    for response in responses:
+        message = response["message"]
+        if response["eventTypeName"] not in {"blpapi.Event.PARTIAL_RESPONSE", "blpapi.Event.RESPONSE"}:
+            raise RuntimeError(f"Bloomberg BSRCH request failed: {message['element']!r}")
+        data = next(iter(message["element"].values()))
+        if data.get("responseError") or data.get("ErrorReport"):
+            raise RuntimeError(f"Bloomberg BSRCH response error: {data!r}")
+        titles = data.get("ColumnTitles")
+        if titles:
+            if columns is not None and columns != titles:
+                raise ValueError("Bloomberg BSRCH column titles changed between response parts")
+            columns = titles
+        if columns is None:
+            raise ValueError("Bloomberg BSRCH response has no ColumnTitles")
+        for record in data.get("DataRecords", []):
+            fields = record["DataRecords"]["DataFields"]
+            row = [_bsrch_value(field) for field in fields]
+            if len(row) != len(columns):
+                raise ValueError("Bloomberg BSRCH row length does not match ColumnTitles")
+            rows.append(row)
+    if columns is None:
+        raise ValueError("No data returned from Bloomberg BSRCH request")
+    return pd.DataFrame(rows, columns=columns)
+
+
+def bsrch(dataset: str = "IPD:DEX", bikey: str | None = None, session: tp.Any = None) -> pd.DataFrame:
+    """Fetch a saved Bloomberg search using the core package's ExcelGetGrid request.
+
+    Pass the saved search's ``bikey`` explicitly. ColumnTitles become DataFrame
+    columns and DataRecords become rows, preserving Bloomberg's cell values.
+    Partial responses are combined in arrival order; an empty search retains
+    its column names.
+
+    ``session`` may be a started synchronous ``blpapi.Session``. The caller
+    owns its lifecycle when supplied, as with ``bdh``. Otherwise a local
+    session is opened and closed for this call. Only ``//blp/exrsvc`` is opened;
+    response waits use the other helpers' 30-second timeout and a request-local
+    event queue. The optional Bloomberg runtime is imported only on invocation.
+    """
+    if not isinstance(dataset, str) or not dataset.strip():
+        raise ValueError("dataset must be a nonempty Bloomberg search domain")
+    if not isinstance(bikey, str) or not bikey.strip():
+        raise ValueError("bikey must be the nonempty saved Bloomberg search key")
+    _, BlpQuery = _blp_types()
+    request = {
+        "ExcelGetGridRequest": {
+            "Domain": dataset,
+            "Overrides": [{"Overrides": {"name": "BIKEY", "value": bikey}}],
+        }
+    }
+    log.info("query start source=bloomberg operation=bsrch dataset={}", dataset)
+    try:
+        with _blp_connection(
+            BlpQuery, timeout=30000, parser=None, session=session, services={"ExcelGetGridRequest": "//blp/exrsvc"}
+        ) as conn:
+            # blp's standard parser handles refdata, not ExcelGetGrid responses.
+            df = conn.query(request, parse=False, collector=_normalise_bsrch)
+    except Exception:
+        log.error("query failed source=bloomberg operation=bsrch dataset={}", dataset)
+        raise
+    log.info("query complete source=bloomberg operation=bsrch rows={} columns={}", len(df), len(df.columns))
+    return df

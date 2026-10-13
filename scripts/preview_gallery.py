@@ -15,6 +15,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.offline import get_plotlyjs
 from runbook.core.cot import analysis, analysis_mifid
+from runbook.core.plotting.bar import plot_bar
+from runbook.core.plotting.line import plot_line
 from runbook.core.plotting.templates import (
     plot_cot_long_short,
     plot_cot_net,
@@ -52,6 +54,7 @@ from runbook.core.table.templates import (
     flow_monthly_table,
     flow_quarterly_table,
     futures_price_range_table,
+    grouped_metrics_table,
     inventory_summary_table,
     kpler_inventory_consensus_table,
     kpler_inventory_table,
@@ -77,7 +80,270 @@ from runbook.core.table.templates import (
 )
 from runbook.core.table.templates.table_with_link import general_table_with_link
 from runbook.core.table.templates.table_with_link_monthly import table_with_linked_plots_monthly
+from runbook.core.table.templates.common import color_negative_red
+from runbook.core.timeseries import range_vol
 from runbook.core.timeseries.cot import prepare_cot_data
+
+
+def add_range_vol_examples(table: Callable[..., Any], chart: Callable[..., Any]) -> None:
+    """Feed calculated synthetic Range-Vol observations into the existing renderers."""
+    as_of = pd.Timestamp("2026-10-13 12:00")
+    dates = pd.bdate_range(end=as_of.normalize(), periods=180)
+    t = np.arange(len(dates), dtype=float)
+    bars = pd.DatetimeIndex(
+        [day + pd.Timedelta(hours=9, minutes=minute) for day in dates[-30:] for minute in range(0, 181, 10)]
+    )
+    metrics, sharpe_rows, signal_rows, detail = {}, {}, {}, {}
+    for name, kind, level, scale, phase in (
+        ("Brent", "FLAT", 75, 1.0, 0),
+        ("WTI", "FLAT", 70, 0.8, 13),
+        ("Brent M1–M2", "SPRD", 0.5, 0.08, 5),
+        ("WTI M1–M2", "SPRD", 0.3, 0.07, 20),
+    ):
+        x = t + phase
+        close = pd.Series(level + scale * (0.03 * t + 4 * np.sin(x / 5) + np.cos(x / 2)), index=dates)
+        daily = pd.DataFrame(
+            {
+                "PX_LAST": close,
+                "PX_OPEN": close.shift().fillna(close.iloc[0]),
+                "PX_HIGH": close + scale * (1 + np.sin(x) ** 2),
+                "PX_LOW": close - scale * (0.5 + 0.75 * np.cos(x / 2) ** 2),
+                "VOLUME": 100000 + 20000 * np.sin(x / 6),
+                "3MTH_IMPVOL_100.0%MNY_DF": 25.0,
+            }
+        )
+        # Upstream weekly/monthly labels must be observations in the daily frame.
+        period_frames = [
+            daily.groupby(dates.to_period(period)).agg(
+                {
+                    "PX_LAST": "last",
+                    "PX_HIGH": "max",
+                    "PX_LOW": "min",
+                }
+            )
+            for period in ("W-FRI", "M")
+        ]
+        for frame, period in zip(period_frames, ("W-FRI", "M"), strict=True):
+            frame.index = pd.DatetimeIndex(pd.Series(dates, index=dates).groupby(dates.to_period(period)).last())
+        prices = range_vol.prepare_price_data(daily, *period_frames)
+        assert prices is not None
+        intraday = pd.DataFrame(
+            {
+                "close": np.repeat(close.iloc[-30:].to_numpy(), 19) + scale * 0.1 * np.sin(np.arange(len(bars)) / 3),
+                "volume": np.repeat(daily.VOLUME.iloc[-30:].to_numpy() / 19, 19),
+            },
+            index=bars,
+        )
+        intraday.loc[intraday.index.normalize() == dates[-1], "volume"] *= 1.8 if kind == "FLAT" else 0.65
+        changes = range_vol.calculate_price_changes(close, kind, intraday)
+        ranges = range_vol.calculate_range_metrics(prices["highp"], prices["lowp"], close, as_of=as_of)
+        volume = range_vol.calculate_volume_spikes(intraday, daily, as_of=as_of)
+        sharpe = range_vol.calculate_sharpe_ratios(
+            changes["daily_price_chg"], changes["intraday_price_chg"], chg_type=kind
+        )
+        kpi = range_vol.calculate_kpi(close, prices["imp_vol"], changes["daily_price_chg"], kind)
+        momentum = range_vol.calculate_moving_average_signals(close)
+        fisher = range_vol.calculate_fisher_indicators(
+            *(prices[key + suffix] for suffix in ("", "_w", "_m") for key in ("highp", "lowp", "closep"))
+        )
+        fish, fish1, fishlt, fishlt1, counter, counter1 = range_vol.determine_fisher_signals(fisher, close)
+        price_range = range_vol.calculate_current_price_range(close, prices["highp"], prices["lowp"])
+        trend = range_vol.calculate_trend_index(
+            changes["price_change"],
+            ranges["range_spike"],
+            volume["volume_spike_5d"],
+            range_vol.calculate_three_day_trend(close),
+            sharpe["sharpe_3d"],
+            sharpe["sharpe_22d"],
+            price_range,
+            0.0,
+            ranges["avg_true_range"],
+        )
+        combined = range_vol.determine_combined_signals(
+            trend,
+            changes["price_change"],
+            momentum["mom"],
+            momentum["mom1"],
+            momentum["hybrid"],
+            momentum["hybrid1"],
+            fish,
+            fish1,
+            fishlt,
+            fishlt1,
+            counter,
+            counter1,
+        )
+        fom_flag, fom_score, _ = range_vol.calculate_fom_metrics(
+            "2026-10-01", changes["daily_price_chg"], prices["highp"], prices["lowp"], close, as_of=as_of
+        )
+        metrics[name] = {
+            "Convention": kind,
+            "Latest": close.iloc[-1],
+            "Range spike": ranges["range_spike"],
+            "Volume 5d": volume["volume_spike_5d"],
+            "Volume 20d": volume["volume_spike_20d"],
+            "FOM score": fom_score,
+            "FOM breakout": fom_flag or "—",
+        }
+        sharpe_rows[name] = {
+            "Sharpe 3d live": sharpe["sharpe_3d"],
+            "Sharpe 3d COB": sharpe["sharpe_3d_cob"],
+            "Sharpe 22d": sharpe["sharpe_22d"],
+            "KPI": kpi["kpi_on"],
+            "KPI t−1": kpi["kpi_1d"],
+            "KPI index": kpi["kpi_avg"],
+            "Trend index": trend,
+        }
+        signal_rows[name] = {
+            "Momentum": momentum["mom"] or momentum["mom2"] or "—",
+            "Hybrid": momentum["hybrid"] or momentum["hybrid2"] or "—",
+            "Fisher": fish or "—",
+            "Long-term Fisher": fishlt or "—",
+            "Counter": counter or "—",
+            "Stochastic": range_vol.calculate_stochastic(prices["highp"], prices["lowp"], close) or "—",
+            "Sharpe": range_vol.classify_sharpe_signal(sharpe["sharpe_3d_cob"], sharpe["sharpe_22d"]),
+            "Signal flag": range_vol.calculate_signal_flag(combined, trend),
+        }
+        detail[name] = dict(close=close, momentum=momentum, fisher=fisher, ranges=ranges, volume=volume)
+
+    divergence = pd.DataFrame.from_dict(
+        {
+            name: range_vol.calculate_divergence(detail[f"{name} M1–M2"]["close"], detail[name]["close"], as_of=as_of)
+            for name in ("Brent", "WTI")
+        },
+        orient="index",
+    )
+    # Deliberately crossing spread inputs demonstrate sign switches, including zero.
+    spreads = pd.DataFrame({"M1–M2": [0.3, -0.2], "M2–M3": [0.1, 0.1], "M3–M4": [0.2, 0.1]}, index=dates[-2:])
+    risk_metrics = pd.DataFrame.from_dict(sharpe_rows, orient="index")[["KPI", "KPI index", "Trend index"]]
+    weights = {"Brent": 0.6, "WTI": 0.4}
+    risk = pd.DataFrame(
+        {
+            "Brent": risk_metrics.loc["Brent"],
+            "WTI": risk_metrics.loc["WTI"],
+            "Weighted energy": range_vol.calculate_weighted_risk_index(risk_metrics, weights, normalize=True),
+        }
+    ).T
+    for key, title, description, data, code in (
+        (
+            "range-vol-metrics",
+            "Range-Vol · range, volume and FOM",
+            "Calculated from synthetic OHLC and ten-minute bars as of 13 October 2026, 12:00. Range/volume are ratios; FOM uses the 1 October event and preceding 20 returns. FLAT and SPRD retain their own change convention.",
+            pd.DataFrame.from_dict(metrics, orient="index"),
+            'range_vol.calculate_range_metrics(high, low, close, as_of=as_of)\nrange_vol.calculate_volume_spikes(intraday, daily, as_of=as_of)\nrange_vol.calculate_fom_metrics("2026-10-01", changes, high, low, close, as_of=as_of)',
+        ),
+        (
+            "range-vol-sharpe",
+            "Range-Vol · Sharpe, KPI and trend",
+            "The same observations: live and COB three-day Sharpe, preceding 22-return Sharpe, implied-volatility-normalized KPI and trend index. Values are raw ratios/scores, not percentage price returns.",
+            pd.DataFrame.from_dict(sharpe_rows, orient="index"),
+            'range_vol.calculate_sharpe_ratios(daily_changes, intraday_changes, chg_type="FLAT")\nrange_vol.calculate_kpi(close, implied_vol, daily_changes, "FLAT")',
+        ),
+        (
+            "range-vol-signals",
+            "Range-Vol · momentum and Fisher signals",
+            "Signals derived from the same inputs. BUY/SELL denote fresh crosses; B/S denote prior EMA alignment. A dash means no signal. The final flag uses the report's combined-signal and trend rules.",
+            pd.DataFrame.from_dict(signal_rows, orient="index"),
+            "range_vol.calculate_moving_average_signals(close)\nrange_vol.determine_fisher_signals(fisher, close)",
+        ),
+        (
+            "range-vol-divergence",
+            "Range-Vol · spread/flat divergence",
+            "Three/eight-observation change ratios with the current daily row excluded. This calculation preview shows both pairs; the report screens negative ratios upstream of display.",
+            divergence,
+            "range_vol.calculate_divergence(spread, flat, as_of=as_of)",
+        ),
+        (
+            "range-vol-flies",
+            "Range-Vol · fly sign switches",
+            "Two explicitly crossing synthetic adjacent-spread pairs. Includes a move to zero; rows are actual calculate_fly_switches output.",
+            range_vol.calculate_fly_switches(spreads),
+            "range_vol.calculate_fly_switches(spreads)",
+        ),
+        (
+            "range-vol-risk",
+            "Range-Vol · weighted energy metrics",
+            "Brent and WTI values from the Sharpe/KPI example, followed by a 60%/40% weighted component. The helper aggregates already-calculated metric rows.",
+            risk,
+            'range_vol.calculate_weighted_risk_index(metrics, {"Brent": 0.6, "WTI": 0.4}, normalize=True)',
+        ),
+    ):
+        data.index.name = "Instrument" if key != "range-vol-flies" else "Fly"
+        payload = table(
+            key,
+            title,
+            description,
+            grouped_metrics_table,
+            data,
+            header=title,
+            index_width=180,
+            column_width=125,
+            code=code,
+        )
+        numeric = data.select_dtypes(include="number").columns
+        for column in numeric:
+            if pd.api.types.is_integer_dtype(data[column].dtype):
+                payload["style"]["format"]["columns"][column]["digits"] = 0
+        payload["style"]["rules"].extend(
+            rule.model_dump(mode="json")
+            for rule in color_negative_red(list(data.columns), [(column, column) for column in numeric])
+        )
+
+    brent = detail["Brent"]
+    averages = pd.DataFrame(
+        {"Close": brent["close"], **{f"EMA {window}": brent["momentum"][f"emva{window}"] for window in (3, 8, 14, 30)}},
+        index=dates,
+    )
+    chart(
+        "range-vol-ema",
+        "Range-Vol · ECM EMAs and ATR",
+        "Exact migrated 3/8/14/30-observation EMAs, with the five-observation ATR below. Warm-up gaps are retained; both panels use the Brent table inputs.",
+        plot_line,
+        {
+            "Price and EMAs": averages,
+            "ATR (5 observations)": pd.DataFrame({"ATR 5": brent["ranges"]["avg_true_range"]}, index=dates),
+        },
+        rows=2,
+        shared_xaxes=True,
+        code='averages = {n: range_vol.calculate_exponential_moving_average(close, n) for n in (3, 8, 14, 30)}\nplot_line({"Price and EMAs": prices_and_averages, "ATR": atr_frame}, rows=2, shared_xaxes=True)',
+    )
+    bands = pd.DataFrame({"Close": brent["close"].tail(40)})
+    for field, label in (
+        ("fdh", "Daily high"),
+        ("fdl", "Daily low"),
+        ("fwh", "Weekly high"),
+        ("fwl", "Weekly low"),
+        ("fmh", "Monthly high"),
+        ("fml", "Monthly low"),
+    ):
+        bands[label] = brent["fisher"][field]
+    chart(
+        "range-vol-fisher",
+        "Range-Vol · latest Fisher price bands",
+        "Latest daily/weekly/monthly band levels extended across recent Brent history for comparison. These are current reference levels, not historical band series.",
+        plot_line,
+        bands,
+        code="fisher = range_vol.calculate_fisher_indicators(high, low, close, weekly_high, weekly_low, weekly_close, monthly_high, monthly_low, monthly_close)",
+    )
+    volumes = brent["volume"]["volume_at_minute"].to_frame("Volume at 12:00")
+    volumes["Previous 5-session mean"] = volumes.iloc[:, 0].rolling(5).mean().shift()
+    volumes["Previous 20-session mean"] = volumes.iloc[:, 0].rolling(20).mean().shift()
+    chart(
+        "range-vol-volume",
+        "Range-Vol · same-time cumulative volume",
+        "Each session's cumulative volume at noon, with the preceding five/twenty-session reference means. The final session is excluded from its own denominators.",
+        plot_line,
+        volumes,
+        code='volume = range_vol.calculate_volume_spikes(intraday, daily, as_of=as_of)\nsamples = volume["volume_at_minute"]',
+    )
+    chart(
+        "range-vol-kpi",
+        "Range-Vol · current and prior KPI",
+        "Current, previous and exponentially weighted KPI from the table above. Each asset uses its FLAT/SPRD normalization; bars show ratios, not price units.",
+        plot_bar,
+        pd.DataFrame.from_dict(sharpe_rows, orient="index")[["KPI", "KPI t−1", "KPI index"]],
+        code='plot_bar(kpi_summary[["KPI", "KPI t−1", "KPI index"]])',
+    )
 
 
 def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -124,7 +390,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         *args: Any,
         code: str | None = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> dict[str, Any]:
         payload = next(iter(template(*args, **kwargs).values()))
         tables.append(
             dict(
@@ -136,6 +402,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                 template=f"{template.__module__}.{template.__name__}",
             )
         )
+        return payload
 
     def chart(
         key: str,
@@ -143,6 +410,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         description: str,
         template: Callable[..., go.Figure],
         *args: Any,
+        code: str | None = None,
         **kwargs: Any,
     ) -> None:
         charts.append(
@@ -151,7 +419,8 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                 title=title,
                 description=description,
                 figure=template(*args, **kwargs),
-                template=f"runbook.core.plotting.templates.{template.__name__}",
+                code=code,
+                template=f"{template.__module__}.{template.__name__}",
             )
         )
 
@@ -789,6 +1058,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         plot_rollup_seasonal,
         power.Gas,
     )
+    add_range_vol_examples(table, chart)
     return tables, charts
 
 
