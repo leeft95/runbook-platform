@@ -123,7 +123,7 @@ def _plots_for_columns(
                     levels_df[[col]],
                     title=title,
                     show_legend=False,
-                    use_rangebreaks=True,
+                    use_rangebreaks=False,
                 )
             )
             continue

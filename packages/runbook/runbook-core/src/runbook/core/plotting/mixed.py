@@ -25,7 +25,7 @@ def plot_mixed(
     show_rangeslider: bool = False,
     tickformat: str | None = None,
     dtick: str | int | float | None = None,
-    use_rangebreaks: bool = True,
+    use_rangebreaks: bool = False,
     holiday_countries: list[str] | None = None,
     legend_groups: bool = False,
 ) -> plotly.graph_objs._figure.Figure:

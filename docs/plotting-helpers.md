@@ -124,8 +124,8 @@ share the same position on the datetime axis. An explicit `dtick` overrides the
 per-bar ticks, and `tickformat` overrides their formatting.
 Multiple series retain Plotly's native grouped side-by-side layout; split
 history/forecast traces share one slot so that group stays centered.
-To include weekends and holidays on calendar-day charts, use
-`use_rangebreaks=False`.
+Calendar-day charts include weekends and holidays by default
+(`use_rangebreaks=False`). Pass `use_rangebreaks=True` to hide them.
 
 Use `plot_bar_forecast` when one monotonically indexed single-series DataFrame
 must be split at a date or other comparable `forecast_from` value:

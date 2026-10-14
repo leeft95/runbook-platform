@@ -53,7 +53,7 @@ def page(ctx):
         width=width,
         height=height,
         show_legend=False,
-        use_rangebreaks=True,
+        use_rangebreaks=False,
     )
     fig_vol = plot_line(
         data=vol,
@@ -61,7 +61,7 @@ def page(ctx):
         width=width,
         height=height,
         show_legend=False,
-        use_rangebreaks=True,
+        use_rangebreaks=False,
         series_styles={"vol": {"line": {"color": "#2A6F9E"}}},
     )
 

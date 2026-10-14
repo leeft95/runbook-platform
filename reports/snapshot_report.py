@@ -94,7 +94,7 @@ def page(ctx):
         width=700,
         height=360,
         show_legend=False,
-        use_rangebreaks=True,
+        use_rangebreaks=False,
     )
     volatility_fig = plot_line(
         data=comparison_frame.set_index("session")[["abs_daily_return", "realized_vol"]],
@@ -102,7 +102,7 @@ def page(ctx):
         width=700,
         height=360,
         show_legend=True,
-        use_rangebreaks=True,
+        use_rangebreaks=False,
     )
     close_ref = ctx.artifact.plot(close_fig, name="daily_close")
     volatility_ref = ctx.artifact.plot(volatility_fig, name="volatility")

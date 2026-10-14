@@ -242,7 +242,7 @@ returns_figure = plot_line(
     data=returns,
     title="Daily returns",
     show_legend=False,
-    use_rangebreaks=True,
+    use_rangebreaks=False,
 )
 returns_figure.show()
 ```
@@ -366,8 +366,8 @@ def volatility(ctx) -> pd.DataFrame:
 def page(ctx):
     returns_frame = ctx.calc("returns")
     vol_frame = ctx.calc("vol")
-    returns_plot = plot_line(data=returns_frame, title="Returns", use_rangebreaks=True)
-    vol_plot = plot_line(data=vol_frame, title="Annualized volatility", use_rangebreaks=True)
+    returns_plot = plot_line(data=returns_frame, title="Returns", use_rangebreaks=False)
+    vol_plot = plot_line(data=vol_frame, title="Annualized volatility", use_rangebreaks=False)
 
     returns_table = returns_frame.reset_index()
     returns_table["timestamp"] = returns_table["timestamp"].astype(str)

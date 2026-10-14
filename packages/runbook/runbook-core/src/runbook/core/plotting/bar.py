@@ -85,7 +85,7 @@ def plot_bar(
     vertical_spacing: float | None = None,
     tickformat: str | None = None,
     dtick: str | int | float | None = None,
-    use_rangebreaks: bool = True,
+    use_rangebreaks: bool = False,
     holiday_countries: list[str] | None = None,
     legend_groups: bool = False,
 ) -> plotly.graph_objs._figure.Figure:
@@ -146,7 +146,7 @@ def plot_bar_forecast(
     vertical_spacing: float | None = None,
     tickformat: str | None = None,
     dtick: str | int | float | None = None,
-    use_rangebreaks: bool = True,
+    use_rangebreaks: bool = False,
     holiday_countries: list[str] | None = None,
     legend_groups: bool = False,
     hist_color: str = "green",

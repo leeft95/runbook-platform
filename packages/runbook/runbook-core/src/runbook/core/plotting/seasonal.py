@@ -49,7 +49,7 @@ def plot_seasonal(
     shared_xaxes: bool = True,
     tickformat: str | None = None,
     dtick: str | int | float | None = None,
-    use_rangebreaks: bool = True,
+    use_rangebreaks: bool = False,
     holiday_countries: list[str] | None = None,
     exclude_years: tp.List[int] | None = None,
     five_year: bool = True,
