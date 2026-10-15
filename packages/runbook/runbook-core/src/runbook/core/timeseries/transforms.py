@@ -72,7 +72,8 @@ def _dummy_plot_index(length: int, frequency: str, start_month: int, start_day: 
     start = _timestamp_for_boundary(year, start_month, start_day, tz=None)
 
     if frequency == "D":
-        return pd.date_range(start=start, periods=length, freq="D")
+        dates = pd.date_range(start=start, periods=length + 1, freq="D")
+        return dates[~((dates.month == 2) & (dates.day == 29))][:length]
 
     if frequency == "W":
         return pd.date_range(start=start, periods=length, freq="7D")
@@ -117,6 +118,8 @@ def ts_by_year(
     e.g. for a seasonal timeseries that starts in October and ends in September, set start_month to 10 and end_month to 9, and set over_year to True.
     dummy_date_index: if True, replace the integer slot index with a dummy DatetimeIndex for plotting multi-year overlays.
     In this mode, rows where all columns are NaN are trimmed without shifting the remaining dates.
+    Daily plotting aligns month/day across years and omits February 29 so daily
+    and cumulative comparisons use the same 365-day calendar.
     Monthly, weekly, and business-day windows include a month-end boundary, unless it
     is the next cycle's start. Other end boundaries are exclusive.
     """
@@ -195,6 +198,12 @@ def ts_by_year(
         columns=range(start_anchor_year, end_anchor_year + 1),
     )
 
+    plot_index = None
+    if dummy_date_index:
+        length = 365 if frequency == "D" else len(out.index)
+        plot_index = _dummy_plot_index(length, frequency, start_month, start_day, year=pd.Timestamp.today().year)
+        out = out.iloc[:length]
+
     for anchor_year_raw in out.columns:
         anchor_year = int(anchor_year_raw)
         start_ts = _timestamp_for_boundary(anchor_year, start_month, start_day, tz)
@@ -210,7 +219,11 @@ def ts_by_year(
             continue
 
         in_window_index = cast(pd.DatetimeIndex, in_window.index)
-        positions = _position_index(in_window_index, start_ts, frequency)
+        if frequency == "D" and plot_index is not None:
+            # A shared month/day calendar prevents leap years shifting March onward.
+            positions = plot_index.strftime("%m-%d").get_indexer(in_window_index.strftime("%m-%d"))
+        else:
+            positions = _position_index(in_window_index, start_ts, frequency)
         valid_mask = (positions >= 0) & (positions < len(out.index))
         if not valid_mask.any():
             continue
@@ -225,8 +238,7 @@ def ts_by_year(
 
     out = out.dropna(axis=1, how="all")
     if dummy_date_index:
-        plot_year = pd.Timestamp.today().year
-        out.index = _dummy_plot_index(len(out.index), frequency, start_month, start_day, year=plot_year)
+        out.index = plot_index
         out = out.dropna(axis=0, how="all")
 
     return out

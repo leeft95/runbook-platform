@@ -233,6 +233,8 @@ def test_plot_seasonal_preserves_custom_windows_and_other_frequencies(
 
     trace = next(trace for trace in fig.data if trace.name == "2024")
     expected = df.loc[(df.index >= expected_start) & (df.index < expected_end), "value"]
+    if frequency == "D":
+        expected = expected.loc[~((expected.index.month == 2) & (expected.index.day == 29))]
     np.testing.assert_array_equal(pd.Series(trace.y).dropna().to_numpy(), expected.to_numpy())
 
 
@@ -424,3 +426,67 @@ def test_plot_cot_builds_two_by_three_layout_with_secondary_axes(tick_settings) 
     for axis in fig.select_xaxes():
         assert axis.dtick == tick_settings.get("dtick")
         assert axis.tickformat == tick_settings.get("tickformat")
+
+
+@pytest.mark.parametrize("current_year", [2024, 2025, 2026])
+@pytest.mark.parametrize("start_month", [1, 10])
+@pytest.mark.parametrize("ytd_diff", [False, True])
+def test_daily_seasonal_comparisons_align_leap_year_months(current_year, start_month, ytd_diff) -> None:
+    index = pd.date_range("2018-01-01", "2027-12-31", freq="D")
+    frame = pd.DataFrame({"value": index.month.astype(float)}, index=index)
+    # An exceptional leap-day value must not affect comparisons or accumulation.
+    frame.loc[(index.month == 2) & (index.day == 29), "value"] = 9999
+    fig = plot_seasonal(
+        frame,
+        current_year=current_year,
+        start_month=start_month,
+        end_month=start_month,
+        end_day=1,
+        over_year=True,
+        ytd_cum_sum=True,
+        ytd_diff=ytd_diff,
+    )
+    comparisons = [trace for trace in fig.data if " vs " in trace.name]
+    assert len(comparisons) == 4
+    for trace in comparisons:
+        values = np.asarray(trace.y, dtype=float)
+        assert np.isfinite(values).sum() >= 364
+        np.testing.assert_allclose(values[np.isfinite(values)], 0, atol=1e-10)
+    for trace in fig.data:
+        dates = pd.DatetimeIndex(trace.x)
+        assert not ((dates.month == 2) & (dates.day == 29)).any()
+        if " vs " not in trace.name:
+            values = np.asarray(trace.y, dtype=float)
+            observed = np.isfinite(values)
+            np.testing.assert_allclose(values[observed], dates.month[observed])
+
+
+@pytest.mark.parametrize("scale", [1e-20, 1.0, 1e12])
+def test_comparison_cleanup_preserves_real_changes_and_missing_values(scale) -> None:
+    from runbook.core.plotting.seasonal import _comparison_difference
+
+    current = pd.Series([scale, scale * (1 + 1e-8), scale * (1 - 1e-8), np.nan, scale, np.inf, 1e-30])
+    baseline = pd.Series([np.nextafter(scale, np.inf), scale, scale, scale, np.nan, scale, 0.0])
+    expected = current - baseline
+    expected.iloc[0] = 0
+    pd.testing.assert_series_equal(_comparison_difference(current, baseline), expected)
+
+
+@pytest.mark.parametrize("ytd_diff", [False, True])
+def test_seasonal_comparison_panels_remove_roundoff_without_hiding_events(ytd_diff) -> None:
+    index = pd.date_range("2019-01-01", "2024-12-31")
+    frame = pd.DataFrame({"value": np.take([0.853765, -0.65, -0.55, 0.37, -0.43, 0.16,
+                                           0.11, -0.38, 0.25, 0.26, -0.19, -0.20], index.month - 1)}, index=index)
+    for event in (0, 1e-8):
+        frame.loc["2024-06-15", "value"] += event
+        fig = plot_seasonal(frame, current_year=2024, ytd_cum_sum=True, ytd_diff=ytd_diff)
+        comparisons = [trace for trace in fig.data if " vs " in trace.name]
+        assert len(comparisons) == 4
+        for trace in comparisons:
+            values = np.asarray(trace.y, dtype=float)
+            if event == 0:
+                np.testing.assert_array_equal(values[np.isfinite(values)], 0)
+            else:
+                dates = pd.DatetimeIndex(trace.x)
+                event_value = values[(dates.month == 6) & (dates.day == 15)][0]
+                assert event_value == pytest.approx(event, rel=1e-5, abs=0)

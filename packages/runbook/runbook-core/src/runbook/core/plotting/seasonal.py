@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import typing as tp
 
+import numpy as np
 import pandas as pd
 import plotly
 import plotly.graph_objects as go
@@ -10,6 +11,13 @@ from plotly.subplots import make_subplots
 from runbook.core.plotting.graphly import GraphlyPlotter, PlotlyPlotDef, PlotType
 from runbook.core.plotting.line import plot_line
 from runbook.core.timeseries.transforms import ts_by_year
+
+
+def _comparison_difference(current: pd.Series, baseline: pd.Series) -> pd.Series:
+    """Remove roundoff at the operands' scale without an absolute noise floor."""
+    difference = current - baseline
+    tolerance = 8 * np.finfo(float).eps * np.maximum(current.abs(), baseline.abs())
+    return difference.mask(np.isfinite(difference) & (difference.abs() <= tolerance), 0.0)
 
 
 def _row_heights_for_rows(rows: int) -> list[float] | None:
@@ -70,6 +78,8 @@ def plot_seasonal(
     it starts the next cycle. Other end boundaries remain exclusive. Years label
     the start of each cycle; ``dash_from`` uses the original observation dates.
     Holidays are not hidden by default on the artificial seasonal date axis.
+    Daily overlays align by month/day and omit February 29 from every panel,
+    keeping leap years comparable on the same 365-day calendar.
 
     ``current_year`` defaults to the latest available year at or before today's
     calendar year, falling back to the latest available year for future-only data.
@@ -81,6 +91,8 @@ def plot_seasonal(
     comparisons when history exists. These cumulative lines share one panel.
     Set ``five_year=False`` to omit all five-year average comparisons, keeping
     the comparisons with the previous year in both subplots.
+    Comparison differences within eight float64 epsilons of the larger operand
+    are displayed as zero; missing values remain missing.
     ``ytd_diff`` switches all cumulative lines from accumulating values to
     accumulating first differences; it does not enable a panel by itself.
 
@@ -205,11 +217,11 @@ def plot_seasonal(
         data_vs_avg = pd.DataFrame(index=dts)
         if avg_5y is not None and not avg_5y.empty:
             fivey_name = "Cur Yr vs 5y Avg"
-            data_vs_avg[fivey_name] = df_by_year[current_year] - avg_5y
+            data_vs_avg[fivey_name] = _comparison_difference(df_by_year[current_year], avg_5y)
             series_styles[fivey_name] = {"line": {"color": "black", "width": 1}}
         if prev_year is not None:
             y1_name = "Cur Yr vs Y-1"
-            data_vs_avg[y1_name] = df_by_year[current_year] - df_by_year[prev_year]
+            data_vs_avg[y1_name] = _comparison_difference(df_by_year[current_year], df_by_year[prev_year])
             series_styles[y1_name] = {"line": {"color": "black", "width": 1, "dash": "dash"}}
         if not data_vs_avg.empty:
             subplot_frames.append(data_vs_avg)
@@ -228,11 +240,13 @@ def plot_seasonal(
         if ytd_cum_sum:
             if five_year and not history.empty:
                 cum_name = "Cum Cur Yr vs 5y Avg"
-                data_ytd[cum_name] = current_cumulative - cumulative[history.columns[-5:]].mean(axis=1)
+                data_ytd[cum_name] = _comparison_difference(
+                    current_cumulative, cumulative[history.columns[-5:]].mean(axis=1)
+                )
                 series_styles[cum_name] = {"line": {"color": "grey", "width": 1}}
             if prev_year is not None:
                 cum_name = "Cum Cur Yr vs Y-1"
-                data_ytd[cum_name] = current_cumulative - cumulative[prev_year]
+                data_ytd[cum_name] = _comparison_difference(current_cumulative, cumulative[prev_year])
                 series_styles[cum_name] = {
                     "line": {"color": "grey", "width": 1, "dash": "dash"},
                     "fill": "tozeroy",

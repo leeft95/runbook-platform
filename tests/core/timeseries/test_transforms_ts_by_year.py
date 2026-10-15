@@ -261,3 +261,24 @@ def test_ts_by_year_accepts_datetime_indexed_series_without_name() -> None:
     assert list(out.columns) == [2024]
     assert out.loc[0, 2024] == 1.0
     assert out.loc[2, 2024] == 3.0
+
+
+@pytest.mark.parametrize("year,start_month", [(2024, 1), (2023, 10), (2026, 1)])
+def test_daily_dummy_axis_omits_leap_day(year, start_month) -> None:
+    from runbook.core.timeseries.transforms import _dummy_plot_index
+
+    index = _dummy_plot_index(365, "D", start_month, 1, year)
+    assert len(index) == 365
+    assert index.strftime("%m-%d").is_unique
+    assert not ((index.month == 2) & (index.day == 29)).any()
+
+
+def test_daily_plot_alignment_preserves_missing_dates() -> None:
+    index = pd.to_datetime(["2023-02-28", "2023-03-02", "2024-02-29", "2024-03-01", "2024-03-02"])
+    series = pd.Series([1, 3, 99, 2, 3], index=index)
+    result = ts_by_year(series, start_month=1, start_day=1, dummy_date_index=True)
+    result.index = result.index.strftime("%m-%d")
+    assert "02-29" not in result.index
+    assert pd.isna(result.loc["03-01", 2023])
+    assert result.loc["03-01", 2024] == 2
+    assert result.loc["03-02"].tolist() == [3, 3]
