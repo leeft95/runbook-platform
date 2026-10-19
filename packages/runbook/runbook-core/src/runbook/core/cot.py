@@ -98,9 +98,11 @@ def cot_summary(
 ) -> pd.DataFrame:
     """Build one COT summary row with numeric values and hidden signal columns.
 
-    Horizons count position observations (normally weekly). Four-week changes
-    consistently use four intervals; weekly price return uses the previous
-    price as its denominator. Position scores divide changes by sample standard
+    Horizons count position observations (normally weekly). Weekly price
+    return divides the price difference by the latest close. The displayed
+    "4w" net change spans three intervals (latest minus fourth-last observation),
+    matching ECM reports; four-week price changes and position scores still
+    use four intervals. Position scores divide changes by sample standard
     deviation without centering, matching ECM's convention. Price scores are
     centered. Dispersion windows include the latest change, while percentile
     windows exclude the latest level. Set ``change_window=208`` for the MiFID
@@ -131,7 +133,7 @@ def cot_summary(
         "Asset": name,
         "Net Position": latest["Net"],
         "% OI": latest["Net OI"],
-        "Weekly Price Change": _ratio(price.diff().iloc[-1], price.shift().iloc[-1]),
+        "Weekly Price Change": _ratio(price.diff().iloc[-1], price.iloc[-1]),
         "Ref Week VWAP": latest["VWAP"],
         "Internal Change": frame["Internal"].diff().iloc[-1],
         "Weekly Delta Change": changes.iloc[-1],
@@ -139,7 +141,7 @@ def cot_summary(
         "Weekly change in shorts": frame["Short"].diff().iloc[-1],
         "Weekly Delta Change in millions": changes.iloc[-1] * latest["PX_LAST"] * (contract_value or np.nan) / 1e6,
         "4w change of price": returns4.iloc[-1],
-        "4w change of net position": changes4.iloc[-1],
+        "4w change of net position": net.diff(3).iloc[-1],
         "YTD position change": latest["Net"] - base.get("Net", np.nan),
         "Long Short Ratio": _ratio(latest["Long"], latest["Short"]),
         "Long Position": latest["Long"],
@@ -235,7 +237,7 @@ def analysis(
     changes and the first row's observation-week heading. Dictionary order
     determines report row order. ``asset_groups`` adds group metadata for the
     table formatter. Contract scaling/value are explicit calculation options.
-    Uses Runbook's documented return and four-week conventions.
+    Uses ECM's latest-close weekly return and displayed three-interval net change.
     """
     return _analysis_rows(
         observations,

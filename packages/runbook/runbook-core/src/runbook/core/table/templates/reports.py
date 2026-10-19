@@ -93,7 +93,7 @@ def cot_cme_timeseries_table(
     Output goes through ``cot_cme_summary_table`` with the same column
     names/order, including the date-range heading and dollar-million changes.
     Each asset is one row in mapping order; ``asset_groups`` adds row separators.
-    Uses Runbook's documented return/four-week corrections, not a legacy clone.
+    Uses ECM's latest-close weekly return and displayed three-interval net change.
     """
     if asset_groups is not None:
         options.setdefault("group_column", "Group")

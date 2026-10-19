@@ -35,9 +35,11 @@ def test_cot_summary_horizons_scores_and_asof_are_explicit() -> None:
     row = cot_summary(data.iloc[::-1], "Asset Fut", as_of=cutoff, contract_value=1000).iloc[0]
     history = data.loc[:cutoff]
     net = history.Long - history.Short
-    expected4 = net.iloc[-1] - net.iloc[-5]
+    expected4 = net.iloc[-1] - net.iloc[-4]
     assert row["4w change of net position"] == expected4
-    assert row["Weekly Price Change"] == pytest.approx(history.PX_LAST.pct_change().iloc[-1])
+    assert row["Weekly Price Change"] == pytest.approx(
+        (history.PX_LAST.iloc[-1] - history.PX_LAST.iloc[-2]) / history.PX_LAST.iloc[-1]
+    )
     assert row["net change z score"] == pytest.approx(net.diff().iloc[-1] / net.diff().tail(52).std())
     assert row["4w delta change z score"] == pytest.approx(net.diff(4).iloc[-1] / net.diff(4).tail(52).std())
     assert row["Net percentile"] == 1.0
@@ -112,3 +114,29 @@ def test_cot_validates_duplicate_dates_and_optional_position_pairs() -> None:
         prepare_cot_data(data.drop(columns="NC Short"))
     with pytest.raises(ValueError, match="paired"):
         cot_summary(data, "Empty", as_of="2000-01-01")
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, 4])
+def test_displayed_four_week_net_change_needs_four_observations(count) -> None:
+    data = pd.DataFrame(
+        {"Long": [100.0, 150.0, 130.0, 200.0], "Short": [50.0, 60.0, 55.0, 70.0]},
+        index=pd.date_range("2025-01-07", periods=4, freq="W-TUE"),
+    ).iloc[:count]
+    row = cot_summary(data, "Asset").iloc[0]
+    if count == 4:
+        assert row["4w change of net position"] == 80.0
+    else:
+        assert pd.isna(row["4w change of net position"])
+    assert pd.isna(row["4w delta change z score"])
+
+
+@pytest.mark.parametrize(
+    "previous, latest, expected", [(100, 125, 0.2), (125, 100, -0.25), (0, 100, 1), (100, 0, np.nan)]
+)
+def test_weekly_price_change_divides_by_latest_close(previous, latest, expected) -> None:
+    data = pd.DataFrame(
+        {"Long": [100.0, 120.0], "Short": [50.0, 60.0], "PX_LAST": [previous, latest]},
+        index=pd.date_range("2025-01-07", periods=2, freq="W-TUE"),
+    )
+    result = cot_summary(data, "Asset").iloc[0]["Weekly Price Change"]
+    assert pd.isna(result) if pd.isna(expected) else result == pytest.approx(expected)

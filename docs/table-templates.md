@@ -1061,12 +1061,17 @@ The old public names remain compatibility aliases:
 `cot_timeseries_table`, and `cot_position_changes_table` →
 `cot_position_change_table`. Their original generic defaults are retained.
 The named calculation presets use Runbook's normalized inputs and the
-calculation corrections below; they do not fetch data or recreate ECM's
+calculation conventions below; they do not fetch data or recreate ECM's
 ticker-specific acquisition logic.
 
-`cot_summary` uses four observation intervals for four-week changes and the
-previous price for weekly returns. Position scores retain ECM's uncentered
-change/standard-deviation convention; price scores are centered. The default
+`cot_summary` matches the ECM reports: weekly price return is
+`(latest close - previous close) / latest close`, and the displayed
+`4w change of net position` is the latest net position minus the fourth-last
+observation (three weekly intervals). The four-week price return and the
+`4w delta change z score` still use four observation intervals. Position scores
+retain ECM's uncentered change/standard-deviation convention; price scores
+are centered. These conventions apply to the generic, CME, macro and MiFID
+time-series table helpers. The default
 position dispersion window is 52 observations; pass `change_window=208` for
 the MiFID convention. Percentile history excludes the latest value. Insufficient
 history or zero denominators remain missing instead of becoming infinite or

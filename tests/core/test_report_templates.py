@@ -275,6 +275,10 @@ def test_cot_calculation_presets_apply_ecm_windows_and_allow_explicit_overrides(
     row = payload["data"].iloc[0]
     net = frame.Long - frame.Short
     assert row[position_column] == net.iloc[-1]
+    assert row["Weekly Price Change"] == pytest.approx(
+        (frame.PX_LAST.iloc[-1] - frame.PX_LAST.iloc[-2]) / frame.PX_LAST.iloc[-1]
+    )
+    assert row["4w change of net position"] == net.iloc[-1] - net.iloc[-4]
     assert row["_change_window"] == window
     assert row["net change z score"] == pytest.approx(net.diff().iloc[-1] / net.diff().tail(window).std())
     assert row["4w delta change z score"] == pytest.approx(net.diff(4).iloc[-1] / net.diff(4).tail(window).std())
