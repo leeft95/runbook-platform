@@ -18,6 +18,7 @@ from runbook.core.cot import analysis, analysis_mifid
 from runbook.core.plotting.bar import plot_bar
 from runbook.core.plotting.line import plot_line
 from runbook.core.plotting.templates import (
+    comparison_chart,
     plot_cot_long_short,
     plot_cot_net,
     plot_cot_positions,
@@ -344,6 +345,54 @@ def add_range_vol_examples(table: Callable[..., Any], chart: Callable[..., Any])
         pd.DataFrame.from_dict(sharpe_rows, orient="index")[["KPI", "KPI t−1", "KPI index"]],
         code='plot_bar(kpi_summary[["KPI", "KPI t−1", "KPI index"]])',
     )
+
+
+def add_comparison_examples(chart: Callable[..., Any]) -> None:
+    """Show the same baseline comparison with and without optional history."""
+    dates = pd.date_range("2026-10-01", "2029-12-01", freq="MS")
+    t = np.arange(len(dates), dtype=float)
+    base = 1500 + 18 * t + 70 * np.sin(t / 2)
+    forecast = pd.DataFrame(
+        {"Base": base, "EA": base - 7 * t + 25 * np.sin(t / 3), "WoodMac": base + 2 * t, "TLA": base - t},
+        index=dates,
+    )
+    history_dates = pd.date_range("2024-01-01", "2026-10-01", freq="MS")
+    h = np.arange(len(history_dates), dtype=float)
+    history = pd.DataFrame({"Kpler actuals": 1500 + 100 * np.cos(h / 2) + 45 * np.sin(h)}, index=history_dates)
+    for with_history, show_difference in ((True, False), (False, False), (True, True)):
+        chart(
+            "comparison-differences"
+            if show_difference
+            else "comparison-history"
+            if with_history
+            else "comparison-no-history",
+            "Baseline comparison · "
+            + (
+                "optional difference panel"
+                if show_difference
+                else "with actuals"
+                if with_history
+                else "without history"
+            ),
+            "The first column is the black Base. Default panels show levels and cumulative differences; show_difference=True adds a non-cumulative panel below them. The dashed marker is df's first date; all axes use mcm/d."
+            + (" Custom row_heights use 60/25/15 here." if show_difference else ""),
+            comparison_chart,
+            forecast,
+            history if with_history else None,
+            "Global LNG exports",
+            units="mcm/d",
+            show_difference=show_difference,
+            row_heights=[0.6, 0.25, 0.15] if show_difference else None,
+            x_axis_title="Month",
+            series_styles={
+                name: {"line": {"color": color}}
+                for name, color in (("EA", "red"), ("WoodMac", "blue"), ("TLA", "green"))
+            },
+            code="comparison_chart(df"
+            + (", df_hst" if with_history else "")
+            + (", show_difference=True, row_heights=[0.6, 0.25, 0.15]" if show_difference else "")
+            + ', title="Global LNG exports", units="mcm/d", x_axis_title="Month")',
+        )
 
 
 def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1058,6 +1107,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         plot_rollup_seasonal,
         power.Gas,
     )
+    add_comparison_examples(chart)
     add_range_vol_examples(table, chart)
     return tables, charts
 

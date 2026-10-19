@@ -32,6 +32,7 @@ plotting functions remain available.
 | --- | --- |
 | Daily line with moving average | `plot_line_with_moving_average` |
 | Daily line with secondary comparison | `plot_line_with_comparison` |
+| First-column baseline with differences and cumulative differences | `comparison_chart` |
 | Seasonal and cumulative comparisons | `plot_seasonal_comparison` |
 | Seasonal forecast with reversed axes | `plot_reversed_seasonal_forecast` |
 | Seasonal columns beside ordinary history | `plot_seasonal_with_history` |
@@ -88,12 +89,68 @@ from runbook.core.plotting.cot import plot_cot_market
 from runbook.core.plotting.regression import plot_regression, plot_price_vs_position
 ```
 
+## Baseline comparison chart
+
+```python
+from runbook.core.plotting.templates import comparison_chart
+
+figure = comparison_chart(
+    df, df_hst, title="Global LNG exports", units="mcm/d", x_axis_title="Month"
+)
+# History is optional; both calls above/below default to two panels:
+figure = comparison_chart(df, units="mcm/d")
+# Add a non-cumulative difference panel below cumulative differences:
+figure = comparison_chart(df, df_hst, units="mcm/d", show_difference=True)
+# Override relative heights, in top-to-bottom panel order:
+figure = comparison_chart(df, row_heights=[0.8, 0.2])
+figure = comparison_chart(df, show_difference=True, row_heights=[0.6, 0.25, 0.15])
+```
+
+`df` is a numeric DataFrame with a unique `DatetimeIndex`, one baseline column
+first (normally `Base`), and one or more comparison columns. The baseline is
+black. A dashed vertical line marks the **first supplied index value of `df`**
+in every panel. Values are sorted chronologically for plotting/calculation.
+Optional `df_hst` contributes grey lines to the levels panel only, on its own
+dates; it does not affect comparisons or the marker. It must have a unique
+`DatetimeIndex` in the same timezone as `df`. History labels that collide with
+comparison labels receive a `History:` prefix.
+
+The default is **two panels**: levels and cumulative differences (70/30).
+With `show_difference=True`, three panels use seasonal-chart proportions
+(50/30/20), in this order:
+
+1. Baseline, comparison series and optional history.
+2. Each series' cumulative sum minus the baseline's cumulative sum, calculated
+   separately before subtraction, exactly as in seasonal comparisons.
+3. Each comparison series minus the first-column baseline, at the same date.
+
+`row_heights=None` keeps those defaults. Custom heights must contain one
+positive, finite weight per panel; weights are normalized and need not sum
+to one (for example, `[4, 1]` gives 80/20). `height` still controls the total
+figure height in pixels.
+
+The default dimensions (900 × 600) and vertical spacing (0.02) also match
+seasonal charts. Units wrap onto a separate line in the lower axis titles.
+Only the main chart title is shown, with a single shared x-axis title at the
+bottom; individual panels have no subplot titles.
+
+There is no calendar-day weighting or unit conversion. `units="mcm/d"` labels
+all panels with those units. Missing values are neither filled nor extrapolated;
+accumulation preserves pandas' `cumsum()` behavior, including gaps. Differences
+at floating-point roundoff scale are zeroed using the seasonal helper.
+
+Series retain their colours across panels and share a single legend entry.
+Other `plot_line` options such as `width`, `height`, `tickformat`, `dtick`,
+`show_legend` and `series_styles` are accepted. The gallery includes examples
+with and without history, plus the optional third panel.
+
 ## Line and bar charts
 
 `plot_line` accepts a DataFrame (each column is a series) or a mapping of
 subplot names to DataFrames. It accepts optional `rows` and `cols` for
 subplots. `plot_bar` accepts a DataFrame, Series, or mapping and has the same
-subplot options:
+subplot options. `plot_line` also accepts `row_heights` to override the
+relative heights of its rows:
 
 ```python
 line = plot_line(frame[["brent", "wti"]], title="Prices", show_legend=True)

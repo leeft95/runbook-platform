@@ -17,7 +17,7 @@ from .bar import plot_bar_forecast
 from .cot import plot_cot_market
 from .line import plot_line
 from .regression import plot_price_vs_position, plot_regression
-from .seasonal import plot_cot, plot_seasonal, plot_seasonal_grid
+from .seasonal import _comparison_difference, plot_cot, plot_seasonal, plot_seasonal_grid
 
 
 def plot_line_with_moving_average(
@@ -73,6 +73,115 @@ def plot_line_with_comparison(
         frame[label] = aligned[field]
         styles[label] = {"secondary_y": True, **styles.get(label, {})}
     return plot_line(frame, title=str(name) if title is None else title, series_styles=styles, **options)
+
+
+def comparison_chart(
+    df: pd.DataFrame,
+    df_hst: pd.DataFrame | None = None,
+    title: str | None = None,
+    *,
+    units: str | None = None,
+    show_difference: bool = False,
+    x_axis_title: str = "Date",
+    row_heights: list[float] | None = None,
+    **options: Any,
+) -> go.Figure:
+    """Compare series with the first column in levels, differences and cumulatives.
+
+    ``df`` needs a unique DatetimeIndex and at least two numeric columns. Its
+    first column is the black baseline; all other columns are compared with it.
+    The dashed vertical marker uses the first supplied index value of ``df``.
+    Calculations sort dates chronologically without filling missing values.
+    ``df_hst`` optionally adds grey historical lines to the levels panel only;
+    colliding column names receive a ``History:`` prefix.
+
+    By default, show levels and cumulative differences (70/30). Set
+    ``show_difference=True`` to add non-cumulative differences below the
+    cumulative panel. Subplot proportions match seasonal charts: 70/30 for
+    two panels and 50/30/20 for three. ``row_heights`` overrides these with
+    positive, finite relative weights from top to bottom, one per panel.
+    Each series is cumulatively summed
+    separately before subtracting the baseline's cumulative series, matching
+    seasonal comparisons, including their missing-value and roundoff behavior.
+    No calendar-day weighting or unit conversion is applied. ``units`` labels
+    the axes; e.g. ``units="mcm/d"``. Only the main chart title and the
+    shared bottom x-axis title are shown. Additional options go to ``plot_line``.
+    """
+    frames = []
+    for name, data in (("df", df), ("df_hst", df_hst)):
+        if name == "df_hst" and data is None:
+            continue
+        if not isinstance(data, pd.DataFrame) or not isinstance(data.index, pd.DatetimeIndex):
+            raise TypeError(f"{name} requires a DataFrame with a DatetimeIndex")
+        if data.index.hasnans or not data.index.is_unique:
+            raise ValueError(f"{name} requires unique dates without NaT")
+        frame = data.rename(columns=str).sort_index().apply(pd.to_numeric, errors="raise")
+        if not frame.columns.is_unique:
+            raise ValueError(f"{name} requires unique column labels")
+        if name == "df" and (frame.empty or frame.shape[1] < 2):
+            raise ValueError("df requires observations and at least a baseline and one comparison column")
+        if name == "df_hst" and frame.index.tz != df.index.tz:
+            raise ValueError("df_hst and df must use the same timezone")
+        frames.append(frame)
+    frame = frames[0]
+    baseline = frame.iloc[:, 0]
+    cumulative = frame.cumsum()
+    cumulative_differences = pd.DataFrame(
+        {name: _comparison_difference(cumulative[name], cumulative.iloc[:, 0]) for name in frame.columns[1:]}
+    )
+    styles = dict(options.pop("series_styles", None) or {})
+    levels = frame
+    if len(frames) > 1 and not frames[1].empty:
+        history = frames[1].copy()
+        names = []
+        for name in history.columns:
+            while name in frame.columns or name in names:
+                name = f"History: {name}"
+            names.append(name)
+            styles[name] = {"line": {"color": "grey"}, **styles.get(name, {})}
+        history.columns = names
+        levels = pd.concat([history, frame], axis=1).sort_index()
+    base_style = styles.get(str(baseline.name), {})
+    styles[str(baseline.name)] = {
+        **base_style,
+        "line": {"width": 2, **base_style.get("line", {}), "color": "black"},
+    }
+    panels = {"Levels": levels, "Cumulative differences": cumulative_differences}
+    if show_difference:
+        panels["Differences"] = pd.DataFrame(
+            {name: _comparison_difference(frame[name], baseline) for name in frame.columns[1:]}
+        )
+    rows = len(panels)
+    figure = plot_line(
+        panels,
+        title=title,
+        rows=rows,
+        cols=1,
+        row_heights=row_heights,
+        shared_xaxes=True,
+        legend_groups=True,
+        series_styles=styles,
+        **{
+            "width": 900,
+            "height": 600,
+            "vertical_spacing": 0.02,
+            **options,
+            "trace_style": {"connectgaps": False, **(options.get("trace_style") or {})},
+        },
+    )
+    figure.layout.annotations = ()
+    suffix = f"<br>({units})" if units else ""
+    figure.update_yaxes(title_text=units, row=1, col=1)
+    if show_difference:
+        figure.update_yaxes(
+            title_text=f"Delta to {baseline.name}{suffix}", zeroline=True, zerolinecolor="grey", row=3, col=1
+        )
+    figure.update_yaxes(
+        title_text=f"Cum. delta to {baseline.name}{suffix}", zeroline=True, zerolinecolor="grey", row=2, col=1
+    )
+    figure.update_xaxes(title_text=x_axis_title, row=rows, col=1)
+    figure.add_vline(x=df.index[0], line_dash="dash", line_color="grey", line_width=1)
+    return figure
 
 
 def plot_seasonal_comparison(data: pd.DataFrame, **options: Any) -> go.Figure:
@@ -289,6 +398,7 @@ def plot_rollup_seasonal(
 
 
 __all__ = [
+    "comparison_chart",
     "plot_rollup_seasonal",
     "plot_line_with_moving_average",
     "plot_line_with_comparison",

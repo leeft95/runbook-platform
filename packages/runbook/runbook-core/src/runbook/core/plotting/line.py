@@ -1,5 +1,6 @@
 """Public facing wrapper for line plots."""
 
+import math
 import typing as tp
 
 import pandas as pd
@@ -28,6 +29,7 @@ def plot_line(
     use_rangebreaks: bool = False,
     holiday_countries: list[str] | None = None,
     legend_groups: bool = False,
+    row_heights: list[float] | None = None,
 ) -> plotly.graph_objs._figure.Figure:
     """Plot line charts from a dataframe or a dict of named dataframes.
 
@@ -35,6 +37,10 @@ def plot_line(
 
     - Single subplot: ``pd.DataFrame`` (each column is a series).
     - Multi subplot: ``{plot_name: pd.DataFrame}``.
+
+    ``row_heights`` sets positive, finite relative heights from top to bottom,
+    one per row. Defaults are 70/30 for two rows, 50/30/20 for three rows,
+    and equal heights otherwise. Weights need not sum to one.
 
     Styling contract:
 
@@ -57,15 +63,10 @@ def plot_line(
         raise ValueError(f"Not enough subplots for {len(data)} lines with {rows} rows and {cols} cols.")
     if rows < 1 or cols < 1:
         raise ValueError("Rows and cols must be positive integers.")
-    match rows:
-        case 1:
-            row_height = [1.0]
-        case 2:
-            row_height = [0.7, 0.3]
-        case 3:
-            row_height = [0.5, 0.3, 0.2]
-        case _:
-            row_height = None  # type: ignore
+    if row_heights is None:
+        row_heights = {1: [1.0], 2: [0.7, 0.3], 3: [0.5, 0.3, 0.2]}.get(rows)
+    elif len(row_heights) != rows or any(not math.isfinite(value) or value <= 0 for value in row_heights):
+        raise ValueError("row_heights must contain one positive, finite weight per subplot row")
     traces: list[GraphlyTraceSpec] = []
     for subplot_index, (name, df) in enumerate(data.items()):
         if not isinstance(df, pd.DataFrame):
@@ -93,7 +94,7 @@ def plot_line(
         height=height,
         n_rows=rows,
         n_cols=cols,
-        row_heights=row_height,
+        row_heights=row_heights,
         shared_xaxes=shared_xaxes,
         horizontal_spacing=horizontal_spacing,
         vertical_spacing=vertical_spacing,
