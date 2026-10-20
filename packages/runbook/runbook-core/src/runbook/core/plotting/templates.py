@@ -90,8 +90,8 @@ def comparison_chart(
 
     ``df`` needs a unique DatetimeIndex and at least two numeric columns. Its
     first column is the black baseline; all other columns are compared with it.
-    The dashed vertical marker uses the first supplied index value of ``df``.
-    Calculations sort dates chronologically without filling missing values.
+    Both input frames are sorted chronologically without modifying the originals
+    or filling missing values. The dashed marker uses the earliest date in ``df``.
     ``df_hst`` optionally adds grey historical lines to the levels panel only;
     colliding column names receive a ``History:`` prefix.
 
@@ -180,7 +180,7 @@ def comparison_chart(
         title_text=f"Cum. delta to {baseline.name}{suffix}", zeroline=True, zerolinecolor="grey", row=2, col=1
     )
     figure.update_xaxes(title_text=x_axis_title, row=rows, col=1)
-    figure.add_vline(x=df.index[0], line_dash="dash", line_color="grey", line_width=1)
+    figure.add_vline(x=frame.index[0], line_dash="dash", line_color="grey", line_width=1)
     return figure
 
 

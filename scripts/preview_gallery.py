@@ -374,7 +374,7 @@ def add_comparison_examples(chart: Callable[..., Any]) -> None:
                 if with_history
                 else "without history"
             ),
-            "The first column is the black Base. Default panels show levels and cumulative differences; show_difference=True adds a non-cumulative panel below them. The dashed marker is df's first date; all axes use mcm/d."
+            "The first column is the black Base. Default panels show levels and cumulative differences; show_difference=True adds a non-cumulative panel below them. Both inputs are sorted chronologically; the dashed marker is df's earliest date. All axes use mcm/d."
             + (" Custom row_heights use 60/25/15 here." if show_difference else ""),
             comparison_chart,
             forecast,

@@ -108,8 +108,9 @@ figure = comparison_chart(df, show_difference=True, row_heights=[0.6, 0.25, 0.15
 
 `df` is a numeric DataFrame with a unique `DatetimeIndex`, one baseline column
 first (normally `Base`), and one or more comparison columns. The baseline is
-black. A dashed vertical line marks the **first supplied index value of `df`**
-in every panel. Values are sorted chronologically for plotting/calculation.
+black. Both `df` and optional `df_hst` are sorted chronologically before
+plotting/calculation, without modifying the original frames. A dashed vertical
+line marks the **earliest date in `df`** in every panel, regardless of input order.
 Optional `df_hst` contributes grey lines to the levels panel only, on its own
 dates; it does not affect comparisons or the marker. It must have a unique
 `DatetimeIndex` in the same timezone as `df`. History labels that collide with

@@ -41,23 +41,41 @@ def test_comparison_panels_use_first_column_and_seasonal_cumulative_logic() -> N
     pd.testing.assert_frame_equal(frame, original)
 
 
-def test_comparison_optional_history_does_not_change_calculations_or_marker() -> None:
-    dates = pd.date_range("2025-01-01", periods=3, tz="Europe/London")
-    frame = pd.DataFrame({"Base": [100.0, 200.0, 300.0], "EA": [110.0, 190.0, 330.0]}, index=dates).iloc[::-1]
-    history = pd.DataFrame({"Base": [1.0, 2.0]}, index=dates[:2] - pd.DateOffset(years=1))
-    original = history.copy()
-    figure = comparison_chart(frame, history, series_styles={"EA": {"line": {"color": "red"}}}, height=650)
-    plain = comparison_chart(frame)
+@pytest.mark.parametrize("order", [[2, 1, 0], [1, 2, 0]], ids=["descending", "shuffled"])
+@pytest.mark.parametrize("timezone", [None, "Europe/London"])
+@pytest.mark.parametrize("show_difference", [False, True])
+def test_comparison_sorts_both_inputs_and_marks_earliest_comparison_date(order, timezone, show_difference) -> None:
+    dates = pd.date_range("2025-01-01", periods=3, tz=timezone)
+    frame = pd.DataFrame({"Base": [100.0, 200.0, 300.0], "EA": [110.0, 190.0, 330.0]}, index=dates).iloc[order]
+    history = pd.DataFrame({"Base": [1.0, 2.0, 3.0]}, index=dates - pd.DateOffset(years=1)).iloc[order]
+    original_frame, original_history = frame.copy(), history.copy()
+    figure = comparison_chart(
+        frame,
+        history,
+        show_difference=show_difference,
+        series_styles={"EA": {"line": {"color": "red"}}},
+        height=650,
+    )
+    plain = comparison_chart(frame, show_difference=show_difference)
     assert figure.layout.height == 650
     assert figure.data[0].name == "History: Base" and figure.data[0].line.color == "grey"
     assert figure.data[0].yaxis == "y"
-    assert min(figure.data[0].x) == history.index[0]
-    assert all(shape.x0 == frame.index[0] for shape in figure.layout.shapes)
+    assert min(figure.data[0].x) == history.index.min()
+    np.testing.assert_allclose(pd.Series(figure.data[0].y).dropna(), [1, 2, 3])
     assert all(trace.line.color == "red" for trace in figure.data if trace.name == "EA")
-    for actual, expected in zip(figure.data[-1:], plain.data[-1:]):
-        np.testing.assert_allclose(actual.y, expected.y)
-        assert list(actual.x) == sorted(dates)
-    pd.testing.assert_frame_equal(history, original)
+    for plotted in (figure, plain):
+        assert all(shape.x0 == shape.x1 == dates[0] for shape in plotted.layout.shapes)
+        assert all(list(trace.x) == sorted(trace.x) for trace in plotted.data)
+        traces = {(trace.name, trace.yaxis): trace for trace in plotted.data}
+        np.testing.assert_allclose(pd.Series(traces[("Base", "y")].y).dropna(), [100, 200, 300])
+        np.testing.assert_allclose(pd.Series(traces[("EA", "y")].y).dropna(), [110, 190, 330])
+        np.testing.assert_allclose(traces[("EA", "y2")].y, [10, 0, 30])
+        assert list(traces[("EA", "y2")].x) == list(dates)
+        if show_difference:
+            np.testing.assert_allclose(traces[("EA", "y3")].y, [10, -10, 30])
+            assert list(traces[("EA", "y3")].x) == list(dates)
+    pd.testing.assert_frame_equal(frame, original_frame)
+    pd.testing.assert_frame_equal(history, original_history)
 
 
 def test_comparison_roundoff_is_zero_at_the_operand_scale() -> None:
