@@ -216,7 +216,7 @@ def test_plot_seasonal_monthly_keeps_december_and_partial_years(frequency: str) 
             "2024-10-01",
             "2025-05-01",
         ),
-        ("D", "D", {}, "2024-01-01", "2024-12-31"),
+        ("D", "D", {}, "2024-01-01", "2025-01-01"),
         ("W", "W-TUE", {}, "2024-01-01", "2025-01-01"),
         ("B", "B", {}, "2024-01-01", "2025-01-01"),
         ("W", "W-TUE", {"end_day": 1, "end_month": 7}, "2024-01-01", "2024-07-01"),
@@ -428,11 +428,12 @@ def test_plot_cot_builds_two_by_three_layout_with_secondary_axes(tick_settings) 
         assert axis.tickformat == tick_settings.get("tickformat")
 
 
-@pytest.mark.parametrize("current_year", [2024, 2025, 2026])
-@pytest.mark.parametrize("start_month", [1, 10])
+@pytest.mark.parametrize("current_year", [2020, 2021, 2024, 2025, 2026])
+@pytest.mark.parametrize("start_month", [1, 10, 12])
 @pytest.mark.parametrize("ytd_diff", [False, True])
-def test_daily_seasonal_comparisons_align_leap_year_months(current_year, start_month, ytd_diff) -> None:
-    index = pd.date_range("2018-01-01", "2027-12-31", freq="D")
+@pytest.mark.parametrize("month_end", [False, True])
+def test_daily_seasonal_comparisons_align_leap_year_months(current_year, start_month, ytd_diff, month_end) -> None:
+    index = pd.date_range("2014-01-01", "2027-12-31", freq="D")
     frame = pd.DataFrame({"value": index.month.astype(float)}, index=index)
     # An exceptional leap-day value must not affect comparisons or accumulation.
     frame.loc[(index.month == 2) & (index.day == 29), "value"] = 9999
@@ -440,9 +441,9 @@ def test_daily_seasonal_comparisons_align_leap_year_months(current_year, start_m
         frame,
         current_year=current_year,
         start_month=start_month,
-        end_month=start_month,
-        end_day=1,
-        over_year=True,
+        end_month=(start_month - 2) % 12 + 1 if month_end else start_month,
+        end_day=31 if month_end else 1,
+        over_year=start_month != 1 or not month_end,
         ytd_cum_sum=True,
         ytd_diff=ytd_diff,
     )
@@ -450,7 +451,9 @@ def test_daily_seasonal_comparisons_align_leap_year_months(current_year, start_m
     assert len(comparisons) == 4
     for trace in comparisons:
         values = np.asarray(trace.y, dtype=float)
-        assert np.isfinite(values).sum() >= 364
+        assert len(values) == 365
+        expected_count = 364 if ytd_diff and trace.name.startswith("Cum ") else 365
+        assert np.isfinite(values).sum() == expected_count
         np.testing.assert_allclose(values[np.isfinite(values)], 0, atol=1e-10)
     for trace in fig.data:
         dates = pd.DatetimeIndex(trace.x)
@@ -475,8 +478,14 @@ def test_comparison_cleanup_preserves_real_changes_and_missing_values(scale) -> 
 @pytest.mark.parametrize("ytd_diff", [False, True])
 def test_seasonal_comparison_panels_remove_roundoff_without_hiding_events(ytd_diff) -> None:
     index = pd.date_range("2019-01-01", "2024-12-31")
-    frame = pd.DataFrame({"value": np.take([0.853765, -0.65, -0.55, 0.37, -0.43, 0.16,
-                                           0.11, -0.38, 0.25, 0.26, -0.19, -0.20], index.month - 1)}, index=index)
+    frame = pd.DataFrame(
+        {
+            "value": np.take(
+                [0.853765, -0.65, -0.55, 0.37, -0.43, 0.16, 0.11, -0.38, 0.25, 0.26, -0.19, -0.20], index.month - 1
+            )
+        },
+        index=index,
+    )
     for event in (0, 1e-8):
         frame.loc["2024-06-15", "value"] += event
         fig = plot_seasonal(frame, current_year=2024, ytd_cum_sum=True, ytd_diff=ytd_diff)
@@ -490,3 +499,38 @@ def test_seasonal_comparison_panels_remove_roundoff_without_hiding_events(ytd_di
                 dates = pd.DatetimeIndex(trace.x)
                 event_value = values[(dates.month == 6) & (dates.day == 15)][0]
                 assert event_value == pytest.approx(event, rel=1e-5, abs=0)
+
+
+@pytest.mark.parametrize("start_month", [1, 10, 12])
+@pytest.mark.parametrize("timezone", [None, "Europe/London"])
+def test_daily_seasonal_preserves_year_end_dates_and_comparison_averages(start_month, timezone) -> None:
+    dates = pd.date_range("2015-01-01", "2022-12-31", tz=timezone)
+    # Encoding each source date exposes both shifted dates and overwritten cycle boundaries.
+    source_values = dates.year * 10000 + dates.month * 100 + dates.day
+    frame = pd.DataFrame({"value": source_values.astype(float)}, index=dates)
+    original = frame.copy()
+    fig = plot_seasonal(
+        frame,
+        current_year=2021,
+        start_month=start_month,
+        end_month=(start_month - 2) % 12 + 1,
+        over_year=start_month != 1,
+        ytd_cum_sum=True,
+    )
+    traces = {trace.name: trace for trace in fig.data}
+    for year in (2020, 2021):
+        trace = traces[str(year)]
+        plotted_dates = pd.DatetimeIndex(trace.x)
+        assert len(plotted_dates) == 365
+        assert not ((plotted_dates.month == 2) & (plotted_dates.day == 29)).any()
+        source_years = year + (plotted_dates.month < start_month).astype(int)
+        expected = source_years * 10000 + plotted_dates.month * 100 + plotted_dates.day
+        np.testing.assert_array_equal(trace.y, expected)
+        by_day = pd.Series(trace.y, index=plotted_dates.strftime("%m-%d"))
+        assert by_day.loc["12-31"] == year * 10000 + 1231
+        assert by_day.loc["01-01"] == (year + int(start_month != 1)) * 10000 + 101
+    # Daily comparisons and their cumulative sums must use the same month/day in each source year.
+    for benchmark, delta in (("Y-1", 10000), ("5y Avg", 30000)):
+        np.testing.assert_array_equal(traces[f"Cur Yr vs {benchmark}"].y, np.full(365, delta))
+        np.testing.assert_array_equal(traces[f"Cum Cur Yr vs {benchmark}"].y, delta * np.arange(1, 366))
+    pd.testing.assert_frame_equal(frame, original)

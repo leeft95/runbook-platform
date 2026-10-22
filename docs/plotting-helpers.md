@@ -247,13 +247,19 @@ seasonality = plot_seasonal(
 )
 ```
 
-Monthly, weekly (`frequency="W"`), and business-day (`frequency="B"`) windows
-include their final month-end date, including June 30 in this example. A cutoff
+Daily, monthly, weekly (`frequency="W"`), and business-day (`frequency="B"`)
+windows include their final month-end date, including June 30 in this example
+and December 31 in the default January-December chart. A cutoff
 that starts the next cycle remains exclusive, so adjacent years do not overlap.
 Other explicit cutoffs, such as July 1 or July 15, also remain exclusive.
 `dash_from` compares
 the original observation dates: March–June 2026 is dashed on the `2025` curve,
 and later cycles are entirely dashed. Missing months keep their calendar positions.
+
+Daily overlays align observations by **month and day**, including across the
+December-January boundary of a seasonal cycle. February 29 is omitted from
+levels and comparisons so cumulative comparisons use the same 365-day calendar.
+Other dates are not shifted, and missing values are not filled.
 
 `B` uses Monday–Friday observations; `W` keeps the last observation in each calendar
 week. Both support the same contract-cycle and forecast arguments as the monthly

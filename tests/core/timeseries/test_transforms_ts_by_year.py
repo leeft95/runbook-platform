@@ -57,11 +57,12 @@ def test_ts_by_year_business_cycles_keep_the_final_observation(frequency, sample
     assert result.count().sum() == len(series)
 
 
+@pytest.mark.parametrize("frequency", ["D", "B"])
 @pytest.mark.parametrize("month", [1, 2])
-def test_ts_by_year_business_month_end_anniversaries_do_not_overlap(month) -> None:
-    dates = pd.bdate_range("2019-01-01", "2028-12-31")
+def test_ts_by_year_month_end_anniversaries_do_not_overlap(month, frequency) -> None:
+    dates = pd.date_range("2019-01-01", "2028-12-31", freq=frequency)
     series = pd.Series(np.arange(len(dates), dtype=float), index=dates)
-    result = ts_by_year(series, frequency="B", start_month=month, start_day=31)
+    result = ts_by_year(series, frequency=frequency, start_month=month, start_day=31)
 
     for year in result.columns:
         start = pd.Timestamp(year, month, 1) + pd.offsets.MonthEnd()

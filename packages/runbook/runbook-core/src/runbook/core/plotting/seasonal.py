@@ -74,12 +74,13 @@ def plot_seasonal(
 ) -> plotly.graph_objs._figure.Figure:
     """Plot seasonal years, optional comparisons, and an optional cumulative panel.
 
-    Monthly, weekly, and business-day windows include a month-end boundary unless
+    All frequencies include a month-end boundary unless
     it starts the next cycle. Other end boundaries remain exclusive. Years label
     the start of each cycle; ``dash_from`` uses the original observation dates.
     Holidays are not hidden by default on the artificial seasonal date axis.
     Daily overlays align by month/day and omit February 29 from every panel,
-    keeping leap years comparable on the same 365-day calendar.
+    keeping leap years comparable on the same 365-day calendar. December 31
+    remains in the default January-December window; other dates are not shifted.
 
     ``current_year`` defaults to the latest available year at or before today's
     calendar year, falling back to the latest available year for future-only data.

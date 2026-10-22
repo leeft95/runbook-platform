@@ -120,7 +120,7 @@ def ts_by_year(
     In this mode, rows where all columns are NaN are trimmed without shifting the remaining dates.
     Daily plotting aligns month/day across years and omits February 29 so daily
     and cumulative comparisons use the same 365-day calendar.
-    Monthly, weekly, and business-day windows include a month-end boundary, unless it
+    All frequencies include a month-end boundary, unless it
     is the next cycle's start. Other end boundaries are exclusive.
     """
     if frequency not in _FRAME_LEN_BY_FREQUENCY:
@@ -208,11 +208,7 @@ def ts_by_year(
         anchor_year = int(anchor_year_raw)
         start_ts = _timestamp_for_boundary(anchor_year, start_month, start_day, tz)
         end_ts = _timestamp_for_boundary(anchor_year + end_year_offset, end_month, end_day, tz)
-        if (
-            frequency in {"M", "W", "B"}
-            and end_ts.is_month_end
-            and end_ts != _timestamp_for_boundary(anchor_year + 1, start_month, start_day, tz)
-        ):
+        if end_ts.is_month_end and end_ts != _timestamp_for_boundary(anchor_year + 1, start_month, start_day, tz):
             end_ts += pd.offsets.MonthBegin()
         in_window = series[(series.index >= start_ts) & (series.index < end_ts)]
         if in_window.empty:
