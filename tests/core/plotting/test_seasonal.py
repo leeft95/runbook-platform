@@ -575,13 +575,37 @@ def test_seasonal_monthly_rates_use_original_calendar(month_frequency, over_year
         ("D", ["2024-01-01", "2024-01-02"], 1),
         ("B", ["2024-01-01", "2024-01-02"], 1),
         ("W", ["2024-01-07", "2024-01-14"], 7),
+        ("M", ["2024-01-01", "2024-02-01"], [31, 29]),
+        ("Q", ["2024-01-01", "2024-04-01"], [91, 91]),
     ],
 )
 def test_seasonal_rate_frequency(frequency, dates, factor) -> None:
     df = pd.DataFrame({"rate": [100, 200]}, index=pd.to_datetime(dates))
     fig = plot_seasonal(df, frequency=frequency, cumsum_rate=True, ytd=True)
     values = next(t.y for t in fig.data if t.name == "YTD cumulative change")
-    np.testing.assert_allclose(values, np.array([100, 300]) * factor)
+    np.testing.assert_allclose(values, (np.array([100, 200]) * factor).cumsum())
+
+
+@pytest.mark.parametrize("sample_frequency", ["QS", "QE"])
+@pytest.mark.parametrize("over_year", [False, True])
+@pytest.mark.parametrize("tz", [None, "Europe/London"])
+def test_seasonal_quarterly_rates_use_original_calendar(sample_frequency, over_year, tz) -> None:
+    start = "2022-10-01" if over_year else "2023-01-01"
+    dates = pd.date_range(start, periods=8, freq=sample_frequency, tz=tz)
+    df = pd.DataFrame({"rate": 100.0}, index=dates)
+    options = dict(start_month=10, end_month=9, over_year=True) if over_year else {}
+    year = 2023 if over_year else 2024
+    fig = plot_seasonal(df, frequency="Q", current_year=year, cumsum_rate=True, ytd=True, ytd_cum_sum=True, **options)
+    traces = {trace.name: trace for trace in fig.data}
+    days = [92, 91, 91, 92] if over_year else [91, 91, 92, 92]
+    np.testing.assert_allclose(traces["YTD cumulative change"].y, np.cumsum(days) * 100)
+    for benchmark in ("Y-1", "5y Avg"):
+        expected = [0, 100, 100, 100] if over_year else [100, 100, 100, 100]
+        np.testing.assert_allclose(traces[f"Cum Cur Yr vs {benchmark}"].y, expected)
+        np.testing.assert_allclose(traces[f"Cur Yr vs {benchmark}"].y, [0, 0, 0, 0])
+    np.testing.assert_allclose(traces[str(year)].y, [100, 100, 100, 100])
+    plain = plot_seasonal(df, frequency="Q", current_year=year, ytd=True, **options)
+    np.testing.assert_allclose(next(t.y for t in plain.data if t.name == "YTD cumulative change"), [100, 200, 300, 400])
 
 
 @pytest.mark.parametrize("df_ytd", [False, True])

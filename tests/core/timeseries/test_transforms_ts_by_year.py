@@ -6,6 +6,43 @@ import pytest
 from runbook.core.timeseries.transforms import ts_by_year
 
 
+@pytest.mark.parametrize("sample_frequency", ["QS", "QE"])
+@pytest.mark.parametrize("start_month", [1, 10])
+@pytest.mark.parametrize("dummy_date_index", [False, True])
+def test_ts_by_year_quarterly_keeps_all_quarters(sample_frequency, start_month, dummy_date_index) -> None:
+    dates = pd.date_range(pd.Timestamp(2023, start_month, 1), periods=8, freq=sample_frequency)
+    series = pd.Series(np.arange(8, dtype=float), index=dates)
+    result = ts_by_year(
+        series,
+        frequency="Q",
+        start_month=start_month,
+        start_day=1,
+        end_month=(start_month - 2) % 12 + 1,
+        end_day=31,
+        dummy_date_index=dummy_date_index,
+    )
+
+    assert result.columns.tolist() == [2023, 2024]
+    np.testing.assert_array_equal(result.to_numpy(), np.arange(8).reshape(2, 4).T)
+    if dummy_date_index:
+        assert result.index.month.tolist() == [((start_month - 1 + offset) % 12) + 1 for offset in (0, 3, 6, 9)]
+
+
+def test_ts_by_year_quarterly_preserves_missing_quarter_positions() -> None:
+    dates = pd.to_datetime(["2023-12-31", "2024-06-30", "2024-09-30"])
+    result = ts_by_year(
+        pd.Series([1, 3, 4], index=dates),
+        frequency="Q",
+        start_month=10,
+        start_day=1,
+        end_month=9,
+        end_day=30,
+        dummy_date_index=True,
+    )
+    assert result.index.month.tolist() == [10, 4, 7]
+    assert result[2023].tolist() == [1, 3, 4]
+
+
 @pytest.mark.parametrize(("start_month", "end_month", "end_day"), [(1, 12, 31), (7, 6, 31), (7, 6, 30), (10, 9, 30)])
 def test_ts_by_year_monthly_keeps_last_month_of_each_cycle(start_month, end_month, end_day) -> None:
     dates = pd.date_range(pd.Timestamp(2024, start_month, 1), periods=36, freq="ME")

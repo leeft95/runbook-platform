@@ -247,7 +247,7 @@ seasonality = plot_seasonal(
 )
 ```
 
-Daily, monthly, weekly (`frequency="W"`), and business-day (`frequency="B"`)
+Daily, monthly, quarterly (`frequency="Q"`), weekly (`frequency="W"`), and business-day (`frequency="B"`)
 windows include their final month-end date, including June 30 in this example
 and December 31 in the default January-December chart. A cutoff
 that starts the next cycle remains exclusive, so adjacent years do not overlap.
@@ -287,12 +287,20 @@ To show only previous-year comparisons in both subplots, use
 
 For daily-rate inputs such as kbd, set `cumsum_rate=True` (default `False`).
 This multiplies each value by the period's days before accumulation: daily and
-business-daily ×1, full-week averages ×7, monthly averages ×28/29/30/31 using
-the original observation's year and month. For example, 100 kbd in January and
+business-daily ×1, full-week averages ×7, monthly averages ×28/29/30/31, and
+quarterly averages ×90/91/92 using the original observation's calendar period.
+For example, 100 kbd in January and
 February gives 3,100 then 5,900 kb (6,000 kb in a leap year). Set
 `y2_axis_title="kb"` for these cumulative totals; labels are not inferred.
-Do not enable this for period totals or stock levels. Partial weeks/months are
+Do not enable this for period totals or stock levels. Partial periods are
 not prorated; daily overlays continue to omit February 29.
+
+For calendar-quarter averages, use `frequency="Q", cumsum_rate=True`. Q1 uses
+90 days (91 in leap years), Q2 uses 91, and Q3/Q4 use 92. Both quarter-start and
+quarter-end timestamps are accepted; dates must identify the observation quarter,
+not its publication date. At 100 kbd, cumulative Q1/Q2 totals in 2024 are
+9,100/18,200 kb. October–September seasons retain each quarter's original year
+for weighting. Fiscal quarters with different month boundaries are not supported.
 
 Ordinary seasonal and difference panels remain unchanged. With `ytd_diff=True`,
 rate differences are weighted before accumulation. With `df_ytd=True`, weighting

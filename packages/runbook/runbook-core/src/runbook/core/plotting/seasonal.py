@@ -99,8 +99,9 @@ def plot_seasonal(
     accumulating first differences; it does not enable a panel by itself.
 
     ``cumsum_rate=True`` treats inputs as rates per day: daily/business-daily
-    values use one day, full-week averages seven days, and monthly averages the
-    actual days in each observation's original month (including leap years).
+    values use one day, full-week averages seven days, and monthly/quarterly
+    averages the actual days in each observation's original calendar month/quarter
+    (including leap years). Use ``frequency="Q"`` for calendar quarters.
     Weighting precedes accumulation, or follows first differences for ``ytd_diff``.
     Ordinary seasonal and difference panels are unchanged unless ``df_ytd`` is
     enabled, in which case weighting applies to that initial accumulation only.
@@ -156,9 +157,10 @@ def plot_seasonal(
 
     rate_weights: float | pd.DataFrame = 1.0
     if cumsum_rate:
-        if frequency == "M":
-            # Map original month lengths through the same seasonal windows as the data.
-            days = pd.Series(df.index.days_in_month, index=df.index, name=column)
+        if frequency in {"M", "Q"}:
+            # Count local calendar days before mapping onto the artificial seasonal axis.
+            periods = df.index.tz_localize(None).to_period(frequency)
+            days = pd.Series(((periods + 1).start_time - periods.start_time).days, index=df.index, name=column)
             rate_weights = ts_by_year(days, **transform_kwargs).reindex_like(df_by_year)
         elif frequency == "W":
             rate_weights = 7.0

@@ -14,6 +14,7 @@ from numpy.typing import NDArray
 _FRAME_LEN_BY_FREQUENCY: dict[str, int] = {
     "D": 366,
     "M": 12,
+    "Q": 4,
     "W": 53,
     "B": 262,
 }
@@ -56,8 +57,9 @@ def _position_index(index: pd.DatetimeIndex, start_ts: pd.Timestamp, frequency: 
         day_delta: NDArray[np.int64] = np.asarray((index - start_ts) // pd.Timedelta(days=1), dtype=np.int64)
         return day_delta // 7
 
-    if frequency == "M":
-        return np.asarray((index.year - start_ts.year) * 12 + (index.month - start_ts.month), dtype=np.int64)
+    if frequency in {"M", "Q"}:
+        months = np.asarray((index.year - start_ts.year) * 12 + (index.month - start_ts.month), dtype=np.int64)
+        return months // 3 if frequency == "Q" else months
 
     if frequency == "B":
         idx_days = index.normalize().to_numpy(dtype="datetime64[D]")
@@ -78,12 +80,13 @@ def _dummy_plot_index(length: int, frequency: str, start_month: int, start_day: 
     if frequency == "W":
         return pd.date_range(start=start, periods=length, freq="7D")
 
-    if frequency == "M":
+    if frequency in {"M", "Q"}:
+        month_step = 3 if frequency == "Q" else 1
         dates = [
             _timestamp_for_boundary(
                 year + ((start_month - 1 + i) // 12), ((start_month - 1 + i) % 12) + 1, start_day, tz=None
             )
-            for i in range(length)
+            for i in range(0, length * month_step, month_step)
         ]
         return pd.DatetimeIndex(dates)
 
@@ -108,7 +111,9 @@ def ts_by_year(
     Transform a timeseries dataframe into a frame where each year is a column.
     The returned index is a shape-normalized period index (0..N-1) for the chosen frequency.
 
-    frequency: the frequency of the data, e.g. "D" for daily, "M" for monthly, etc.
+    frequency: "D" for daily, "B" for business-daily, "W" for weekly,
+    "M" for monthly, or "Q" for quarterly. Quarterly data occupies four
+    three-month slots from the season start, accepting quarter-start or quarter-end dates.
     start_day: the day of the month to start the year, e.g. 1 for January 1st, 15 for January 15th, etc. if None, it will be set to the day of the first date in the dataframe.
     start_month: the month to start the year, e.g. 1 for January, 2 for February, etc., if None, it will be set to the month of the first date in the dataframe.
     end_day: the day of the month to end the year, e.g. 31 for January 31st, 15 for January 15th, etc., if None, it will be set to the same as start_day ie (YoY)
