@@ -62,6 +62,7 @@ def plot_seasonal(
     exclude_years: tp.List[int] | None = None,
     five_year: bool = True,
     *,
+    cumsum_rate: bool = False,
     current_year: int | None = None,
     start: str | dt.datetime | None = None,
     x_axis_title: str | None = "Date",
@@ -96,6 +97,15 @@ def plot_seasonal(
     are displayed as zero; missing values remain missing.
     ``ytd_diff`` switches all cumulative lines from accumulating values to
     accumulating first differences; it does not enable a panel by itself.
+
+    ``cumsum_rate=True`` treats inputs as rates per day: daily/business-daily
+    values use one day, full-week averages seven days, and monthly averages the
+    actual days in each observation's original month (including leap years).
+    Weighting precedes accumulation, or follows first differences for ``ytd_diff``.
+    Ordinary seasonal and difference panels are unchanged unless ``df_ytd`` is
+    enabled, in which case weighting applies to that initial accumulation only.
+    Set ``y2_axis_title`` to integrated units (e.g. "kb" for "kbd" inputs);
+    axis labels are not inferred. Daily overlays still omit February 29.
 
     Each year is accumulated separately before comparison or averaging, preserving
     pandas' missing-value behavior. ``df_ytd`` cumulatively transforms every year
@@ -144,8 +154,18 @@ def plot_seasonal(
     if current_year not in df_by_year.columns:
         raise KeyError(f"current_year {current_year!r} not found in seasonal data.")
 
+    rate_weights: float | pd.DataFrame = 1.0
+    if cumsum_rate:
+        if frequency == "M":
+            # Map original month lengths through the same seasonal windows as the data.
+            days = pd.Series(df.index.days_in_month, index=df.index, name=column)
+            rate_weights = ts_by_year(days, **transform_kwargs).reindex_like(df_by_year)
+        elif frequency == "W":
+            rate_weights = 7.0
+
     if df_ytd:
-        df_by_year = df_by_year.cumsum(axis=0)
+        df_by_year = (df_by_year * rate_weights).cumsum(axis=0)
+        rate_weights = 1.0
 
     dts = df_by_year.index
     if not isinstance(dts, pd.DatetimeIndex):
@@ -230,7 +250,8 @@ def plot_seasonal(
 
     if ytd or ytd_cum_sum:
         data_ytd = pd.DataFrame(index=dts)
-        cumulative = (df_by_year.diff() if ytd_diff else df_by_year).cumsum()
+        cumulative_values = df_by_year.diff() if ytd_diff else df_by_year
+        cumulative = (cumulative_values * rate_weights).cumsum()
         current_cumulative = cumulative[current_year]
 
         if ytd:

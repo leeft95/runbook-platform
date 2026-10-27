@@ -534,3 +534,65 @@ def test_daily_seasonal_preserves_year_end_dates_and_comparison_averages(start_m
         np.testing.assert_array_equal(traces[f"Cur Yr vs {benchmark}"].y, np.full(365, delta))
         np.testing.assert_array_equal(traces[f"Cum Cur Yr vs {benchmark}"].y, delta * np.arange(1, 366))
     pd.testing.assert_frame_equal(frame, original)
+
+
+@pytest.mark.parametrize("month_frequency", ["MS", "ME"])
+@pytest.mark.parametrize("over_year", [False, True])
+def test_seasonal_monthly_rates_use_original_calendar(month_frequency, over_year) -> None:
+    dates = pd.date_range("2022-10-01", "2024-12-31", freq=month_frequency)
+    df = pd.DataFrame({"rate": 100.0}, index=dates)
+    options = dict(start_month=10, end_month=9, over_year=True) if over_year else {}
+    year = 2023 if over_year else 2024
+    fig = plot_seasonal(
+        df,
+        column="rate",
+        frequency="M",
+        current_year=year,
+        cumsum_rate=True,
+        ytd=True,
+        ytd_cum_sum=True,
+        y_axis_title="kbd",
+        y2_axis_title="kb",
+        **options,
+    )
+    traces = {trace.name: trace for trace in fig.data}
+    cumulative = traces["YTD cumulative change"]
+    feb = next(i for i, date in enumerate(pd.DatetimeIndex(cumulative.x)) if date.month == 2)
+    expected = 15200 if over_year else 6000
+    assert cumulative.y[feb] == expected
+    assert traces["Cum Cur Yr vs Y-1"].y[feb] == 100
+    assert traces["Cum Cur Yr vs 5y Avg"].y[feb] == 100
+    assert traces["Cur Yr vs Y-1"].y[feb] == 0
+    assert traces[str(year)].y[feb] == 100
+    assert fig.layout.yaxis3.title.text == "kb"
+    plain = plot_seasonal(df, frequency="M", current_year=year, ytd=True, **options)
+    assert next(t for t in plain.data if t.name == "YTD cumulative change").y[feb] == (feb + 1) * 100
+
+
+@pytest.mark.parametrize(
+    "frequency,dates,factor",
+    [
+        ("D", ["2024-01-01", "2024-01-02"], 1),
+        ("B", ["2024-01-01", "2024-01-02"], 1),
+        ("W", ["2024-01-07", "2024-01-14"], 7),
+    ],
+)
+def test_seasonal_rate_frequency(frequency, dates, factor) -> None:
+    df = pd.DataFrame({"rate": [100, 200]}, index=pd.to_datetime(dates))
+    fig = plot_seasonal(df, frequency=frequency, cumsum_rate=True, ytd=True)
+    values = next(t.y for t in fig.data if t.name == "YTD cumulative change")
+    np.testing.assert_allclose(values, np.array([100, 300]) * factor)
+
+
+@pytest.mark.parametrize("df_ytd", [False, True])
+@pytest.mark.parametrize("ytd_diff", [False, True])
+def test_seasonal_rate_missing_values_and_transform_flags(df_ytd, ytd_diff) -> None:
+    df = pd.DataFrame({"rate": [100, 200, np.nan, 400]}, index=pd.date_range("2024-01-01", periods=4, freq="MS"))
+    fig = plot_seasonal(df, frequency="M", cumsum_rate=True, ytd=True, df_ytd=df_ytd, ytd_diff=ytd_diff)
+    # The empty March slot is trimmed by the existing seasonal transform.
+    if df_ytd:
+        expected = [np.nan, 5800, 17800] if ytd_diff else [3100, 12000, 32900]
+    else:
+        expected = [np.nan, 2900, 8900] if ytd_diff else [3100, 8900, 20900]
+    values = next(t.y for t in fig.data if t.name == "YTD cumulative change")
+    np.testing.assert_allclose(values, expected, equal_nan=True)

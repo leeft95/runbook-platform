@@ -285,6 +285,21 @@ Use the exact argument `ytd_cum_sum`; `ytd_cum` is not a supported alias.
 To show only previous-year comparisons in both subplots, use
 `plot_seasonal(df, ytd_cum_sum=True, five_year=False)`.
 
+For daily-rate inputs such as kbd, set `cumsum_rate=True` (default `False`).
+This multiplies each value by the period's days before accumulation: daily and
+business-daily ×1, full-week averages ×7, monthly averages ×28/29/30/31 using
+the original observation's year and month. For example, 100 kbd in January and
+February gives 3,100 then 5,900 kb (6,000 kb in a leap year). Set
+`y2_axis_title="kb"` for these cumulative totals; labels are not inferred.
+Do not enable this for period totals or stock levels. Partial weeks/months are
+not prorated; daily overlays continue to omit February 29.
+
+Ordinary seasonal and difference panels remain unchanged. With `ytd_diff=True`,
+rate differences are weighted before accumulation. With `df_ytd=True`, weighting
+applies to its initial accumulation instead; subsequent cumulative panels retain
+the existing additional accumulation without applying day weights twice. Set
+all applicable axis titles to reflect that transformation.
+
 For cumulative comparisons, each year is accumulated separately, then the
 historical cumulative series are averaged or subtracted. Missing values retain
 pandas' default behavior; accumulating the differences between years can give
