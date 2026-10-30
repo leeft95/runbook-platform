@@ -15,6 +15,7 @@ from runbook.core.pdl.models import (
     PDLColumn,
     PDLColumnRole,
     PDLLinkBlock,
+    PDLImageBlock,
     PDLManifest,
     PDLPlotRefBlock,
     PDLTableBlock,
@@ -182,6 +183,16 @@ def _build_components(
                     if block.format == "markdown"
                     else html.Pre(block.text, id=ids.block(block.name))
                 )
+        elif isinstance(block, PDLImageBlock):
+            from runbook.core.pdl.images import image_data_uri
+
+            src = image_data_uri(_read_bytes(ctx, block.ref)) if block.ref is not None else block.src
+            body = html.Img(
+                id=ids.block(block.name),
+                src=src,
+                alt=block.alt,
+                style={"display": "block", "maxWidth": "100%", "height": "auto"},
+            )
         elif isinstance(block, PDLPlotRefBlock):
             body = _plot_component(ctx, block.ref, component_id=ids.block(block.name))
         elif isinstance(block, PDLLinkBlock):

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
+from runbook.core.pdl.images import image_mime_type
 from runbook.core.table import (
     StyleInput,
     TableArtifactRef,
@@ -30,6 +31,7 @@ class RuntimeArtifactPayloads:
     plot_jsons: dict[str, Any] = field(default_factory=dict)
     table_styles: dict[str, Any] = field(default_factory=dict)
     table_htmls: dict[str, str] = field(default_factory=dict)
+    image_bytes: dict[str, bytes] = field(default_factory=dict)
 
 
 class ArtifactRegistry:
@@ -44,6 +46,20 @@ class ArtifactRegistry:
         self._plot_jsons: dict[str, Any] = {}
         self._table_styles: dict[str, Any] = {}
         self._table_htmls: dict[str, str] = {}
+        self._image_bytes: dict[str, bytes] = {}
+
+    def image(self, data: bytes, *, name: str) -> str:
+        """Register a raster image for immutable publication beneath images/."""
+        artifact_name = validate_artifact_name(name)
+        if not isinstance(data, bytes):
+            raise TypeError("ctx.artifact.image expects image bytes")
+        extension = image_mime_type(data).split("/", 1)[1]
+        ref = f"images/{artifact_name}.{extension}"
+        existing = self._image_bytes.get(ref)
+        if existing is not None and existing != data:
+            raise ValueError(f"Duplicate image artifact name with different payload: {name}")
+        self._image_bytes[ref] = data
+        return ref
 
     def plot(self, figure: object, *, name: str, fmt: str = "plotly_json") -> str:
         """Handle plot."""
@@ -127,4 +143,5 @@ class ArtifactRegistry:
             plot_jsons=dict(self._plot_jsons),
             table_styles=dict(self._table_styles),
             table_htmls=dict(self._table_htmls),
+            image_bytes=dict(self._image_bytes),
         )

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
+from runbook.core.pdl.images import image_data_uri, validate_image_src
 from runbook.core.pdl.models import (
     PDLAggregation,
     PDLArtifacts,
@@ -14,6 +16,7 @@ from runbook.core.pdl.models import (
     PDLDateFormat,
     PDLDateTimeFormat,
     PDLLinkBlock,
+    PDLImageBlock,
     PDLLinkDestination,
     PDLManifest,
     PDLNumberFormat,
@@ -44,6 +47,9 @@ def _build_artifacts(page: PDLPage) -> PDLArtifacts | None:
     for block in page.blocks:
         if isinstance(block, PDLPlotRefBlock):
             plots.append(block.ref)
+            continue
+        if isinstance(block, PDLImageBlock) and block.ref is not None:
+            files.append(block.ref)
             continue
         if isinstance(block, PDLTableBlock):
             tables.append(block.data_ref)
@@ -95,7 +101,7 @@ def manifest(
             serialized_extensions[namespace] = value
 
     requires_v02 = any(
-        isinstance(block, PDLLinkBlock)
+        isinstance(block, (PDLLinkBlock, PDLImageBlock))
         or (isinstance(block, PDLTableBlock) and (bool(block.links) or block.width != "fill"))
         for block in page.blocks
     )
@@ -154,6 +160,47 @@ def text(
         row_span=row_span,
         col_span=col_span,
         format=format,
+        extensions=extensions,
+    )
+
+
+def image_source(src: str | Path) -> str:
+    """Embed local files at authoring time; leave hosted URLs unfetched."""
+    if isinstance(src, Path):
+        return image_data_uri(src.read_bytes())
+    if not isinstance(src, str) or not src:
+        raise ValueError("image src must be a nonempty path or URL")
+    if src.startswith("data:") or ":" in src or src.startswith("//"):
+        return validate_image_src(src)
+    return image_data_uri(Path(src).read_bytes())
+
+
+def image(
+    *,
+    name: str,
+    src: str | Path | None = None,
+    ref: str | None = None,
+    alt: str,
+    row: int,
+    col: int,
+    title: str | None = None,
+    row_span: int = 1,
+    col_span: int = 1,
+    extensions: dict[str, dict[str, Any]] | None = None,
+) -> PDLImageBlock:
+    """Create an image from src (local/hosted/embedded) or a stored artifact ref."""
+    if (src is None) == (ref is None):
+        raise ValueError("image requires exactly one of src or ref")
+    return PDLImageBlock(
+        name=name,
+        src=image_source(src) if src is not None else None,
+        ref=ref,
+        alt=alt,
+        row=row,
+        col=col,
+        title=title,
+        row_span=row_span,
+        col_span=col_span,
         extensions=extensions,
     )
 

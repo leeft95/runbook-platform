@@ -8,7 +8,7 @@ from typing import Any, Literal, TypeAlias
 from runbook.core.pdl.models import PDLColumn, PDLLinkDestination, PDLTableWidth
 from runbook.core.table.models import TableArtifactRef
 
-BlockKind = Literal["table", "plot", "text", "link"]
+BlockKind = Literal["table", "plot", "text", "link", "image"]
 
 
 @dataclass
@@ -25,6 +25,8 @@ class LayoutBlock:
     table_width: PDLTableWidth = "content"
     extensions: dict[str, dict[str, Any]] | None = None
     label: str | None = None
+    alt: str | None = None
+    image_ref: str | None = None
     generated_name: bool = field(default=False, repr=False)
 
 

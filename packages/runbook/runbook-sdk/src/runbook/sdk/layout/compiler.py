@@ -279,6 +279,19 @@ def _lower_block(
             col_span=col_span,
             extensions=block.extensions,
         )
+    if block.kind == "image":
+        return ui.image(
+            name=name,
+            src=block.value if block.image_ref is None else None,
+            ref=block.image_ref,
+            alt=block.alt,
+            row=row,
+            col=col,
+            title=block.title,
+            row_span=row_span,
+            col_span=col_span,
+            extensions=block.extensions,
+        )
     if block.kind == "link":
         if block.label is None or not isinstance(block.value, PDLLinkDestination):
             raise TypeError("link layout blocks require a label and static destination")

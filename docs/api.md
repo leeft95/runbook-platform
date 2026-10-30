@@ -359,7 +359,7 @@ instead of calling `Session.nextEvent()` on an asynchronous session.
    :no-index:
 
 .. automodule:: runbook.sdk.ui
-   :members: flex_grid, grid, manifest, plot, table, text
+   :members: flex_grid, grid, image, manifest, plot, table, text
 
 .. automodule:: runbook.sdk.extensions.dash.renderer
    :members: render_dash_page

@@ -11,6 +11,7 @@ import pandas as pd
 import plotly.io as pio
 from plotly.utils import PlotlyJSONEncoder
 from runbook.core import BlobStore
+from runbook.core.pdl.images import image_data_uri
 from runbook.core.pdl.models import PDLLinkBlock, PDLManifest, PDLTableBlock
 from runbook.core.table import TableLinkDestination, TableStylePlan, link_anchor, render_table_html, resolve_table_style
 from runbook.core.table.models import TableLinkKind
@@ -83,6 +84,12 @@ def render_html(store: BlobStore, manifest: PDLManifest, prefix: str) -> str:
             body = "" if block.text == "" and block.title else f"<pre>{escape(block.text)}</pre>"
         elif block.type == "link":
             body = link_anchor(escape(block.label), block.destination)
+        elif block.type == "image":
+            src = image_data_uri(store.get(_key(prefix, block.ref))) if block.ref is not None else block.src
+            body = (
+                f'<img src="{escape(src, quote=True)}" alt="{escape(block.alt, quote=True)}" '
+                'style="display:block;max-width:100%;height:auto;">'
+            )
         elif block.type == "table":
             if block.html_ref:
                 body = store.get(_key(prefix, block.html_ref)).decode("utf-8")

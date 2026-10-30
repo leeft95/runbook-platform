@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Iterable
 
 from runbook.core.pdl.models import PDLColumn, PDLLinkDestination, PDLLinkKind, PDLTableWidth
+from runbook.core.pdl.images import validate_image_ref
 from runbook.core.table.models import TableArtifactRef
 
 from .models import (
@@ -173,6 +175,39 @@ def text(
     return LayoutBlock(
         kind="text",
         value=resolved,
+        name=_name(name),
+        title=title,
+        col_span=_span(col_span, kind="col_span"),
+        row_span=_span(row_span, kind="row_span"),
+        extensions=dict(extensions) if extensions is not None else None,
+    )
+
+
+def image(
+    src: str | Path | None = None,
+    *,
+    alt: str,
+    ref: str | None = None,
+    name: str | None = None,
+    title: str | None = None,
+    col_span: int = 1,
+    row_span: int = 1,
+    extensions: dict[str, dict[str, Any]] | None = None,
+) -> LayoutBlock:
+    """Create an image block, embedding local raster files for portable reports."""
+    from runbook.sdk.ui import image_source
+
+    if not isinstance(alt, str):
+        raise TypeError("image alt must be a string; use an empty string for decorative images")
+    if (src is None) == (ref is None):
+        raise ValueError("image requires exactly one of src or ref")
+    if ref is not None:
+        validate_image_ref(ref)
+    return LayoutBlock(
+        kind="image",
+        value=image_source(src) if src is not None else ref,
+        image_ref=ref,
+        alt=alt,
         name=_name(name),
         title=title,
         col_span=_span(col_span, kind="col_span"),
@@ -565,6 +600,10 @@ class Stack:
         """Create and append a text block."""
         return self.add(text(value, **kwargs))
 
+    def image(self, src: str | Path | None = None, **kwargs: Any) -> LayoutBlock:
+        """Create and append an image block."""
+        return self.add(image(src, **kwargs))
+
     def link(self, label: str, **kwargs: Any) -> LayoutBlock:
         """Create and append a standalone link block."""
         return self.add(Link(label, **kwargs))
@@ -692,6 +731,10 @@ class Row:
         """Create and append a text block."""
         return self.add(text(value, **kwargs))  # type: ignore[return-value]
 
+    def image(self, src: str | Path | None = None, **kwargs: Any) -> LayoutBlock:
+        """Create and append an image block."""
+        return self.add(image(src, **kwargs))
+
     def link(self, label: str, **kwargs: Any) -> LayoutBlock:
         """Create and append a standalone link block."""
         return self.add(Link(label, **kwargs))  # type: ignore[return-value]
@@ -789,6 +832,10 @@ class Grid:
         """Create and append a text block."""
         return self.add(text(value, **kwargs))
 
+    def image(self, src: str | Path | None = None, **kwargs: Any) -> LayoutBlock:
+        """Create and append an image block."""
+        return self.add(image(src, **kwargs))
+
     def link(self, label: str, **kwargs: Any) -> LayoutBlock:
         """Create and append a standalone link block."""
         return self.add(Link(label, **kwargs))
@@ -847,6 +894,7 @@ __all__ = [
     "Section",
     "Stack",
     "grid",
+    "image",
     "plot",
     "report",
     "row",

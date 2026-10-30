@@ -169,6 +169,10 @@
                         }
                       },
                       {
+                        "required": ["type"],
+                        "properties": { "type": { "const": "image" } }
+                      },
+                      {
                         "required": ["width"],
                         "properties": {
                           "width": {
@@ -405,6 +409,33 @@
         }
       ]
     },
+    "imageBlock": {
+      "allOf": [
+        { "$ref": "#/$defs/blockBase" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "alt"],
+          "oneOf": [
+            { "required": ["src"], "properties": { "src": { "type": "string" }, "ref": { "type": "null" } } },
+            { "required": ["ref"], "properties": { "ref": { "type": "string" }, "src": { "type": "null" } } }
+          ],
+          "properties": {
+            "name": { "$ref": "#/$defs/blockBase/properties/name" },
+            "title": { "$ref": "#/$defs/blockBase/properties/title" },
+            "row": { "$ref": "#/$defs/blockBase/properties/row" },
+            "col": { "$ref": "#/$defs/blockBase/properties/col" },
+            "row_span": { "$ref": "#/$defs/blockBase/properties/row_span" },
+            "col_span": { "$ref": "#/$defs/blockBase/properties/col_span" },
+            "extensions": { "$ref": "#/$defs/blockBase/properties/extensions" },
+            "type": { "const": "image" },
+            "src": { "type": ["string", "null"], "pattern": "^(https?://[^/\\s]+|data:image/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$)" },
+            "ref": { "type": ["string", "null"], "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)(?!.*[\\s\\\\:?#])(?:[^/]+/)*images/[^/]+(?:/[^/]+)*$" },
+            "alt": { "type": "string" }
+          }
+        }
+      ]
+    },
     "linkBlock": {
       "allOf": [
         { "$ref": "#/$defs/blockBase" },
@@ -529,6 +560,7 @@
         { "$ref": "#/$defs/tableBlock" },
         { "$ref": "#/$defs/plotRefBlock" },
         { "$ref": "#/$defs/textBlock" },
+        { "$ref": "#/$defs/imageBlock" },
         { "$ref": "#/$defs/linkBlock" }
       ]
     }

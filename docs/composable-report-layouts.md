@@ -3,7 +3,7 @@
 For report authors
 
 `Report` is the whole page, `Section` is a named part of the page, and `Grid`,
-`Row`, and `Stack` compose finished text, table, plot, and link artifacts:
+`Row`, and `Stack` compose text, tables, plots, images, and links:
 
 ```text
 Python artifacts -> Report / Section / Grid / Row / Stack -> PDL -> HTML or Dash
@@ -28,6 +28,81 @@ def build(ctx):
                 grid.table(table_ref, title=f"{region} balance")
                 grid.plot(plot_ref, title=f"{region} history")
     return layout
+```
+
+## Images
+
+Use `image(src, alt=...)` or the `.image(...)` helper on a Grid, Row, or Stack:
+
+```python
+from pathlib import Path
+from runbook.sdk.layout import Report, image
+
+layout = Report("Market overview", children=[
+    image(Path(__file__).parent / "assets" / "chart.png",
+          alt="Oil inventories by month", title="Inventories"),
+    image("https://example.com/logo.png", alt="Company logo"),
+])
+```
+
+Local PNG, JPEG, GIF, and WebP files are read when the block is created and
+embedded as data URLs. The persisted report and exported HTML do not need the
+original file or an image-serving endpoint. String paths work too; relative
+paths resolve against the authoring process's working directory. Use a `Path`
+relative to `__file__` for assets shipped with a report. Base64 raster data URLs
+are also accepted. Embedded SVG is not supported.
+
+Hosted HTTP(S) URLs are retained and loaded by the viewer's browser; report
+generation does not download them. The viewer must be able to reach the URL.
+Images preserve their aspect ratio and shrink to fit their layout cell in both
+HTML and Dash. `alt` is required; use `alt=""` for a purely decorative image.
+The usual `name`, `title`, `row_span`, and `col_span` options apply.
+
+Images compile to `pdl-core/0.2` image blocks with `src` or `ref`, and `alt`; lower-level
+authors can use `runbook.sdk.ui.image(name=..., src=..., alt=..., row=..., col=...)`.
+They are static report content, not Dash interaction outputs. Inline data-image
+support varies between email clients; this does not add CID email attachments.
+
+### Stored images (file or S3)
+
+Register image bytes alongside your table and plot artifacts:
+
+```python
+image_ref = ctx.artifact.image(chart_png_bytes, name="inventory-chart")
+grid.image(ref=image_ref, alt="Oil inventories by month")
+```
+
+This returns `images/inventory-chart.png` (the extension is detected from the
+bytes) and publishes the bytes immutably under the report artifact prefix.
+Image references are listed in the manifest's `artifacts.files`. The same code
+uses the configured file or S3 BlobStore, just like tables and plots.
+
+For an image already in that report's artifact store:
+
+```python
+grid.image(ref="images/inventory-chart.png", alt="Oil inventories by month")
+```
+
+`ref` is a BlobStore key relative to the report prefix, not a filesystem path
+or an `s3://` URL. An already-prefixed key for the same report also works.
+For a store configured as `s3://bucket/base`, a report with prefix
+`reports/example/revision` reads
+`s3://bucket/base/reports/example/revision/images/inventory-chart.png`.
+Use `src` for local files or hosted URLs, and `ref` for stored artifacts; supply
+exactly one. Renderers fetch stored bytes using the platform's storage access
+and embed them in the rendered image. S3 objects need not be public, and the
+exported HTML remains portable. Invalid image bytes or missing stored images
+fail rendering rather than silently publishing a broken image.
+
+If the source image lives elsewhere in an existing data store, load its bytes
+through that BlobStore and register a report-local immutable copy:
+
+```python
+from runbook.core import open_blob_store
+
+source_store = open_blob_store("s3://my-data-bucket")
+ref = ctx.artifact.image(source_store.get("images/inventory-chart.png"), name="inventory-chart")
+grid.image(ref=ref, alt="Oil inventories by month")
 ```
 
 You normally do not calculate row or column coordinates. `Grid` places peer

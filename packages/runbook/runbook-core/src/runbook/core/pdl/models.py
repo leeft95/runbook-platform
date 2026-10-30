@@ -23,6 +23,8 @@ from runbook.core.table.models import (
 )
 from typing_extensions import Annotated
 
+from .images import validate_image_ref, validate_image_src
+
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 PDLLinkKind: TypeAlias = TableLinkKind
 PDLLinkDestination: TypeAlias = TableLinkDestination
@@ -187,6 +189,25 @@ class PDLTextBlock(PDLBlockBase):
     format: PDLTextFormat | None = None
 
 
+class PDLImageBlock(PDLBlockBase):
+    """An embedded or hosted image; alt may be empty for decorative images."""
+
+    type: Literal["image"] = "image"
+    src: NonEmptyStr | None = None
+    ref: NonEmptyStr | None = None
+    alt: str
+
+    @model_validator(mode="after")
+    def validate_source(self) -> "PDLImageBlock":
+        if (self.src is None) == (self.ref is None):
+            raise ValueError("Image blocks require exactly one of src or ref")
+        if self.src is not None:
+            self.src = validate_image_src(self.src)
+        if self.ref is not None:
+            validate_image_ref(self.ref)
+        return self
+
+
 class PDLLinkBlock(PDLBlockBase):
     type: Literal["link"] = "link"
     label: NonEmptyStr
@@ -202,7 +223,7 @@ class PDLLinkBlock(PDLBlockBase):
         return self
 
 
-PDLBlock = Union[PDLTableBlock, PDLPlotRefBlock, PDLTextBlock, PDLLinkBlock]
+PDLBlock = Union[PDLTableBlock, PDLPlotRefBlock, PDLTextBlock, PDLLinkBlock, PDLImageBlock]
 
 
 class PDLPage(BaseModel):
@@ -295,13 +316,15 @@ class PDLManifest(BaseModel):
     @model_validator(mode="after")
     def validate_schema_version_features(self) -> "PDLManifest":
         requires_v02 = any(
-            isinstance(block, PDLLinkBlock)
+            isinstance(block, (PDLLinkBlock, PDLImageBlock))
             or (isinstance(block, PDLTableBlock) and (bool(block.links) or block.width != "fill"))
             for block in self.page.blocks
         )
 
         if requires_v02 and self.schema_version == "pdl-core/0.1":
-            raise ValueError("pdl-core/0.1 does not support linked or explicitly sized table blocks; use pdl-core/0.2")
+            raise ValueError(
+                "pdl-core/0.1 does not support images, linked or explicitly sized table blocks; use pdl-core/0.2"
+            )
 
         return self
 

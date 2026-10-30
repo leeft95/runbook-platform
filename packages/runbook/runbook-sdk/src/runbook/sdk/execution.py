@@ -227,6 +227,8 @@ def execute_report(
         }
     )
     payloads = ctx.artifact.payloads()
+    for ref, payload in sorted(payloads.image_bytes.items()):
+        store.put_immutable(f"{prefix}/{ref}", payload)
     for ref, payload in sorted(payloads.plot_jsons.items()):
         store.put_immutable(
             f"{prefix}/{ref}",
