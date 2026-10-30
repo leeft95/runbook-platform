@@ -38,6 +38,30 @@ def _queue_market_bar_events(handler, event):
         handler.data_queue.put(message_to_dict(message))
 
 
+def _forward_stream_failures(handler):
+    """Wake queue consumers when blp would otherwise only log a failure."""
+
+    def wrap(original):
+        def handle(event):
+            for message in event:
+                kind = str(message.messageType())
+                error = None
+                if kind in {"SessionTerminated", "SessionConnectionDown", "SessionStartupFailure"}:
+                    error = ConnectionError(f"Bloomberg session unavailable: {message}")
+                elif kind in {"SubscriptionFailure", "SubscriptionTerminated"} or (
+                    kind == "SubscriptionStarted" and message.toPy().get("exceptions")
+                ):
+                    error = RuntimeError(f"Bloomberg subscriptions rejected: {message}")
+                if error is not None:
+                    handler.data_queue.put(error)
+            original(event)
+
+        return handle
+
+    handler.session_status_event = wrap(handler.session_status_event)
+    handler.subscription_status_event = wrap(handler.subscription_status_event)
+
+
 @contextmanager
 def bstream(host: str = "localhost", port: int = 8194, *, service: str = "//blp/mktdata"):
     """Open a dedicated live market-data session, closed on context exit.
@@ -90,6 +114,7 @@ class BloombergSubscription:
     def __init__(self, stream, tickers_by_topic=None):
         self._stream = stream
         self._closed = False
+        self._failure = None
         self._tickers_by_topic = tickers_by_topic or {}
 
     def poll(self, max_events: int = 1000) -> list[dict]:
@@ -100,16 +125,43 @@ class BloombergSubscription:
         Call again on the next service cycle; do not poll concurrently.
         An empty batch is not a connection-health indication.
         """
+        return self._collect(max_events, timeout=0)
+
+    def receive(self, *, timeout: float = 1.0, max_events: int = 1000) -> list[dict]:
+        """Wait for the first update, then drain queued updates without waiting.
+
+        Timeout is one overall idle-wait limit in seconds, not a delivery delay.
+        Zero is nonblocking. Returns [] on timeout, not a health indication.
+        Failures propagate. Like poll(), this is a single-consumer API.
+        """
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not np.isfinite(timeout)
+            or timeout < 0
+        ):
+            raise ValueError("timeout must be a nonnegative finite number of seconds")
+        return self._collect(max_events, timeout=timeout)
+
+    def _collect(self, max_events, *, timeout):
         if self._closed:
             raise RuntimeError("Bloomberg subscription is closed")
         if isinstance(max_events, bool) or not isinstance(max_events, int) or max_events < 1:
             raise ValueError("max_events must be a positive integer")
+        if self._failure is not None:
+            raise self._failure
         updates = []
         # queue.Empty closes blp's generator; each poll needs a fresh one.
-        events = self._stream.events(timeout=0)
+        events = self._stream.events(timeout=timeout)
         try:
             for _ in range(max_events):
                 update = next(events)
+                if isinstance(update, Exception):
+                    self._failure = update
+                    raise update
+                if not updates and timeout > 0:
+                    events.close()
+                    events = self._stream.events(timeout=0)
                 if self._tickers_by_topic:
                     update = dict(update)
                     update["correlationIds"] = [
@@ -174,6 +226,15 @@ class _SessionStream:
             self._receive(event)
 
     def events(self, timeout=0):
+        deadline = monotonic() + timeout if timeout > 0 else 0
+        while timeout > 0 and not self._pending:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return
+            event = self.session.nextEvent(max(1, int(remaining * 1000)))
+            if event.eventType() == self._blpapi.Event.TIMEOUT:
+                return
+            self._receive(event)
         # Bound status-event processing too, so a busy session cannot monopolize a poll.
         for _ in range(1000):
             while self._pending:
@@ -216,10 +277,11 @@ def bsubscribe(
     session: tp.Any = None,
     bar_size: int | None = None,
 ) -> tp.Iterator[BloombergSubscription]:
-    """Subscribe once to tickers and yield a feed for periodic service polling.
+    """Subscribe once to tickers and yield a feed for polling or blocking receives.
 
     Keep the context open for the service lifetime and call ``feed.poll()``
-    each cycle. Entry waits up to ``timeout`` seconds per subscription status;
+    each cycle, or use ``feed.receive(timeout=1.0)`` to wake on incoming data.
+    Entry waits up to ``timeout`` seconds per subscription status;
     rejected securities or fields raise RuntimeError, missing acknowledgements
     raise TimeoutError. Exit closes the owned bstream session and subscriptions.
     Polling itself never waits for new data. See ``bstream`` for the raw message
@@ -281,6 +343,7 @@ def bsubscribe(
         bstream(host=host, port=port, service=service) if bar_size is not None else bstream(host=host, port=port)
     )
     with connection as stream:
+        _forward_stream_failures(stream.event_handler)
         try:
             status = stream.subscribe(subscriptions, timeout=timeout)
         except Empty as exc:

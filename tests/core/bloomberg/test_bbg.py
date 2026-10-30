@@ -724,3 +724,122 @@ def test_bsrch_validates_search_before_loading_bloomberg(monkeypatch, dataset, b
     with pytest.raises(ValueError, match="nonempty"):
         bbg.bsrch(dataset, bikey)
     loader.assert_not_called()
+
+
+def test_receive_owned_waits_once_and_preserves_remainder(monkeypatch):
+    stream, queue, _, _ = _polling_stream(monkeypatch, {"A": True})
+    with bbg.bsubscribe("A", "BID") as feed:
+        queue.put({"correlationIds": ["A"], "element": {"BID": 10}})
+        queue.put({"correlationIds": ["A"], "element": {"BID": 11}})
+        assert feed.receive(max_events=1)[0]["element"] == {"BID": 10}
+        assert feed.receive()[0]["element"] == {"BID": 11}
+        assert stream.events.call_args_list == [call(timeout=1.0), call(timeout=0), call(timeout=1.0), call(timeout=0)]
+        assert feed.receive(timeout=0.001) == []
+    with pytest.raises(RuntimeError, match="closed"):
+        feed.receive()
+
+
+def test_receive_owned_wakes_on_delayed_data(monkeypatch):
+    from threading import Event, Thread
+
+    stream, queue, _, _ = _polling_stream(monkeypatch, {"A": True})
+    waiting = Event()
+    original = stream.events.side_effect
+
+    def events(*, timeout):
+        waiting.set()
+        yield from original(timeout=timeout)
+
+    stream.events.side_effect = events
+    update = {"correlationIds": ["A"], "element": {"BID": 12}}
+    producer = Thread(target=lambda: (waiting.wait(2), queue.put(update)))
+    with bbg.bsubscribe("A", "BID") as feed:
+        producer.start()
+        try:
+            assert feed.receive(timeout=2) == [update]
+        finally:
+            producer.join(3)
+
+
+@pytest.mark.parametrize("timeout", [-1, True, None, "1", float("nan"), float("inf")])
+def test_receive_invalid_timeout(timeout):
+    with pytest.raises(ValueError, match="timeout"):
+        bbg.BloombergSubscription(Mock()).receive(timeout=timeout)
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5])
+def test_receive_invalid_limit(limit):
+    with pytest.raises(ValueError, match="max_events"):
+        bbg.BloombergSubscription(Mock()).receive(max_events=limit)
+
+
+def test_receive_borrowed_deadline_status_and_batch(monkeypatch):
+    api, session, _, event = _native_session(monkeypatch)
+    stream = bbg._SessionStream(session, {"A": {"fields": ["BID"]}})
+    feed = bbg.BloombergSubscription(stream)
+    monkeypatch.setattr(bbg, "monotonic", Mock(side_effect=[10, 10.1, 10.4, 11]))
+    combined = event(api.Event.SUBSCRIPTION_DATA)
+    combined.__iter__.side_effect = lambda: iter(
+        [
+            *event(api.Event.SUBSCRIPTION_DATA, "MarketDataEvents", {"BID": 10}),
+            *event(api.Event.SUBSCRIPTION_DATA, "MarketDataEvents", {"BID": 11}),
+        ]
+    )
+    session.nextEvent.side_effect = [event(api.Event.SUBSCRIPTION_STATUS, "SubscriptionStarted"), combined]
+    session.tryNextEvent.return_value = None
+    assert feed.receive(timeout=1, max_events=1)[0]["element"] == {"BID": 10}
+    waits = [c.args[0] for c in session.nextEvent.call_args_list]
+    assert 0 < waits[1] < waits[0] <= 1000
+    assert feed.receive(timeout=0)[0]["element"] == {"BID": 11}
+    assert session.nextEvent.call_count == 2
+
+
+@pytest.mark.parametrize(
+    "failure", ["SubscriptionFailure", "SubscriptionTerminated", "SessionConnectionDown", "SessionTerminated"]
+)
+def test_receive_borrowed_failure(monkeypatch, failure):
+    api, session, _, event = _native_session(monkeypatch)
+    stream = bbg._SessionStream(session, {"A": {"fields": ["BID"]}})
+    session.nextEvent.return_value = event(api.Event.SUBSCRIPTION_STATUS, failure)
+    with pytest.raises((RuntimeError, ConnectionError)):
+        bbg.BloombergSubscription(stream).receive()
+
+
+def test_receive_borrowed_timeout(monkeypatch):
+    api, session, _, event = _native_session(monkeypatch)
+    stream = bbg._SessionStream(session, {"A": {"fields": ["BID"]}})
+    session.nextEvent.return_value = event(api.Event.TIMEOUT)
+    assert bbg.BloombergSubscription(stream).receive(timeout=0.01) == []
+    session.nextEvent.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "failure", ["SubscriptionFailure", "SubscriptionTerminated", "SessionConnectionDown", "SessionTerminated"]
+)
+def test_receive_owned_status_failure_wakes_consumer(failure):
+    handler = Mock()
+    handler.data_queue = Queue()
+    bbg._forward_stream_failures(handler)
+    message = Mock()
+    message.messageType.return_value = failure
+    callback = handler.session_status_event if failure.startswith("Session") else handler.subscription_status_event
+    callback([message])
+
+    def events(timeout):
+        yield handler.data_queue.get(timeout=timeout)
+
+    feed = bbg.BloombergSubscription(Mock(events=events))
+    for _ in range(2):
+        with pytest.raises((RuntimeError, ConnectionError)):
+            feed.receive()
+
+
+def test_receive_borrowed_status_only_respects_overall_deadline(monkeypatch):
+    api, session, _, event = _native_session(monkeypatch)
+    stream = bbg._SessionStream(session, {"A": {"fields": ["BID"]}})
+    monkeypatch.setattr(bbg, "monotonic", Mock(side_effect=[10, 10.2, 10.7, 11.1]))
+    session.nextEvent.side_effect = lambda _: event(api.Event.SUBSCRIPTION_STATUS, "SubscriptionStarted")
+    assert bbg.BloombergSubscription(stream).receive(timeout=1) == []
+    waits = [c.args[0] for c in session.nextEvent.call_args_list]
+    assert len(waits) == 2
+    assert 0 < waits[1] < waits[0] <= 1000

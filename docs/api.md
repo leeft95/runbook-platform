@@ -187,6 +187,24 @@ feed and keep up with incoming traffic; this does not bound the underlying
 queue or persist messages for replay. Application processing failures require
 application-owned recovery.
 
+For immediate delivery without a polling interval, use a blocking receive:
+
+```python
+with bbg.bsubscribe(tickers, fields, session=session) as feed:
+    while running:
+        updates = feed.receive(timeout=1.0, max_events=1000)
+        if updates:
+            publish(updates)
+```
+
+`receive()` wakes as soon as the first data update arrives, then drains already
+queued updates up to the batch limit without waiting again. The timeout is one
+overall idle-wait limit in seconds; status events do not reset it. A timeout
+returns `[]`; zero performs a nonblocking receive. Excess messages remain queued,
+with the same raw payloads, correlation IDs, and arrival order as `poll()`.
+Both owned and borrowed sessions are supported. Use one consumer per feed;
+session/subscription failures propagate and an empty result is not a health check.
+
 The `timeout` argument to `bsubscribe` bounds each subscription acknowledgement
 wait in seconds (default 5). Failed securities, rejected fields, or missing
 status entries fail context entry; acknowledgement timeout raises `TimeoutError`.
@@ -194,7 +212,7 @@ An internally created session closes on exit, including startup rejection and co
 polling after exit raises `RuntimeError`. `options`, `host`, and `port` are
 forwarded to the subscription/connection. The downstream service owns scheduling
 and shutdown. An empty batch does not prove connection health: ongoing session
-and subscription status diagnostics still use `blp` logging.
+and subscription failures raise on consumption, alongside `blp` logging.
 
 To reuse a caller-owned, already started **synchronous** `blpapi.Session`:
 
