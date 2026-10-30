@@ -30,8 +30,16 @@ def _blp_types():
     return BlpParser, BlpQuery
 
 
+def _queue_market_bar_events(handler, event):
+    """Preserve interval/end markers omitted by blp's default event filter."""
+    from blp.blp import message_to_dict
+
+    for message in event:
+        handler.data_queue.put(message_to_dict(message))
+
+
 @contextmanager
-def bstream(host: str = "localhost", port: int = 8194):
+def bstream(host: str = "localhost", port: int = 8194, *, service: str = "//blp/mktdata"):
     """Open a dedicated live market-data session, closed on context exit.
 
     Yields ``blp.BlpStream`` with ``subscribe``, ``resubscribe``,
@@ -48,12 +56,20 @@ def bstream(host: str = "localhost", port: int = 8194):
     Use inside a ``with`` block, including when breaking out of the event loop.
     This owns a separate session from the historical/reference query helpers.
     Bloomberg's optional runtime is loaded only on context entry.
+    ``service="//blp/mktbar"`` opens streaming bars and retains all bar events.
     """
     from blp.blp import BlpStream
 
-    with BlpStream(host=host, port=port) as stream:
-        if not stream.session.openService("//blp/mktdata"):
-            raise ConnectionError("Failed to open Bloomberg //blp/mktdata")
+    if service not in {"//blp/mktdata", "//blp/mktbar"}:
+        raise ValueError("service must be //blp/mktdata or //blp/mktbar")
+    connection = BlpStream(host=host, port=port)
+    if service == "//blp/mktbar":
+        connection.event_handler.marketdata_event = lambda event: _queue_market_bar_events(
+            connection.event_handler, event
+        )
+    with connection as stream:
+        if not stream.session.openService(service):
+            raise ConnectionError(f"Failed to open Bloomberg {service}")
         yield stream
 
 
@@ -71,9 +87,10 @@ class BloombergSubscriptionField(StrEnum):
 class BloombergSubscription:
     """A single-consumer live feed created by :func:`bsubscribe`."""
 
-    def __init__(self, stream):
+    def __init__(self, stream, tickers_by_topic=None):
         self._stream = stream
         self._closed = False
+        self._tickers_by_topic = tickers_by_topic or {}
 
     def poll(self, max_events: int = 1000) -> list[dict]:
         """Drain at most ``max_events`` queued updates without waiting.
@@ -92,7 +109,13 @@ class BloombergSubscription:
         events = self._stream.events(timeout=0)
         try:
             for _ in range(max_events):
-                updates.append(next(events))
+                update = next(events)
+                if self._tickers_by_topic:
+                    update = dict(update)
+                    update["correlationIds"] = [
+                        self._tickers_by_topic.get(cid, cid) for cid in update["correlationIds"]
+                    ]
+                updates.append(update)
         except (Empty, StopIteration):
             pass
         finally:
@@ -164,14 +187,14 @@ class _SessionStream:
 
 
 @contextmanager
-def _session_subscription(session, subscriptions, timeout):
+def _session_subscription(session, subscriptions, timeout, service="//blp/mktdata", tickers_by_topic=None):
     stream = _SessionStream(session, subscriptions)
-    if not session.openService("//blp/mktdata"):
-        raise ConnectionError("Failed to open Bloomberg //blp/mktdata")
+    if not session.openService(service):
+        raise ConnectionError(f"Failed to open Bloomberg {service}")
     # Check synchronous mode before subscribing; nextEvent raises for an
     # asynchronous session. Process any queued session-status event too.
     stream._receive(session.nextEvent(1))
-    feed = BloombergSubscription(stream)
+    feed = BloombergSubscription(stream, tickers_by_topic)
     try:
         session.subscribe(stream.subscriptions)
         stream.wait_started(timeout)
@@ -191,6 +214,7 @@ def bsubscribe(
     port: int = 8194,
     timeout: float = 5,
     session: tp.Any = None,
+    bar_size: int | None = None,
 ) -> tp.Iterator[BloombergSubscription]:
     """Subscribe once to tickers and yield a feed for periodic service polling.
 
@@ -210,6 +234,11 @@ def bsubscribe(
     request/subscription may share its event stream. Its authentication and
     lifecycle remain caller-owned; only this feed's subscriptions are cancelled
     on exit. Host/port are ignored, and timeout bounds total startup waiting.
+
+    ``bar_size`` selects trade-based OHLC bars on //blp/mktbar (1–1440 minutes).
+    Only LAST_PRICE may be requested in this mode. All four MarketBar event
+    types are returned, including interval/end markers. Merge incremental
+    updates by ticker and DATE_TIME; interval-end messages are not OHLC snapshots.
     """
     tickers = [ticker] if isinstance(ticker, str) else ticker
     fields = [field] if isinstance(field, str) else field
@@ -228,14 +257,34 @@ def bsubscribe(
             f"Unsupported subscription fields: {unsupported}. Allowed fields: {sorted(allowed_fields)}.{hint}"
         )
     fields = list(dict.fromkeys(str(value) for value in fields))
+    service = "//blp/mktdata"
+    tickers_by_topic = {}
+    if bar_size is not None:
+        if isinstance(bar_size, bool) or not isinstance(bar_size, int) or not 1 <= bar_size <= 1440:
+            raise ValueError("bar_size must be an integer from 1 to 1440 minutes")
+        if fields != ["LAST_PRICE"]:
+            raise ValueError("Market bars require only LAST_PRICE")
+        if options is not None and any(key not in {"start_time", "end_time"} for key in options):
+            raise ValueError("Market bar options support only start_time and end_time; use bar_size for the interval")
+        options = {**(options or {}), "bar_size": bar_size}
+        service = "//blp/mktbar"
+        if any("/" in name or "?" in name for name in tickers):
+            raise ValueError("Market bars require plain Bloomberg tickers, not subscription topic strings")
+        tickers_by_topic = {f"{service}/ticker/{name}": name for name in tickers}
+        tickers = list(tickers_by_topic)
+    elif options is not None and "bar_size" in options:
+        raise ValueError("Use the bar_size argument to select market bars")
     if not isinstance(timeout, (int, float)) or not np.isfinite(timeout) or timeout <= 0:
         raise ValueError("timeout must be a positive finite number of seconds")
     subscriptions = {name: {"fields": list(fields), "options": options} for name in tickers}
     if session is not None:
-        with _session_subscription(session, subscriptions, timeout) as feed:
+        with _session_subscription(session, subscriptions, timeout, service, tickers_by_topic) as feed:
             yield feed
         return
-    with bstream(host=host, port=port) as stream:
+    connection = (
+        bstream(host=host, port=port, service=service) if bar_size is not None else bstream(host=host, port=port)
+    )
+    with connection as stream:
         try:
             status = stream.subscribe(subscriptions, timeout=timeout)
         except Empty as exc:
@@ -243,7 +292,7 @@ def bsubscribe(
         rejected = {name: status.get(name) for name in subscriptions if status.get(name) is not True}
         if rejected:
             raise RuntimeError(f"Bloomberg subscriptions rejected: {rejected}")
-        feed = BloombergSubscription(stream)
+        feed = BloombergSubscription(stream, tickers_by_topic)
         try:
             yield feed
         finally:

@@ -219,6 +219,45 @@ status: rejection/termination raises `RuntimeError`, and connection-down or
 session-terminated messages raise `ConnectionError`. A poll processes at most
 1,000 native events as well as respecting its message batch limit.
 
+#### Streaming OHLC bars
+
+Pass `bar_size` in minutes to subscribe to `//blp/mktbar`. Market bars require
+`LAST_PRICE` and an integer interval from 1 to 1,440 minutes. These are
+trade-based bars. The same `poll()` API works with an owned session or a passed
+started synchronous session:
+
+```python
+with bbg.bsubscribe(
+    ["IBM US Equity"], "LAST_PRICE", bar_size=5, session=session
+) as feed:
+    for update in feed.poll():  # Repeat on each downstream service cycle.
+        ticker = update["correlationIds"][0]
+        kind = update["messageType"]
+        payload = update["element"][kind]
+        handle_bar_event(ticker, kind, payload)
+```
+
+Omit `session` to create an automatically managed connection. Returned
+correlation IDs remain the original tickers, even though the subscription
+topics are fully qualified market-bar topics. `options` may contain
+`start_time` and `end_time` (Bloomberg `hh:mm` strings). Set the interval through
+the `bar_size` argument, not the `options` dictionary.
+
+The raw payload follows [Appendix A.4 of Bloomberg's Developer Guide](https://data.bloomberglp.com/professional/sites/4/blpapi-developers-guide-2.54.pdf#page=198):
+
+| Message type | Handling |
+| --- | --- |
+| `MarketBarStart` | Initialize the bar, including `OPEN`, `HIGH`, `LOW`, `CLOSE`, volume, and timestamps. |
+| `MarketBarUpdate` | Merge changed fields into the current bar. |
+| `MarketBarIntervalEnd` | Finalize the accumulated bar; this timestamp marker is not an OHLC snapshot. |
+| `MarketBarEnd` | Marks the end of the subscription's configured bar window. |
+
+All four event types reach `poll()` in both session modes. Accumulating OHLC
+state by ticker and `DATE_TIME` belongs to the consumer. A new subscription
+does not backfill earlier bars or guarantee an immediate initial bar.
+The low-level `bstream(service="//blp/mktbar")` also preserves all four types;
+its callers must provide fully qualified market-bar topics themselves.
+
 Bloomberg's [Session developer reference](https://bloomberg.github.io/blpapi-docs/python/3.26.9/_autosummary/blpapi.Session.html)
 distinguishes synchronous event polling from asynchronous callbacks. `BlpStream`
 uses callbacks and a queue; the default owned-session path polls that queue through `events(timeout=0)`

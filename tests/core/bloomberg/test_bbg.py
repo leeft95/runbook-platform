@@ -157,6 +157,100 @@ def _polling_stream(monkeypatch, status):
     return stream, queue, context, factory
 
 
+def test_market_bars_owned_session_request_and_markers(monkeypatch):
+    topic = "//blp/mktbar/ticker/IBM US Equity"
+    stream, queue, context, factory = _polling_stream(monkeypatch, {topic: True})
+    options = {"start_time": "13:30", "end_time": "20:00"}
+    kinds = ["MarketBarStart", "MarketBarUpdate", "MarketBarIntervalEnd", "MarketBarEnd"]
+    with bbg.bsubscribe("IBM US Equity", "LAST_PRICE", bar_size=5, options=options) as feed:
+        for kind in kinds:
+            queue.put({"messageType": kind, "correlationIds": [topic], "element": {kind: {"DATE_TIME": "time"}}})
+        updates = feed.poll()
+        assert [item["messageType"] for item in updates] == kinds
+        assert all(item["correlationIds"] == ["IBM US Equity"] for item in updates)
+        assert feed.poll() == []
+    factory.assert_called_once_with(host="localhost", port=8194, service="//blp/mktbar")
+    stream.subscribe.assert_called_once_with(
+        {topic: {"fields": ["LAST_PRICE"], "options": {**options, "bar_size": 5}}}, timeout=5
+    )
+    assert "bar_size" not in options
+    context.__exit__.assert_called_once()
+
+
+def test_market_bars_borrowed_session_payload_and_cleanup(monkeypatch):
+    api, session, subscriptions, event = _native_session(monkeypatch)
+    session.nextEvent.side_effect = lambda _: (
+        event(api.Event.TIMEOUT)
+        if session.nextEvent.call_count == 1
+        else event(api.Event.SUBSCRIPTION_STATUS, "SubscriptionStarted")
+    )
+    payloads = [
+        ("MarketBarStart", {"OPEN": 10, "HIGH": 10, "LOW": 10, "CLOSE": 10, "DATE_TIME": "time"}),
+        ("MarketBarUpdate", {"HIGH": 11, "CLOSE": 11, "DATE_TIME": "time"}),
+        ("MarketBarIntervalEnd", {"DATE_TIME": "time"}),
+        ("MarketBarEnd", {"DATE_TIME": "time"}),
+    ]
+    with bbg.bsubscribe("IBM US Equity", "LAST_PRICE", bar_size=5, session=session) as feed:
+        session.tryNextEvent.side_effect = [
+            *(event(api.Event.SUBSCRIPTION_DATA, kind, {kind: data}) for kind, data in payloads),
+            None,
+        ]
+        updates = feed.poll()
+        assert [item["element"] for item in updates] == [{kind: data} for kind, data in payloads]
+        assert all(item["correlationIds"] == ["IBM US Equity"] for item in updates)
+    session.openService.assert_called_once_with("//blp/mktbar")
+    assert subscriptions.add.call_args.args == ("//blp/mktbar/ticker/IBM US Equity",)
+    assert subscriptions.add.call_args.kwargs["options"] == {"bar_size": 5}
+    session.unsubscribe.assert_called_once_with(subscriptions)
+    session.start.assert_not_called()
+    session.stop.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "size,field,options",
+    [
+        (0, "LAST_PRICE", None),
+        (1441, "LAST_PRICE", None),
+        (True, "LAST_PRICE", None),
+        (1.5, "LAST_PRICE", None),
+        (5, "BID", None),
+        (5, ["LAST_PRICE", "ASK"], None),
+        (5, "LAST_PRICE", {"interval": 1}),
+        (None, "LAST_PRICE", {"bar_size": 5}),
+    ],
+)
+def test_market_bars_validate_before_connection(monkeypatch, size, field, options):
+    factory = Mock()
+    monkeypatch.setattr(bbg, "bstream", factory)
+    with pytest.raises(ValueError):
+        with bbg.bsubscribe("IBM US Equity", field, bar_size=size, options=options):
+            pytest.fail("Invalid bar configuration must not connect")
+    factory.assert_not_called()
+
+
+def test_bstream_bar_handler_retains_end_markers(monkeypatch):
+    stream = MagicMock()
+    stream.__enter__.return_value = stream
+    stream.__exit__.return_value = False
+    stream.event_handler.data_queue = Queue()
+    module = ModuleType("blp.blp")
+    module.BlpStream = Mock(return_value=stream)
+    module.message_to_dict = lambda msg: {"messageType": msg}
+    monkeypatch.setitem(sys.modules, "blp.blp", module)
+    with bbg.bstream(service="//blp/mktbar") as live:
+        live.event_handler.marketdata_event(
+            ["MarketBarStart", "MarketBarUpdate", "MarketBarIntervalEnd", "MarketBarEnd"]
+        )
+        assert [live.event_handler.data_queue.get_nowait()["messageType"] for _ in range(4)] == [
+            "MarketBarStart",
+            "MarketBarUpdate",
+            "MarketBarIntervalEnd",
+            "MarketBarEnd",
+        ]
+    stream.session.openService.assert_called_once_with("//blp/mktbar")
+    stream.__exit__.assert_called_once()
+
+
 def test_bsubscribe_polls_repeatedly_without_reopening_or_waiting(monkeypatch):
     stream, queue, context, factory = _polling_stream(monkeypatch, {"A": True, "B": True})
     first = {"correlationIds": ["A"], "element": {"MarketDataEvents": {"BID": 10}}}
