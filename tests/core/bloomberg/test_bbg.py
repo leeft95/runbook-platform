@@ -9,6 +9,136 @@ import pytest
 from runbook.core.bloomberg import bbg
 
 
+def _native_session(monkeypatch):
+    api = ModuleType("blpapi")
+    api.Event = type("Event", (), {"SUBSCRIPTION_STATUS": 1, "SUBSCRIPTION_DATA": 2, "TIMEOUT": 3})
+    api.CorrelationId = lambda value: Mock(value=Mock(return_value=value))
+    subscription_list = Mock()
+    api.SubscriptionList = Mock(return_value=subscription_list)
+    monkeypatch.setitem(sys.modules, "blpapi", api)
+    module = ModuleType("blp.blp")
+    module.message_to_dict = lambda message: {"element": message.toPy(), "timeReceived": "timestamp"}
+    monkeypatch.setitem(sys.modules, "blp.blp", module)
+    session = Mock()
+    session.openService.return_value = True
+
+    def event(kind, name=None, data=None, ticker_index=0):
+        result = MagicMock()
+        result.eventType.return_value = kind
+        messages = []
+        if name:
+            cid = subscription_list.add.call_args_list[ticker_index].kwargs["correlationId"]
+            message = Mock()
+            message.messageType.return_value = name
+            message.correlationIds.return_value = [cid]
+            message.toPy.return_value = data or {}
+            messages.append(message)
+        result.__iter__.side_effect = lambda: iter(messages)
+        return result
+
+    return api, session, subscription_list, event
+
+
+def test_bsubscribe_borrowed_session_preserves_updates_and_ownership(monkeypatch):
+    api, session, subscriptions, event = _native_session(monkeypatch)
+    calls = iter(["idle", "data", "started"])
+
+    def next_event(timeout):
+        assert timeout > 0
+        kind = next(calls)
+        if kind == "idle":
+            return event(api.Event.TIMEOUT)
+        if kind == "data":
+            return event(api.Event.SUBSCRIPTION_DATA, "MarketDataEvents", {"BID": 10})
+        return event(api.Event.SUBSCRIPTION_STATUS, "SubscriptionStarted")
+
+    session.nextEvent.side_effect = next_event
+    with bbg.bsubscribe("A", "BID", session=session) as feed:
+        session.tryNextEvent.side_effect = [
+            event(api.Event.SUBSCRIPTION_DATA, "MarketDataEvents", {"BID": 11}),
+            None,
+            None,
+        ]
+        assert feed.poll(1) == [{"element": {"BID": 10}, "timeReceived": "timestamp", "correlationIds": ["A"]}]
+        assert feed.poll() == [{"element": {"BID": 11}, "timeReceived": "timestamp", "correlationIds": ["A"]}]
+        assert feed.poll() == []
+    session.start.assert_not_called()
+    session.stop.assert_not_called()
+    session.subscribe.assert_called_once_with(subscriptions)
+    session.unsubscribe.assert_called_once_with(subscriptions)
+    session.openService.assert_called_once_with("//blp/mktdata")
+    with pytest.raises(RuntimeError, match="closed"):
+        feed.poll()
+
+
+@pytest.mark.parametrize("failure", ["service", "async", "timeout", "field", "security", "consumer"])
+def test_bsubscribe_borrowed_session_failures_keep_session_alive(monkeypatch, failure):
+    api, session, subscriptions, event = _native_session(monkeypatch)
+    session.openService.return_value = failure != "service"
+
+    def next_event(timeout):
+        if failure == "async":
+            raise RuntimeError("asynchronous session")
+        if session.nextEvent.call_count == 1 or failure == "timeout":
+            return event(api.Event.TIMEOUT)
+        return event(
+            api.Event.SUBSCRIPTION_STATUS,
+            "SubscriptionFailure" if failure == "security" else "SubscriptionStarted",
+            {"exceptions": [{"fieldId": "BID"}]} if failure == "field" else {},
+        )
+
+    session.nextEvent.side_effect = next_event
+    with pytest.raises((RuntimeError, ConnectionError, TimeoutError)):
+        with bbg.bsubscribe("A", "BID", session=session):
+            if failure == "consumer":
+                raise RuntimeError("consumer failed")
+            pytest.fail("Startup should fail")
+    session.start.assert_not_called()
+    session.stop.assert_not_called()
+    if failure in {"service", "async"}:
+        session.subscribe.assert_not_called()
+        session.unsubscribe.assert_not_called()
+    else:
+        session.unsubscribe.assert_called_once_with(subscriptions)
+
+
+def test_bsubscribe_borrowed_session_keeps_remainder_of_native_event(monkeypatch):
+    api, session, _, event = _native_session(monkeypatch)
+    session.nextEvent.side_effect = lambda _: (
+        event(api.Event.TIMEOUT)
+        if session.nextEvent.call_count == 1
+        else event(api.Event.SUBSCRIPTION_STATUS, "SubscriptionStarted")
+    )
+    with bbg.bsubscribe("A", "BID", session=session) as feed:
+        combined = event(api.Event.SUBSCRIPTION_DATA)
+        messages = [
+            *event(api.Event.SUBSCRIPTION_DATA, "MarketDataEvents", {"BID": 10}),
+            *event(api.Event.SUBSCRIPTION_DATA, "MarketDataEvents", {"BID": 11}),
+        ]
+        combined.__iter__.side_effect = lambda: iter(messages)
+        session.tryNextEvent.side_effect = [combined, None]
+        assert feed.poll(1)[0]["element"] == {"BID": 10}
+        assert feed.poll(1)[0]["element"] == {"BID": 11}
+        assert feed.poll() == []
+
+
+@pytest.mark.parametrize("name", ["SubscriptionTerminated", "SessionConnectionDown"])
+def test_bsubscribe_borrowed_session_runtime_failure(monkeypatch, name):
+    api, session, subscriptions, event = _native_session(monkeypatch)
+    session.nextEvent.side_effect = lambda _: (
+        event(api.Event.TIMEOUT)
+        if session.nextEvent.call_count == 1
+        else event(api.Event.SUBSCRIPTION_STATUS, "SubscriptionStarted")
+    )
+    error = ConnectionError if name == "SessionConnectionDown" else RuntimeError
+    with pytest.raises(error):
+        with bbg.bsubscribe("A", "BID", session=session) as feed:
+            session.tryNextEvent.return_value = event(api.Event.SUBSCRIPTION_STATUS, name)
+            feed.poll()
+    session.unsubscribe.assert_called_once_with(subscriptions)
+    session.stop.assert_not_called()
+
+
 def _polling_stream(monkeypatch, status):
     stream = Mock()
     stream.subscribe.return_value = status

@@ -190,15 +190,38 @@ application-owned recovery.
 The `timeout` argument to `bsubscribe` bounds each subscription acknowledgement
 wait in seconds (default 5). Failed securities, rejected fields, or missing
 status entries fail context entry; acknowledgement timeout raises `TimeoutError`.
-The session closes on exit, including startup rejection and consumer exceptions;
+An internally created session closes on exit, including startup rejection and consumer exceptions;
 polling after exit raises `RuntimeError`. `options`, `host`, and `port` are
 forwarded to the subscription/connection. The downstream service owns scheduling
 and shutdown. An empty batch does not prove connection health: ongoing session
 and subscription status diagnostics still use `blp` logging.
 
+To reuse a caller-owned, already started **synchronous** `blpapi.Session`:
+
+```python
+with bbg.bsubscribe(["EURUSD Curncy"], ["BID", "ASK"], session=session) as feed:
+    updates = feed.poll()  # Call repeatedly from your service loop.
+# session is still running; only this context's subscriptions were cancelled.
+```
+
+The supplied session must be exclusively available to this feed until context
+exit: no other event consumer, outstanding request, or subscription may share
+its event stream. Authentication, start and stop remain caller-owned; `host`
+and `port` are ignored. Each subscription gets a unique internal correlation
+ID, mapped back to ticker names in returned updates. Updates received during
+startup are retained for polling. `timeout` bounds the total acknowledgement
+wait in this mode. Rejection, timeout, or a consumer exception cancels the
+helper's subscriptions without stopping the session. Asynchronous sessions
+with an existing callback are not supported by this path.
+
+Borrowed-session polling uses `tryNextEvent()` and also processes subscription
+status: rejection/termination raises `RuntimeError`, and connection-down or
+session-terminated messages raise `ConnectionError`. A poll processes at most
+1,000 native events as well as respecting its message batch limit.
+
 Bloomberg's [Session developer reference](https://bloomberg.github.io/blpapi-docs/python/3.26.9/_autosummary/blpapi.Session.html)
 distinguishes synchronous event polling from asynchronous callbacks. `BlpStream`
-uses callbacks and a queue; this helper polls that queue through `events(timeout=0)`
+uses callbacks and a queue; the default owned-session path polls that queue through `events(timeout=0)`
 instead of calling `Session.nextEvent()` on an asynchronous session.
 
 ```{eval-rst}

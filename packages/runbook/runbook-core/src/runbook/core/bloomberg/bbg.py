@@ -1,9 +1,12 @@
 import datetime as dt
 import typing as tp
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor as tp_exec
 from contextlib import contextmanager
 from enum import Enum, StrEnum
 from queue import Empty
+from time import monotonic
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
@@ -97,6 +100,87 @@ class BloombergSubscription:
         return updates
 
 
+class _SessionStream:
+    """Adapt an exclusively borrowed synchronous session to the polling feed."""
+
+    def __init__(self, session, subscriptions):
+        import blpapi
+        from blp.blp import message_to_dict
+
+        self.session = session
+        self._blpapi = blpapi
+        self._serialize = message_to_dict
+        self._pending = deque()
+        self._started = set()
+        self._topics = {}
+        self.subscriptions = blpapi.SubscriptionList()
+        for ticker, config in subscriptions.items():
+            correlation = uuid4().hex
+            self._topics[correlation] = ticker
+            self.subscriptions.add(ticker, correlationId=blpapi.CorrelationId(correlation), **config)
+
+    def _receive(self, event):
+        for message in event:
+            kind = str(message.messageType())
+            if kind in {"SessionTerminated", "SessionConnectionDown"}:
+                raise ConnectionError(f"Bloomberg session unavailable: {message}")
+            correlations = [cid.value() for cid in message.correlationIds() if cid.value() in self._topics]
+            if not correlations:
+                continue
+            if event.eventType() == self._blpapi.Event.SUBSCRIPTION_STATUS:
+                data = message.toPy()
+                if kind in {"SubscriptionFailure", "SubscriptionTerminated"} or data.get("exceptions"):
+                    raise RuntimeError(f"Bloomberg subscriptions rejected: {message}")
+                if kind == "SubscriptionStarted":
+                    self._started.update(correlations)
+            elif event.eventType() == self._blpapi.Event.SUBSCRIPTION_DATA:
+                update = self._serialize(message)
+                update["correlationIds"] = [self._topics[cid] for cid in correlations]
+                self._pending.append(update)
+
+    def wait_started(self, timeout):
+        deadline = monotonic() + timeout
+        while len(self._started) < len(self._topics):
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Timed out waiting for Bloomberg subscription acknowledgements")
+            # Zero means an infinite wait in blpapi, rather than a nonblocking poll.
+            event = self.session.nextEvent(max(1, int(remaining * 1000)))
+            if event.eventType() == self._blpapi.Event.TIMEOUT:
+                raise TimeoutError("Timed out waiting for Bloomberg subscription acknowledgements")
+            self._receive(event)
+
+    def events(self, timeout=0):
+        # Bound status-event processing too, so a busy session cannot monopolize a poll.
+        for _ in range(1000):
+            while self._pending:
+                yield self._pending.popleft()
+            event = self.session.tryNextEvent()
+            if event is None:
+                return
+            self._receive(event)
+        while self._pending:
+            yield self._pending.popleft()
+
+
+@contextmanager
+def _session_subscription(session, subscriptions, timeout):
+    stream = _SessionStream(session, subscriptions)
+    if not session.openService("//blp/mktdata"):
+        raise ConnectionError("Failed to open Bloomberg //blp/mktdata")
+    # Check synchronous mode before subscribing; nextEvent raises for an
+    # asynchronous session. Process any queued session-status event too.
+    stream._receive(session.nextEvent(1))
+    feed = BloombergSubscription(stream)
+    try:
+        session.subscribe(stream.subscriptions)
+        stream.wait_started(timeout)
+        yield feed
+    finally:
+        feed._closed = True
+        session.unsubscribe(stream.subscriptions)
+
+
 @contextmanager
 def bsubscribe(
     ticker: list[str] | str,
@@ -106,6 +190,7 @@ def bsubscribe(
     host: str = "localhost",
     port: int = 8194,
     timeout: float = 5,
+    session: tp.Any = None,
 ) -> tp.Iterator[BloombergSubscription]:
     """Subscribe once to tickers and yield a feed for periodic service polling.
 
@@ -119,6 +204,12 @@ def bsubscribe(
     ``field`` accepts exact names from ``BloombergSubscriptionField`` (or its
     enum members). Unsupported fields fail before opening a session. Use
     LAST_PRICE for streaming; PX_LAST belongs to reference/history requests.
+
+    ``session`` may be a started synchronous blpapi.Session, exclusively lent
+    to this feed while the context is open. No other consumer or outstanding
+    request/subscription may share its event stream. Its authentication and
+    lifecycle remain caller-owned; only this feed's subscriptions are cancelled
+    on exit. Host/port are ignored, and timeout bounds total startup waiting.
     """
     tickers = [ticker] if isinstance(ticker, str) else ticker
     fields = [field] if isinstance(field, str) else field
@@ -140,6 +231,10 @@ def bsubscribe(
     if not isinstance(timeout, (int, float)) or not np.isfinite(timeout) or timeout <= 0:
         raise ValueError("timeout must be a positive finite number of seconds")
     subscriptions = {name: {"fields": list(fields), "options": options} for name in tickers}
+    if session is not None:
+        with _session_subscription(session, subscriptions, timeout) as feed:
+            yield feed
+        return
     with bstream(host=host, port=port) as stream:
         try:
             status = stream.subscribe(subscriptions, timeout=timeout)
