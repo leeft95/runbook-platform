@@ -110,6 +110,97 @@ retains column names for empty results. Response waits use a 30-second timeout.
 The migrated helper does not embed the old handler's host, application identity
 or default saved-search key.
 
+### Bloomberg live data
+
+`bstream()` opens a dedicated Bloomberg streaming connection and closes it on
+leaving the `with` block, including after an exception or an early loop exit:
+
+```python
+from runbook.core.bloomberg import bbg
+
+with bbg.bstream() as live:
+    subscriptions = {"EURUSD Curncy": {"fields": ["BID", "ASK"]}}
+    status = live.subscribe(subscriptions, timeout=5)
+    if any(result is not True for result in status.values()):
+        raise RuntimeError(f"Subscription rejected: {status}")
+
+    for update in live.events(timeout=30):
+        print(update["correlationIds"], update["element"])
+        break  # Remove this to keep consuming live updates.
+
+    # Replace fields/options for the existing ticker correlation ID.
+    status = live.resubscribe(
+        {"EURUSD Curncy": {"fields": ["BID", "ASK", "LAST_PRICE"]}}, timeout=5
+    )
+    if any(result is not True for result in status.values()):
+        raise RuntimeError(f"Resubscription rejected: {status}")
+    live.unsubscribe({"EURUSD Curncy": {}}, timeout=5)
+```
+
+The yielded object is the installed `blp.BlpStream`, backed by `blpapi`.
+`subscribe` and `resubscribe` return a dictionary keyed by correlation ID:
+`True` for success, `False` for failure, or a list of invalid fields. Tickers
+are the default correlation IDs. Subscription entries also accept `options`,
+for example `{"interval": 1.0}`. Pass `host` and `port` to `bstream` for a
+different Bloomberg connection (defaults: `localhost:8194`).
+
+Events are raw message dictionaries, including `correlationIds`, `messageType`,
+`timeReceived` and `element`. Field updates are incremental; maintain the latest
+values per ticker if you need a complete quote. All timeouts above are in
+seconds and raise `queue.Empty`; an idle market can therefore end this example
+after 30 seconds. Omitting the event timeout waits indefinitely. Connection and
+subscription status diagnostics are logged by `blp`, rather than yielded by
+the data iterator. Consume events promptly: the underlying queue is unbounded.
+This helper owns its session and does not reuse a historical-query session.
+
+For a downstream service, `bsubscribe(ticker, field)` accepts a string or list
+for each argument and subscribes once. Keep its context open across polling
+cycles:
+
+```python
+def poll_bloomberg(tickers, fields, stop_event, handle_update):
+    with bbg.bsubscribe(tickers, fields) as feed:
+        while not stop_event.is_set():
+            for update in feed.poll(max_events=1000):
+                handle_update(update)
+            stop_event.wait(0.1)
+```
+
+`bsubscribe` restricts requested fields to `BID`, `ASK`, and `LAST_PRICE`.
+Discover these through `list(bbg.BloombergSubscriptionField)` and pass either
+enum members or their exact uppercase strings. This is the helper's supported
+quote-field subset, not the complete Bloomberg catalogue. Unsupported names,
+comma-separated strings, and malformed inputs raise `ValueError` before any
+connection opens; repeated fields are requested once. `PX_LAST` is rejected
+with a hint to use `LAST_PRICE` for streaming, consistent with Bloomberg's
+[Core Developer Guide](https://data.bloomberglp.com/professional/sites/10/2017/03/BLPAPI-Core-Developer-Guide.pdf).
+Extending the supported set requires updating the enum after verifying a live
+field. Allowed fields may still be unavailable for a ticker or entitlement;
+Bloomberg's subscription acknowledgements remain authoritative and any field
+rejection fails startup. The low-level `bstream` retains its native field API.
+
+`poll()` returns up to `max_events` raw messages in arrival order without
+waiting for new data. An idle poll returns `[]`; later polls continue to work.
+It consumes updates once, preserves incremental fields and timestamps, and
+leaves excess queued messages for the next call. Use one polling consumer per
+feed and keep up with incoming traffic; this does not bound the underlying
+queue or persist messages for replay. Application processing failures require
+application-owned recovery.
+
+The `timeout` argument to `bsubscribe` bounds each subscription acknowledgement
+wait in seconds (default 5). Failed securities, rejected fields, or missing
+status entries fail context entry; acknowledgement timeout raises `TimeoutError`.
+The session closes on exit, including startup rejection and consumer exceptions;
+polling after exit raises `RuntimeError`. `options`, `host`, and `port` are
+forwarded to the subscription/connection. The downstream service owns scheduling
+and shutdown. An empty batch does not prove connection health: ongoing session
+and subscription status diagnostics still use `blp` logging.
+
+Bloomberg's [Session developer reference](https://bloomberg.github.io/blpapi-docs/python/3.26.9/_autosummary/blpapi.Session.html)
+distinguishes synchronous event polling from asynchronous callbacks. `BlpStream`
+uses callbacks and a queue; this helper polls that queue through `events(timeout=0)`
+instead of calling `Session.nextEvent()` on an asynchronous session.
+
 ```{eval-rst}
 .. automodule:: runbook.core.data
    :members:
@@ -120,7 +211,7 @@ or default saved-search key.
    :members: build_context_hash
 
 .. automodule:: runbook.core.bloomberg.bbg
-   :members: BBGReturnTypes, IntradayEventType, bdh, bref, bdib, bbulkref, bql, bsrch
+   :members: BBGReturnTypes, IntradayEventType, bdh, bref, bdib, bbulkref, bql, bsrch, bstream, bsubscribe, BloombergSubscription, BloombergSubscriptionField
 
 .. automodule:: runbook.core.table
    :members: highlight, highlight_on_key, highlight_on_range, highlight_zscore,

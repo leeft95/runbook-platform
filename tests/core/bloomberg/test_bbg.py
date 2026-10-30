@@ -1,9 +1,185 @@
-from unittest.mock import Mock, call
+import sys
+from queue import Empty, Queue
+from types import ModuleType
+from unittest.mock import MagicMock, Mock, call
 
 import numpy as np
 import pandas as pd
 import pytest
 from runbook.core.bloomberg import bbg
+
+
+def _polling_stream(monkeypatch, status):
+    stream = Mock()
+    stream.subscribe.return_value = status
+    queue = Queue()
+
+    def events(*, timeout):
+        while True:
+            yield queue.get(timeout=timeout)
+
+    stream.events.side_effect = events
+    context = MagicMock()
+    context.__enter__.return_value = stream
+    context.__exit__.return_value = False
+    factory = Mock(return_value=context)
+    monkeypatch.setattr(bbg, "bstream", factory)
+    return stream, queue, context, factory
+
+
+def test_bsubscribe_polls_repeatedly_without_reopening_or_waiting(monkeypatch):
+    stream, queue, context, factory = _polling_stream(monkeypatch, {"A": True, "B": True})
+    first = {"correlationIds": ["A"], "element": {"MarketDataEvents": {"BID": 10}}}
+    second = {"correlationIds": ["B"], "element": {"MarketDataEvents": {"ASK": None}}}
+    with bbg.bsubscribe(["A", "B"], ["BID", "ASK"], options={"interval": 1}, host="host", port=8196) as feed:
+        assert feed.poll() == []
+        queue.put(first)
+        queue.put(second)
+        assert feed.poll(max_events=1) == [first]
+        assert feed.poll() == [second]
+        assert feed.poll() == []
+        queue.put(first)
+        assert feed.poll() == [first]
+        factory.assert_called_once_with(host="host", port=8196)
+        stream.subscribe.assert_called_once_with(
+            {
+                "A": {"fields": ["BID", "ASK"], "options": {"interval": 1}},
+                "B": {"fields": ["BID", "ASK"], "options": {"interval": 1}},
+            },
+            timeout=5,
+        )
+        assert all(args == call(timeout=0) for args in stream.events.call_args_list)
+    context.__exit__.assert_called_once()
+    with pytest.raises(RuntimeError, match="closed"):
+        feed.poll()
+
+
+@pytest.mark.parametrize("status", [{"A": False}, {"A": ["BAD_FIELD"]}, {}])
+def test_bsubscribe_rejects_failed_or_missing_status_and_closes(monkeypatch, status):
+    stream, _, context, _ = _polling_stream(monkeypatch, status)
+    with pytest.raises(RuntimeError, match="subscriptions rejected"):
+        with bbg.bsubscribe("A", "BID"):
+            pytest.fail("Rejected subscriptions must not reach polling")
+    stream.subscribe.assert_called_once_with({"A": {"fields": ["BID"], "options": None}}, timeout=5)
+    context.__exit__.assert_called_once()
+
+
+def test_bsubscribe_ack_timeout_closes_session(monkeypatch):
+    stream, _, context, _ = _polling_stream(monkeypatch, {})
+    stream.subscribe.side_effect = Empty
+    with pytest.raises(TimeoutError, match="acknowledgements"):
+        with bbg.bsubscribe("A", "BID", timeout=2):
+            pytest.fail("Unacknowledged subscriptions must not reach polling")
+    context.__exit__.assert_called_once()
+
+
+def test_bsubscribe_poll_error_propagates_and_closes(monkeypatch):
+    stream, _, context, _ = _polling_stream(monkeypatch, {"A": True})
+    stream.events.side_effect = RuntimeError("stream failed")
+    with pytest.raises(RuntimeError, match="stream failed"):
+        with bbg.bsubscribe("A", "BID") as feed:
+            feed.poll()
+    context.__exit__.assert_called_once()
+    with pytest.raises(RuntimeError, match="closed"):
+        feed.poll()
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5])
+def test_bsubscribe_rejects_invalid_poll_limit(monkeypatch, limit):
+    stream, _, _, _ = _polling_stream(monkeypatch, {"A": True})
+    with bbg.bsubscribe("A", "BID") as feed:
+        with pytest.raises(ValueError, match="positive integer"):
+            feed.poll(limit)
+    stream.events.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "ticker,field,timeout",
+    [("", "BID", 5), ([], "BID", 5), (["A", " "], "BID", 5), ("A", [], 5), ("A", "BID", 0), ("A", "BID", float("inf"))],
+)
+def test_bsubscribe_validates_before_opening_session(monkeypatch, ticker, field, timeout):
+    factory = Mock()
+    monkeypatch.setattr(bbg, "bstream", factory)
+    with pytest.raises(ValueError):
+        with bbg.bsubscribe(ticker, field, timeout=timeout):
+            pytest.fail("Invalid input must not start a subscription")
+    factory.assert_not_called()
+
+
+@pytest.mark.parametrize("field", ["PX_LAST", "TYPO", "bid", " BID ", "BID,ASK", ["BID", "TYPO"]])
+def test_bsubscribe_rejects_unsupported_fields_before_connection(monkeypatch, field):
+    factory = Mock()
+    monkeypatch.setattr(bbg, "bstream", factory)
+    with pytest.raises(ValueError, match="Unsupported subscription fields") as error:
+        with bbg.bsubscribe("A", field):
+            pytest.fail("Unsupported fields must not start a subscription")
+    assert "Allowed fields: ['ASK', 'BID', 'LAST_PRICE']" in str(error.value)
+    if field == "PX_LAST":
+        assert "Use LAST_PRICE instead of PX_LAST" in str(error.value)
+    factory.assert_not_called()
+
+
+@pytest.mark.parametrize("field", [None, 42, {"BID": True}, [None], [[]]])
+def test_bsubscribe_rejects_invalid_field_types(monkeypatch, field):
+    factory = Mock()
+    monkeypatch.setattr(bbg, "bstream", factory)
+    with pytest.raises(ValueError, match="field must contain nonempty strings"):
+        with bbg.bsubscribe("A", field):
+            pytest.fail("Invalid fields must not start a subscription")
+    factory.assert_not_called()
+
+
+def test_bsubscribe_accepts_supported_enum_fields_and_deduplicates(monkeypatch):
+    stream, _, _, _ = _polling_stream(monkeypatch, {"A": True})
+    fields = [*bbg.BloombergSubscriptionField, "BID"]
+    with bbg.bsubscribe("A", fields):
+        pass
+    stream.subscribe.assert_called_once_with(
+        {"A": {"fields": ["BID", "ASK", "LAST_PRICE"], "options": None}}, timeout=5
+    )
+
+
+@pytest.mark.parametrize("failure", [None, "service", "subscribe", "consumer"])
+def test_bstream_live_session_and_cleanup(monkeypatch, failure):
+    stream = MagicMock()
+    stream.__enter__.return_value = stream
+    stream.__exit__.return_value = False
+    stream.session.openService.return_value = failure != "service"
+    if failure == "subscribe":
+        stream.subscribe.side_effect = RuntimeError("subscription failed")
+    update = {
+        "correlationIds": ["EURUSD Curncy"],
+        "element": {"MarketDataEvents": {"BID": 1.1}},
+    }
+    stream.events.return_value = iter([update])
+    factory = Mock(return_value=stream)
+    module = ModuleType("blp.blp")
+    module.BlpStream = factory
+    monkeypatch.setitem(sys.modules, "blp.blp", module)
+
+    def consume():
+        context = bbg.bstream(host="bloomberg-host", port=8196)
+        factory.assert_not_called()
+        with context as live:
+            assert live is stream
+            live.subscribe({"EURUSD Curncy": {"fields": ["BID", "ASK"]}})
+            for event in live.events(timeout=5):
+                assert event is update
+                if failure == "consumer":
+                    raise RuntimeError("consumer failed")
+                break
+
+    if failure:
+        with pytest.raises((ConnectionError, RuntimeError), match="Failed to open|subscription failed|consumer failed"):
+            consume()
+    else:
+        consume()
+        stream.events.assert_called_once_with(timeout=5)
+    factory.assert_called_once_with(host="bloomberg-host", port=8196)
+    stream.session.openService.assert_called_once_with("//blp/mktdata")
+    stream.__exit__.assert_called_once()
+    if failure == "service":
+        stream.subscribe.assert_not_called()
 
 
 @pytest.mark.parametrize(

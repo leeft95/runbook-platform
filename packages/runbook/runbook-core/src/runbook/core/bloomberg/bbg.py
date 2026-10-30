@@ -2,7 +2,8 @@ import datetime as dt
 import typing as tp
 from concurrent.futures import ThreadPoolExecutor as tp_exec
 from contextlib import contextmanager
-from enum import Enum
+from enum import Enum, StrEnum
+from queue import Empty
 
 import numpy as np
 import pandas as pd
@@ -24,6 +25,134 @@ def _blp_types():
     from blp.blp import BlpParser, BlpQuery
 
     return BlpParser, BlpQuery
+
+
+@contextmanager
+def bstream(host: str = "localhost", port: int = 8194):
+    """Open a dedicated live market-data session, closed on context exit.
+
+    Yields ``blp.BlpStream`` with ``subscribe``, ``resubscribe``,
+    ``unsubscribe`` and ``events`` methods. Subscription dictionaries map
+    tickers to ``fields`` and optional ``options``; ticker strings are the
+    default correlation IDs. Check subscription results: True means success,
+    False means failure, and a list identifies rejected fields.
+
+    ``events(timeout=...)`` yields raw message dictionaries containing
+    ``correlationIds``, ``element`` and ``timeReceived``. Updates contain only
+    changed fields, not complete snapshots. Timeouts are in seconds and raise
+    ``queue.Empty``. Session/status diagnostics are logged by blp.
+
+    Use inside a ``with`` block, including when breaking out of the event loop.
+    This owns a separate session from the historical/reference query helpers.
+    Bloomberg's optional runtime is loaded only on context entry.
+    """
+    from blp.blp import BlpStream
+
+    with BlpStream(host=host, port=port) as stream:
+        if not stream.session.openService("//blp/mktdata"):
+            raise ConnectionError("Failed to open Bloomberg //blp/mktdata")
+        yield stream
+
+
+class BloombergSubscriptionField(StrEnum):
+    """Supported live quote fields; availability still depends on the security.
+
+    This is the helper's supported subset, not Bloomberg's complete catalogue.
+    """
+
+    BID = "BID"
+    ASK = "ASK"
+    LAST_PRICE = "LAST_PRICE"
+
+
+class BloombergSubscription:
+    """A single-consumer live feed created by :func:`bsubscribe`."""
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._closed = False
+
+    def poll(self, max_events: int = 1000) -> list[dict]:
+        """Drain at most ``max_events`` queued updates without waiting.
+
+        Returns raw Bloomberg message dictionaries in arrival order, or []
+        when idle. Messages are incremental updates, not quote snapshots.
+        Call again on the next service cycle; do not poll concurrently.
+        An empty batch is not a connection-health indication.
+        """
+        if self._closed:
+            raise RuntimeError("Bloomberg subscription is closed")
+        if isinstance(max_events, bool) or not isinstance(max_events, int) or max_events < 1:
+            raise ValueError("max_events must be a positive integer")
+        updates = []
+        # queue.Empty closes blp's generator; each poll needs a fresh one.
+        events = self._stream.events(timeout=0)
+        try:
+            for _ in range(max_events):
+                updates.append(next(events))
+        except (Empty, StopIteration):
+            pass
+        finally:
+            events.close()
+        return updates
+
+
+@contextmanager
+def bsubscribe(
+    ticker: list[str] | str,
+    field: list[str] | str,
+    *,
+    options: dict | None = None,
+    host: str = "localhost",
+    port: int = 8194,
+    timeout: float = 5,
+) -> tp.Iterator[BloombergSubscription]:
+    """Subscribe once to tickers and yield a feed for periodic service polling.
+
+    Keep the context open for the service lifetime and call ``feed.poll()``
+    each cycle. Entry waits up to ``timeout`` seconds per subscription status;
+    rejected securities or fields raise RuntimeError, missing acknowledgements
+    raise TimeoutError. Exit closes the owned bstream session and subscriptions.
+    Polling itself never waits for new data. See ``bstream`` for the raw message
+    format and the underlying library's status logging behaviour.
+
+    ``field`` accepts exact names from ``BloombergSubscriptionField`` (or its
+    enum members). Unsupported fields fail before opening a session. Use
+    LAST_PRICE for streaming; PX_LAST belongs to reference/history requests.
+    """
+    tickers = [ticker] if isinstance(ticker, str) else ticker
+    fields = [field] if isinstance(field, str) else field
+    for name, values in (("ticker", tickers), ("field", fields)):
+        if (
+            not isinstance(values, (list, tuple))
+            or not values
+            or any(not isinstance(value, str) or not value.strip() for value in values)
+        ):
+            raise ValueError(f"{name} must contain nonempty strings")
+    allowed_fields = {item.value for item in BloombergSubscriptionField}
+    unsupported = sorted(set(fields) - allowed_fields)
+    if unsupported:
+        hint = " Use LAST_PRICE instead of PX_LAST for live data." if "PX_LAST" in unsupported else ""
+        raise ValueError(
+            f"Unsupported subscription fields: {unsupported}. Allowed fields: {sorted(allowed_fields)}.{hint}"
+        )
+    fields = list(dict.fromkeys(str(value) for value in fields))
+    if not isinstance(timeout, (int, float)) or not np.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be a positive finite number of seconds")
+    subscriptions = {name: {"fields": list(fields), "options": options} for name in tickers}
+    with bstream(host=host, port=port) as stream:
+        try:
+            status = stream.subscribe(subscriptions, timeout=timeout)
+        except Empty as exc:
+            raise TimeoutError("Timed out waiting for Bloomberg subscription acknowledgements") from exc
+        rejected = {name: status.get(name) for name in subscriptions if status.get(name) is not True}
+        if rejected:
+            raise RuntimeError(f"Bloomberg subscriptions rejected: {rejected}")
+        feed = BloombergSubscription(stream)
+        try:
+            yield feed
+        finally:
+            feed._closed = True
 
 
 def _log_api_errors_processor(response, request_data):
