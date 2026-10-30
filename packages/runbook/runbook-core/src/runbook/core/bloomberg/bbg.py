@@ -74,9 +74,9 @@ def bstream(host: str = "localhost", port: int = 8194, *, service: str = "//blp/
 
 
 class BloombergSubscriptionField(StrEnum):
-    """Supported live quote fields; availability still depends on the security.
+    """Convenience names for common live quote fields.
 
-    This is the helper's supported subset, not Bloomberg's complete catalogue.
+    Other Bloomberg field names are accepted as strings by bsubscribe.
     """
 
     BID = "BID"
@@ -225,9 +225,10 @@ def bsubscribe(
     Polling itself never waits for new data. See ``bstream`` for the raw message
     format and the underlying library's status logging behaviour.
 
-    ``field`` accepts exact names from ``BloombergSubscriptionField`` (or its
-    enum members). Unsupported fields fail before opening a session. Use
-    LAST_PRICE for streaming; PX_LAST belongs to reference/history requests.
+    ``field`` accepts Bloomberg field names or BloombergSubscriptionField
+    members. The full mktdata field catalogue is allowed; Bloomberg validates
+    availability for each ticker and entitlement at subscription startup.
+    Pass one field per string, without whitespace or subscription delimiters.
 
     ``session`` may be a started synchronous blpapi.Session, exclusively lent
     to this feed while the context is open. No other consumer or outstanding
@@ -249,13 +250,8 @@ def bsubscribe(
             or any(not isinstance(value, str) or not value.strip() for value in values)
         ):
             raise ValueError(f"{name} must contain nonempty strings")
-    allowed_fields = {item.value for item in BloombergSubscriptionField}
-    unsupported = sorted(set(fields) - allowed_fields)
-    if unsupported:
-        hint = " Use LAST_PRICE instead of PX_LAST for live data." if "PX_LAST" in unsupported else ""
-        raise ValueError(
-            f"Unsupported subscription fields: {unsupported}. Allowed fields: {sorted(allowed_fields)}.{hint}"
-        )
+    if any(any(char.isspace() or char in ",&=?" for char in value) for value in fields):
+        raise ValueError("Pass one field name per string, without whitespace or subscription delimiters")
     fields = list(dict.fromkeys(str(value) for value in fields))
     service = "//blp/mktdata"
     tickers_by_topic = {}

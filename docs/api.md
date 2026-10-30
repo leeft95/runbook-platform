@@ -166,18 +166,18 @@ def poll_bloomberg(tickers, fields, stop_event, handle_update):
             stop_event.wait(0.1)
 ```
 
-`bsubscribe` restricts requested fields to `BID`, `ASK`, and `LAST_PRICE`.
-Discover these through `list(bbg.BloombergSubscriptionField)` and pass either
-enum members or their exact uppercase strings. This is the helper's supported
-quote-field subset, not the complete Bloomberg catalogue. Unsupported names,
-comma-separated strings, and malformed inputs raise `ValueError` before any
-connection opens; repeated fields are requested once. `PX_LAST` is rejected
-with a hint to use `LAST_PRICE` for streaming, consistent with Bloomberg's
-[Core Developer Guide](https://data.bloomberglp.com/professional/sites/10/2017/03/BLPAPI-Core-Developer-Guide.pdf).
-Extending the supported set requires updating the enum after verifying a live
-field. Allowed fields may still be unavailable for a ticker or entitlement;
-Bloomberg's subscription acknowledgements remain authoritative and any field
-rejection fails startup. The low-level `bstream` retains its native field API.
+`bsubscribe` accepts the full Bloomberg `mktdata` field catalogue as strings,
+including fields outside `BloombergSubscriptionField`. That enum remains a
+convenience for `BID`, `ASK`, and `LAST_PRICE`, not an allowlist. For example,
+pass `["OPEN", "HIGH", "LOW", "LAST_PRICE", "VOLUME"]` for a wider set of
+market-data fields. Pass one field per string; empty names, whitespace,
+comma-separated strings, and subscription delimiters raise `ValueError` before
+connecting. Repeated fields are requested once.
+
+Bloomberg validates actual field availability for each security and entitlement.
+Any field rejection fails startup and cleans up the subscription; this does not
+silently accept invalid fields. New vendor fields need no local enum update.
+The `bar_size` mode still accepts only `LAST_PRICE` for `mktbar` OHLC events.
 
 `poll()` returns up to `max_events` raw messages in arrival order without
 waiting for new data. An idle poll returns `[]`; later polls continue to work.

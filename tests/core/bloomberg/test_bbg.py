@@ -330,17 +330,43 @@ def test_bsubscribe_validates_before_opening_session(monkeypatch, ticker, field,
     factory.assert_not_called()
 
 
-@pytest.mark.parametrize("field", ["PX_LAST", "TYPO", "bid", " BID ", "BID,ASK", ["BID", "TYPO"]])
-def test_bsubscribe_rejects_unsupported_fields_before_connection(monkeypatch, field):
+@pytest.mark.parametrize("field", [" BID ", "BID,ASK", "BID&interval=1", "BID?ASK", ["BID", "ASK\n"]])
+def test_bsubscribe_rejects_malformed_fields_before_connection(monkeypatch, field):
     factory = Mock()
     monkeypatch.setattr(bbg, "bstream", factory)
-    with pytest.raises(ValueError, match="Unsupported subscription fields") as error:
+    with pytest.raises(ValueError, match="one field name per string"):
         with bbg.bsubscribe("A", field):
-            pytest.fail("Unsupported fields must not start a subscription")
-    assert "Allowed fields: ['ASK', 'BID', 'LAST_PRICE']" in str(error.value)
-    if field == "PX_LAST":
-        assert "Use LAST_PRICE instead of PX_LAST" in str(error.value)
+            pytest.fail("Malformed fields must not start a subscription")
     factory.assert_not_called()
+
+
+@pytest.mark.parametrize("borrowed", [False, True])
+def test_bsubscribe_allows_fields_outside_enum(monkeypatch, borrowed):
+    fields = ["OPEN", "HIGH", "LOW", "VOLUME", "BEST_BID", "BEST_ASK", "NEW_VENDOR_FIELD"]
+    if borrowed:
+        api, session, subscriptions, event = _native_session(monkeypatch)
+        session.nextEvent.side_effect = lambda _: (
+            event(api.Event.TIMEOUT)
+            if session.nextEvent.call_count == 1
+            else event(api.Event.SUBSCRIPTION_STATUS, "SubscriptionStarted")
+        )
+    else:
+        stream, _, _, _ = _polling_stream(monkeypatch, {"A": True})
+        session = None
+    with bbg.bsubscribe("A", fields, session=session):
+        pass
+    if borrowed:
+        assert subscriptions.add.call_args.kwargs["fields"] == fields
+    else:
+        stream.subscribe.assert_called_once_with({"A": {"fields": fields, "options": None}}, timeout=5)
+
+
+def test_bsubscribe_vendor_rejects_unknown_field(monkeypatch):
+    _, _, context, _ = _polling_stream(monkeypatch, {"A": ["UNKNOWN_FIELD"]})
+    with pytest.raises(RuntimeError, match="UNKNOWN_FIELD"):
+        with bbg.bsubscribe("A", "UNKNOWN_FIELD"):
+            pytest.fail("Vendor-rejected fields must fail startup")
+    context.__exit__.assert_called_once()
 
 
 @pytest.mark.parametrize("field", [None, 42, {"BID": True}, [None], [[]]])
