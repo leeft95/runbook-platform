@@ -558,3 +558,33 @@ def test_forecast_rollup_rejects_invalid_history_dates(history) -> None:
     frame = pd.DataFrame({"Value": [1.0]}, index=pd.to_datetime(["2025-01-01"]))
     with pytest.raises(ValueError, match="df_hst must have a DatetimeIndex without NaT"):
         rollup_table_fcst(frame, history)
+
+
+@pytest.mark.parametrize("mode", ["history", "forecast", "forecast_history"])
+def test_fill_latest_is_opt_in_and_does_not_fill_calculations(mode):
+    dates = pd.date_range("2025-06-01", periods=4)
+    frame = pd.DataFrame(
+        {"A": [1.0, 3.0, np.nan, 999.0], "B": [10.0, 20.0, 30.0, 999.0], "Missing": [np.nan] * 4},
+        index=dates,
+    )
+    original = frame.copy()
+    options = dict(params=["Latest", "5d MA", "Y-1 20d MA"])
+    if mode == "history":
+        template, args = rollup_table_hst, (frame,)
+        options["as_of"] = dates[2]
+    else:
+        template = rollup_table_fcst
+        args = (frame, frame.iloc[:3]) if mode == "forecast_history" else (frame,)
+        options["today"] = dates[2]
+    default = template(*args, **options)["Roll-up"]
+    disabled = template(*args, **options, fill_latest=False)["Roll-up"]
+    filled = template(*args, **options, fill_latest=True)["Roll-up"]
+    pd.testing.assert_frame_equal(default["data"], disabled["data"])
+    assert pd.isna(default["data"].loc["A", "Latest"])
+    assert filled["data"].loc["A", "Latest"] == 3
+    assert filled["data"].loc["B", "Latest"] == 30
+    assert pd.isna(filled["data"].loc["Missing", "Latest"])
+    assert filled["data"].loc["Total", "Latest"] == 33
+    pd.testing.assert_frame_equal(default["data"].drop(columns="Latest"), filled["data"].drop(columns="Latest"))
+    assert [p.to_json() for p in default["plots"]] == [p.to_json() for p in filled["plots"]]
+    pd.testing.assert_frame_equal(frame, original)

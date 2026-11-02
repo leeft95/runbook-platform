@@ -123,6 +123,18 @@ a unique `DatetimeIndex` and one column per input series. It returns one row
 per series, plus a calculated total when needed. `Latest` uses the final supplied row (after any `as_of` filter),
 not a per-series last non-null observation. Input data is never modified or filled.
 
+Set `fill_latest=True` to opt into carrying each series' last non-null value
+forward to the anchor date in `Latest`. The default is `False`, preserving
+blanks. This option works for both `rollup_table_hst` and `rollup_table_fcst`.
+It affects only displayed Latest values and their calculated total; averages,
+historical comparisons, reference statistics and plots retain the original gaps.
+No future observations are used, and series without prior data stay blank.
+
+```python
+rollup_table_hst(df, fill_latest=True)
+rollup_table_fcst(df, df_hst, fill_latest=True)
+```
+
 `include_total=True` by default. `total_label=None` means **Total**. If an input
 column matches that label, it is treated as a precomputed total and moved to
 the last output row. For example, use `total_label="Load"` when `Load` already

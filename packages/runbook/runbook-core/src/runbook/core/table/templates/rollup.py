@@ -39,6 +39,7 @@ def rollup_table_hst(
     format_spec: TableFormatSpec | str | None = None,
     total_label: str | None = None,
     include_total: bool = True,
+    fill_latest: bool = False,
     row_plot_links: bool | list[str] | str = True,
     all_plots_link: bool | str = True,
     highlight_columns: Sequence[str] | None = None,
@@ -57,8 +58,10 @@ def rollup_table_hst(
     All windows are calendar intervals (anchor - window, anchor], including
     across DST. The anchor is the final supplied row remaining after ``as_of``
     filtering, even for unsorted inputs; later-dated rows are then excluded.
-    Latest uses that exact row, even when missing. Averages skip missing values
-    without filling. Y-1 samples the corresponding date last year; 5Y equally
+    Latest uses that exact row by default. With ``fill_latest=True``, it
+    carries each series' last non-null value forward to that date.
+    Series without earlier observations stay missing. Averages skip missing
+    values without filling. Y-1 samples the corresponding date last year; 5Y equally
     averages available window means from the previous five calendar years,
     excluding ``exclude_years``. Missing years are not replaced with older ones.
 
@@ -106,6 +109,7 @@ def rollup_table_hst(
         format_spec=format_spec,
         total_label=total_label,
         include_total=include_total,
+        fill_latest=fill_latest,
         row_plot_links=row_plot_links,
         all_plots_link=all_plots_link,
         highlight_columns=highlight_columns,
@@ -126,6 +130,7 @@ def rollup_table_fcst(
     today: str | pd.Timestamp | None = None,
     std_limits: tuple[float, float] = (1.0, 2.0),
     include_total: bool = True,
+    fill_latest: bool = False,
     row_plot_links: bool | list[str] | str = True,
     all_plots_link: bool | str = True,
     highlight_columns: Sequence[str] | None = None,
@@ -139,7 +144,9 @@ def rollup_table_fcst(
     ``df_hst`` supplies Latest values from its final supplied row, matched to
     ``df`` columns by name, and that row's date anchors every MA window.
     Without history, today's date anchors the windows and Latest reads that
-    exact row in ``df``. Missing dates, columns and values remain missing.
+    exact date in ``df``. Opt in with ``fill_latest=True`` to carry each series'
+    last non-null value forward to the anchor. Missing columns or series
+    without prior data stay missing; averages and plots are not filled.
 
     Current Month averages all supplied observations in today's calendar month,
     including future dates, independently of the Latest date. ``today`` pins
@@ -189,6 +196,7 @@ def rollup_table_fcst(
         latest_history=latest_history,
         std_limits=std_limits,
         include_total=include_total,
+        fill_latest=fill_latest,
         row_plot_links=row_plot_links,
         all_plots_link=all_plots_link,
         highlight_columns=highlight_columns,
@@ -221,6 +229,7 @@ def _rollup_table(
     format_spec: TableFormatSpec | str | None = None,
     total_label: str | None = None,
     include_total: bool = True,
+    fill_latest: bool = False,
     row_plot_links: bool | list[str] | str = True,
     all_plots_link: bool | str = True,
     highlight_columns: Sequence[str] | None = None,
@@ -268,6 +277,11 @@ def _rollup_table(
         if include_total and total_label not in latest_history:
             latest_frame[total_label] = latest_frame.drop(columns=total_label).sum(axis=1, min_count=1)
     latest = latest_frame.reindex([anchor]).iloc[0]
+    if fill_latest:
+        # Fill only the displayed Latest vector; calculations and plots retain the original gaps.
+        latest = latest_frame.loc[latest_frame.index <= anchor].ffill().reindex([anchor], method="ffill").iloc[0]
+        if include_total and (total_label not in latest_history if latest_history is not None else calculate_total):
+            latest[total_label] = latest.drop(total_label).sum(min_count=1)
 
     def sample_at(window: str, date: pd.Timestamp) -> pd.DataFrame:
         """Select observations in a calendar window, including its end date."""
