@@ -71,7 +71,7 @@ def test_bsubscribe_borrowed_session_preserves_updates_and_ownership(monkeypatch
         feed.poll()
 
 
-@pytest.mark.parametrize("failure", ["service", "async", "timeout", "field", "security", "consumer"])
+@pytest.mark.parametrize("failure", ["service", "async", "timeout", "consumer"])
 def test_bsubscribe_borrowed_session_failures_keep_session_alive(monkeypatch, failure):
     api, session, subscriptions, event = _native_session(monkeypatch)
     session.openService.return_value = failure != "service"
@@ -122,7 +122,7 @@ def test_bsubscribe_borrowed_session_keeps_remainder_of_native_event(monkeypatch
         assert feed.poll() == []
 
 
-@pytest.mark.parametrize("name", ["SubscriptionTerminated", "SessionConnectionDown"])
+@pytest.mark.parametrize("name", ["SessionConnectionDown"])
 def test_bsubscribe_borrowed_session_runtime_failure(monkeypatch, name):
     api, session, subscriptions, event = _native_session(monkeypatch)
     session.nextEvent.side_effect = lambda _: (
@@ -278,10 +278,10 @@ def test_bsubscribe_polls_repeatedly_without_reopening_or_waiting(monkeypatch):
         feed.poll()
 
 
-@pytest.mark.parametrize("status", [{"A": False}, {"A": ["BAD_FIELD"]}, {}])
+@pytest.mark.parametrize("status", [{}])
 def test_bsubscribe_rejects_failed_or_missing_status_and_closes(monkeypatch, status):
     stream, _, context, _ = _polling_stream(monkeypatch, status)
-    with pytest.raises(RuntimeError, match="subscriptions rejected"):
+    with pytest.raises(TimeoutError, match="acknowledgements"):
         with bbg.bsubscribe("A", "BID"):
             pytest.fail("Rejected subscriptions must not reach polling")
     stream.subscribe.assert_called_once_with({"A": {"fields": ["BID"], "options": None}}, timeout=5)
@@ -359,14 +359,6 @@ def test_bsubscribe_allows_fields_outside_enum(monkeypatch, borrowed):
         assert subscriptions.add.call_args.kwargs["fields"] == fields
     else:
         stream.subscribe.assert_called_once_with({"A": {"fields": fields, "options": None}}, timeout=5)
-
-
-def test_bsubscribe_vendor_rejects_unknown_field(monkeypatch):
-    _, _, context, _ = _polling_stream(monkeypatch, {"A": ["UNKNOWN_FIELD"]})
-    with pytest.raises(RuntimeError, match="UNKNOWN_FIELD"):
-        with bbg.bsubscribe("A", "UNKNOWN_FIELD"):
-            pytest.fail("Vendor-rejected fields must fail startup")
-    context.__exit__.assert_called_once()
 
 
 @pytest.mark.parametrize("field", [None, 42, {"BID": True}, [None], [[]]])
@@ -794,9 +786,7 @@ def test_receive_borrowed_deadline_status_and_batch(monkeypatch):
     assert session.nextEvent.call_count == 2
 
 
-@pytest.mark.parametrize(
-    "failure", ["SubscriptionFailure", "SubscriptionTerminated", "SessionConnectionDown", "SessionTerminated"]
-)
+@pytest.mark.parametrize("failure", ["SessionConnectionDown", "SessionTerminated"])
 def test_receive_borrowed_failure(monkeypatch, failure):
     api, session, _, event = _native_session(monkeypatch)
     stream = bbg._SessionStream(session, {"A": {"fields": ["BID"]}})
@@ -813,9 +803,7 @@ def test_receive_borrowed_timeout(monkeypatch):
     session.nextEvent.assert_called_once()
 
 
-@pytest.mark.parametrize(
-    "failure", ["SubscriptionFailure", "SubscriptionTerminated", "SessionConnectionDown", "SessionTerminated"]
-)
+@pytest.mark.parametrize("failure", ["SessionConnectionDown", "SessionTerminated"])
 def test_receive_owned_status_failure_wakes_consumer(failure):
     handler = Mock()
     handler.data_queue = Queue()
@@ -843,3 +831,139 @@ def test_receive_borrowed_status_only_respects_overall_deadline(monkeypatch):
     waits = [c.args[0] for c in session.nextEvent.call_args_list]
     assert len(waits) == 2
     assert 0 < waits[1] < waits[0] <= 1000
+
+
+@pytest.mark.parametrize("bar_size", [None, 5])
+@pytest.mark.parametrize("method", ["poll", "receive"])
+@pytest.mark.parametrize(
+    "kind,data",
+    [
+        ("SubscriptionFailure", {"reason": {"description": "Invalid security"}}),
+        ("SubscriptionStarted", {"exceptions": [{"fieldId": "BID"}]}),
+        ("SubscriptionTerminated", {"reason": {"description": "Permission revoked"}}),
+    ],
+)
+def test_partial_basket_borrowed(monkeypatch, bar_size, method, kind, data):
+    api, session, subscriptions, event = _native_session(monkeypatch)
+
+    def next_event(_):
+        if session.nextEvent.call_count == 1:
+            return event(api.Event.TIMEOUT)
+        if session.nextEvent.call_count == 2:
+            return event(api.Event.SUBSCRIPTION_STATUS, kind, data, ticker_index=1)
+        return event(api.Event.SUBSCRIPTION_STATUS, "SubscriptionStarted")
+
+    session.nextEvent.side_effect = next_event
+    with bbg.bsubscribe(["GOOD", "BAD"], "LAST_PRICE", session=session, bar_size=bar_size) as feed:
+        session.tryNextEvent.side_effect = [
+            event(api.Event.SUBSCRIPTION_DATA, "MarketDataEvents", {"LAST_PRICE": 10}),
+            None,
+            event(api.Event.SUBSCRIPTION_DATA, "MarketDataEvents", {"LAST_PRICE": 11}),
+            None,
+        ]
+        if method == "receive":
+            session.nextEvent.side_effect = [
+                event(api.Event.SUBSCRIPTION_DATA, "MarketDataEvents", {"LAST_PRICE": 10}),
+                event(api.Event.SUBSCRIPTION_DATA, "MarketDataEvents", {"LAST_PRICE": 11}),
+            ]
+            session.tryNextEvent.side_effect = None
+            session.tryNextEvent.return_value = None
+        consume = getattr(feed, method)
+        error = consume(max_events=1)[0]
+        assert error["correlationIds"] == ["BAD"]
+        assert error["element"] == data
+        assert error["timeReceived"] == "timestamp"
+        assert error["error"] == {"messageType": kind, "details": data}
+        assert consume()[0]["element"] == {"LAST_PRICE": 10}
+        assert consume()[0]["element"] == {"LAST_PRICE": 11}
+    session.stop.assert_not_called()
+    session.unsubscribe.assert_called_once_with(subscriptions)
+
+
+@pytest.mark.parametrize("all_failed", [False, True])
+@pytest.mark.parametrize("bar_size", [None, 5])
+@pytest.mark.parametrize(
+    "kind,data",
+    [
+        ("SubscriptionFailure", {"reason": {"description": "Invalid security"}}),
+        ("SubscriptionStarted", {"exceptions": [{"fieldId": "BAD_FIELD"}]}),
+    ],
+)
+def test_partial_basket_owned(monkeypatch, all_failed, bar_size, kind, data):
+    module = ModuleType("blp.blp")
+    module.message_to_dict = lambda message: {
+        "correlationIds": message.ids,
+        "element": message.toPy(),
+        "timeReceived": "timestamp",
+    }
+    monkeypatch.setitem(sys.modules, "blp.blp", module)
+    prefix = "//blp/mktbar/ticker/" if bar_size else ""
+    good, bad = prefix + "GOOD", prefix + "BAD"
+    stream, queue, _, _ = _polling_stream(monkeypatch, {})
+    stream.event_handler.data_queue = queue
+
+    def subscribe(*args, **kwargs):
+        for ticker in [bad, good] if all_failed else [bad]:
+            message = Mock()
+            message.ids = [ticker]
+            message.messageType.return_value = kind
+            message.toPy.return_value = data
+            stream.event_handler.subscription_status_event([message])
+        if not all_failed:
+            queue.put({"correlationIds": [good], "element": {"LAST_PRICE": 10}})
+        return {good: not all_failed, bad: False if kind == "SubscriptionFailure" else ["BAD_FIELD"]}
+
+    stream.subscribe.side_effect = subscribe
+    with bbg.bsubscribe(["GOOD", "BAD"], "LAST_PRICE", bar_size=bar_size) as feed:
+        updates = feed.receive()
+        assert len(updates) == 2
+        assert updates[0]["correlationIds"] == ["BAD"]
+        assert updates[0]["error"]["messageType"] == kind
+        assert updates[0]["timeReceived"] == "timestamp"
+        assert updates[1]["correlationIds"] == ["GOOD"]
+        assert ("error" in updates[1]) == all_failed
+        assert feed.poll() == []
+
+
+def test_all_rejected_borrowed_basket(monkeypatch):
+    api, session, _, event = _native_session(monkeypatch)
+    session.nextEvent.side_effect = lambda _: (
+        event(api.Event.TIMEOUT)
+        if session.nextEvent.call_count == 1
+        else event(api.Event.SUBSCRIPTION_STATUS, "SubscriptionFailure", {"reason": "bad"})
+    )
+    session.tryNextEvent.return_value = None
+    with bbg.bsubscribe("BAD", "BID", session=session) as feed:
+        assert feed.receive()[0]["error"]["details"] == {"reason": "bad"}
+        assert feed.poll() == []
+
+
+@pytest.mark.parametrize("borrowed", [False, True])
+def test_runtime_ticker_failure_keeps_other_updates(monkeypatch, borrowed):
+    api, session, _, event = _native_session(monkeypatch)
+    if borrowed:
+        stream = bbg._SessionStream(session, {"GOOD": {"fields": ["BID"]}, "BAD": {"fields": ["BID"]}})
+        session.nextEvent.return_value = event(
+            api.Event.SUBSCRIPTION_STATUS, "SubscriptionTerminated", {"reason": "revoked"}, ticker_index=1
+        )
+        session.tryNextEvent.side_effect = [event(api.Event.SUBSCRIPTION_DATA, "MarketDataEvents", {"BID": 12}), None]
+    else:
+        stream, queue, _, _ = _polling_stream(monkeypatch, {})
+        stream.event_handler.data_queue = queue
+        bbg._forward_stream_failures(stream.event_handler)
+        module = sys.modules["blp.blp"]
+        module.message_to_dict = lambda message: {
+            "correlationIds": ["BAD"],
+            "element": message.toPy(),
+            "timeReceived": "timestamp",
+        }
+        message = Mock()
+        message.messageType.return_value = "SubscriptionTerminated"
+        message.toPy.return_value = {"reason": "revoked"}
+        stream.event_handler.subscription_status_event([message])
+        queue.put({"correlationIds": ["GOOD"], "element": {"BID": 12}})
+    updates = bbg.BloombergSubscription(stream).receive()
+    assert updates[0]["correlationIds"] == ["BAD"]
+    assert updates[0]["error"]["messageType"] == "SubscriptionTerminated"
+    assert updates[1]["correlationIds"] == ["GOOD"]
+    assert updates[1]["element"] == {"BID": 12}

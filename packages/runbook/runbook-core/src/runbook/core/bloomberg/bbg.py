@@ -38,6 +38,13 @@ def _queue_market_bar_events(handler, event):
         handler.data_queue.put(message_to_dict(message))
 
 
+def _subscription_error(message, serialize):
+    """Keep the raw envelope and expose a consistent per-ticker error marker."""
+    update = serialize(message)
+    update["error"] = {"messageType": str(message.messageType()), "details": message.toPy()}
+    return update
+
+
 def _forward_stream_failures(handler):
     """Wake queue consumers when blp would otherwise only log a failure."""
 
@@ -51,7 +58,9 @@ def _forward_stream_failures(handler):
                 elif kind in {"SubscriptionFailure", "SubscriptionTerminated"} or (
                     kind == "SubscriptionStarted" and message.toPy().get("exceptions")
                 ):
-                    error = RuntimeError(f"Bloomberg subscriptions rejected: {message}")
+                    from blp.blp import message_to_dict
+
+                    error = _subscription_error(message, message_to_dict)
                 if error is not None:
                     handler.data_queue.put(error)
             original(event)
@@ -132,7 +141,7 @@ class BloombergSubscription:
 
         Timeout is one overall idle-wait limit in seconds, not a delivery delay.
         Zero is nonblocking. Returns [] on timeout, not a health indication.
-        Failures propagate. Like poll(), this is a single-consumer API.
+        Ticker errors are messages; session failures propagate. Single consumer only.
         """
         if (
             isinstance(timeout, bool)
@@ -186,7 +195,7 @@ class _SessionStream:
         self._blpapi = blpapi
         self._serialize = message_to_dict
         self._pending = deque()
-        self._started = set()
+        self._acknowledged = set()
         self._topics = {}
         self.subscriptions = blpapi.SubscriptionList()
         for ticker, config in subscriptions.items():
@@ -205,9 +214,12 @@ class _SessionStream:
             if event.eventType() == self._blpapi.Event.SUBSCRIPTION_STATUS:
                 data = message.toPy()
                 if kind in {"SubscriptionFailure", "SubscriptionTerminated"} or data.get("exceptions"):
-                    raise RuntimeError(f"Bloomberg subscriptions rejected: {message}")
+                    update = _subscription_error(message, self._serialize)
+                    update["correlationIds"] = [self._topics[cid] for cid in correlations]
+                    self._pending.append(update)
+                    self._acknowledged.update(correlations)
                 if kind == "SubscriptionStarted":
-                    self._started.update(correlations)
+                    self._acknowledged.update(correlations)
             elif event.eventType() == self._blpapi.Event.SUBSCRIPTION_DATA:
                 update = self._serialize(message)
                 update["correlationIds"] = [self._topics[cid] for cid in correlations]
@@ -215,7 +227,7 @@ class _SessionStream:
 
     def wait_started(self, timeout):
         deadline = monotonic() + timeout
-        while len(self._started) < len(self._topics):
+        while len(self._acknowledged) < len(self._topics):
             remaining = deadline - monotonic()
             if remaining <= 0:
                 raise TimeoutError("Timed out waiting for Bloomberg subscription acknowledgements")
@@ -282,8 +294,11 @@ def bsubscribe(
     Keep the context open for the service lifetime and call ``feed.poll()``
     each cycle, or use ``feed.receive(timeout=1.0)`` to wake on incoming data.
     Entry waits up to ``timeout`` seconds per subscription status;
-    rejected securities or fields raise RuntimeError, missing acknowledgements
-    raise TimeoutError. Exit closes the owned bstream session and subscriptions.
+    rejected securities or fields arrive as per-ticker error messages in the
+    normal raw envelope with an additional ``error`` key. Valid tickers keep
+    streaming; an entirely rejected basket returns its errors. Missing
+    acknowledgements raise TimeoutError; session failures remain fatal.
+    Exit closes the owned bstream session and subscriptions.
     Polling itself never waits for new data. See ``bstream`` for the raw message
     format and the underlying library's status logging behaviour.
 
@@ -348,9 +363,9 @@ def bsubscribe(
             status = stream.subscribe(subscriptions, timeout=timeout)
         except Empty as exc:
             raise TimeoutError("Timed out waiting for Bloomberg subscription acknowledgements") from exc
-        rejected = {name: status.get(name) for name in subscriptions if status.get(name) is not True}
-        if rejected:
-            raise RuntimeError(f"Bloomberg subscriptions rejected: {rejected}")
+        missing = [name for name in subscriptions if name not in status]
+        if missing:
+            raise TimeoutError(f"Missing Bloomberg subscription acknowledgements: {missing}")
         feed = BloombergSubscription(stream, tickers_by_topic)
         try:
             yield feed

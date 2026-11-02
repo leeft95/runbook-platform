@@ -175,8 +175,8 @@ comma-separated strings, and subscription delimiters raise `ValueError` before
 connecting. Repeated fields are requested once.
 
 Bloomberg validates actual field availability for each security and entitlement.
-Any field rejection fails startup and cleans up the subscription; this does not
-silently accept invalid fields. New vendor fields need no local enum update.
+Rejected tickers and fields produce per-ticker error messages while valid
+subscriptions continue streaming. New vendor fields need no local enum update.
 The `bar_size` mode still accepts only `LAST_PRICE` for `mktbar` OHLC events.
 
 `poll()` returns up to `max_events` raw messages in arrival order without
@@ -203,16 +203,32 @@ overall idle-wait limit in seconds; status events do not reset it. A timeout
 returns `[]`; zero performs a nonblocking receive. Excess messages remain queued,
 with the same raw payloads, correlation IDs, and arrival order as `poll()`.
 Both owned and borrowed sessions are supported. Use one consumer per feed;
-session/subscription failures propagate and an empty result is not a health check.
+session failures propagate and an empty result is not a health check.
+
+Ticker-level failures use the same raw envelope (`correlationIds`, `element`,
+`messageType`, `timeReceived`) with an additional `error` object containing
+`messageType` and `details` (Bloomberg's original reason or field exceptions).
+This applies to startup rejection, later termination, and partial field rejection,
+for both session modes and market bars. Valid fields may keep producing updates.
+Errors count toward `max_events` and retain their place in arrival order.
+An entirely rejected basket opens successfully and returns its ticker errors.
+
+```python
+for update in feed.receive():
+    if "error" in update:
+        handle_ticker_error(update["correlationIds"], update["error"])
+    else:
+        publish(update)
+```
 
 The `timeout` argument to `bsubscribe` bounds each subscription acknowledgement
-wait in seconds (default 5). Failed securities, rejected fields, or missing
-status entries fail context entry; acknowledgement timeout raises `TimeoutError`.
-An internally created session closes on exit, including startup rejection and consumer exceptions;
+wait in seconds (default 5). Missing status entries or acknowledgement timeouts
+raise `TimeoutError`. Ticker rejection does not fail context entry.
+An internally created session closes on exit, including startup timeout and consumer exceptions;
 polling after exit raises `RuntimeError`. `options`, `host`, and `port` are
 forwarded to the subscription/connection. The downstream service owns scheduling
 and shutdown. An empty batch does not prove connection health: ongoing session
-and subscription failures raise on consumption, alongside `blp` logging.
+failures raise on consumption, alongside `blp` logging.
 
 To reuse a caller-owned, already started **synchronous** `blpapi.Session`:
 
@@ -228,12 +244,12 @@ its event stream. Authentication, start and stop remain caller-owned; `host`
 and `port` are ignored. Each subscription gets a unique internal correlation
 ID, mapped back to ticker names in returned updates. Updates received during
 startup are retained for polling. `timeout` bounds the total acknowledgement
-wait in this mode. Rejection, timeout, or a consumer exception cancels the
+wait in this mode. Timeout or a consumer exception cancels the
 helper's subscriptions without stopping the session. Asynchronous sessions
 with an existing callback are not supported by this path.
 
 Borrowed-session polling uses `tryNextEvent()` and also processes subscription
-status: rejection/termination raises `RuntimeError`, and connection-down or
+status: rejection/termination produces a ticker error message, and connection-down or
 session-terminated messages raise `ConnectionError`. A poll processes at most
 1,000 native events as well as respecting its message batch limit.
 
