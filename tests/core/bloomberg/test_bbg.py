@@ -1032,3 +1032,67 @@ def test_runtime_ticker_failure_keeps_other_updates(monkeypatch, borrowed):
     assert updates[0]["error"]["messageType"] == "SubscriptionTerminated"
     assert updates[1]["correlationIds"] == ["GOOD"]
     assert updates[1]["element"] == {"BID": 12}
+
+
+@pytest.mark.parametrize("borrowed", [False, True])
+def test_bsrch_rejects_empty_final_event_after_partial_data(monkeypatch, borrowed):
+    _, session, queue, _ = _bsrch_runtime(
+        monkeypatch,
+        [
+            ("PARTIAL_RESPONSE", [_grid_response(["A"], [[1]])]),
+            ("RESPONSE", []),
+        ],
+    )
+    with pytest.raises(RuntimeError, match="incomplete response: empty final RESPONSE"):
+        bbg.bsrch(bikey="key", session=session if borrowed else None)
+    queue.purge.assert_called_once()
+    assert session.stop.call_count == (0 if borrowed else 1)
+
+
+@pytest.mark.parametrize("stage", ["decode", "normalise"])
+@pytest.mark.parametrize("borrowed", [False, True])
+def test_bsrch_deadline_includes_decoding_and_dataframe_construction(monkeypatch, stage, borrowed):
+    _, session, queue, _ = _bsrch_runtime(
+        monkeypatch,
+        [
+            ("RESPONSE", [_grid_response(["A"], [[1]])]),
+        ],
+    )
+    clock = [0.0]
+    monkeypatch.setattr(bbg, "monotonic", lambda: clock[0])
+    if stage == "decode":
+        final_event = next(queue.nextEvent.side_effect)
+        message = next(iter(final_event))
+        payload = message.toPy.return_value
+
+        def decode():
+            clock[0] = 1.0
+            return payload
+
+        message.toPy.side_effect = decode
+        queue.nextEvent.side_effect = [final_event]
+    else:
+        original = bbg._normalise_bsrch
+
+        def normalise(responses):
+            result = original(responses)
+            clock[0] = 1.0
+            return result
+
+        monkeypatch.setattr(bbg, "_normalise_bsrch", normalise)
+    with pytest.raises(TimeoutError):
+        bbg.bsrch(bikey="key", session=session if borrowed else None, timeout=1.0)
+    queue.purge.assert_called_once()
+    assert session.stop.call_count == (0 if borrowed else 1)
+
+
+def test_bsrch_accepts_well_formed_empty_result(monkeypatch):
+    _, session, queue, _ = _bsrch_runtime(
+        monkeypatch,
+        [
+            ("RESPONSE", [_grid_response(["A"], [])]),
+        ],
+    )
+    result = bbg.bsrch(bikey="key", session=session)
+    assert result.empty and result.columns.tolist() == ["A"]
+    queue.purge.assert_called_once()

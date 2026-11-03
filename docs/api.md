@@ -108,7 +108,10 @@ closed. Only `//blp/exrsvc` is opened.
 Responses use a native request-local `blpapi.EventQueue` and `message.toPy()`.
 Partial responses are collected through the final RESPONSE under one overall
 response deadline (seconds, starting before send). Startup/service opening use
-Bloomberg's connection timeouts. Queue cleanup cancels pending requests without
+Bloomberg's connection timeouts. The deadline is checked again after decoding
+and DataFrame construction. An empty final RESPONSE event is rejected, even
+after partial data; a well-formed grid with zero rows remains valid.
+Queue cleanup cancels pending requests without
 consuming other requests' events or stopping a borrowed session.
 
 ColumnTitles become DataFrame columns. Object dtypes retain native dates,

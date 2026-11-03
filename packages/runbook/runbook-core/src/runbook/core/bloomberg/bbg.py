@@ -1101,14 +1101,21 @@ def bsrch(
                     raise TimeoutError("Timed out waiting for complete Bloomberg BSRCH response")
                 if kind not in {blpapi.Event.PARTIAL_RESPONSE, blpapi.Event.RESPONSE}:
                     raise RuntimeError(f"Bloomberg BSRCH request failed: {[m.toPy() for m in event]!r}")
+                has_messages = False
                 for message in event:
+                    has_messages = True
                     if monotonic() >= deadline:
                         raise TimeoutError("Timed out waiting for complete Bloomberg BSRCH response")
                     yield message.toPy()
                 if kind == blpapi.Event.RESPONSE:
+                    if not has_messages:
+                        raise RuntimeError("Bloomberg BSRCH incomplete response: empty final RESPONSE")
                     return
 
-        return _normalise_bsrch(responses())
+        result = _normalise_bsrch(responses())
+        if monotonic() >= deadline:
+            raise TimeoutError("Timed out waiting for complete Bloomberg BSRCH response")
+        return result
     finally:
         try:
             if queue is not None:
