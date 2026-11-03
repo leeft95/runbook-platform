@@ -702,6 +702,21 @@ def test_bsrch_rejects_failed_or_inconsistent_responses(payloads, error):
         bbg._normalise_bsrch(payloads)
 
 
+@pytest.mark.parametrize("error", ["No weather data points found.", "Not entitled."])
+def test_bsrch_top_level_error_precedes_schema_validation(error):
+    payload = {
+        "NumOfFields": 0,
+        "NumOfRecords": 0,
+        "ColumnTitles": [],
+        "DataRecords": [{"DataFields": []}],
+        "ReachMax": True,
+        "Error": error,
+    }
+    with pytest.raises(RuntimeError) as exc:
+        bbg._normalise_bsrch([payload])
+    assert str(exc.value) == f"Bloomberg BSRCH response error: {error}"
+
+
 @pytest.mark.parametrize("borrowed", [False, True])
 @pytest.mark.parametrize("failure", ["start", "service", "send", "timeout", "partial_timeout", "status", "vendor"])
 def test_bsrch_failure_cleanup(monkeypatch, borrowed, failure):

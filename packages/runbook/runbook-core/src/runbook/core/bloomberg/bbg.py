@@ -993,6 +993,8 @@ def _normalise_bsrch(responses) -> pd.DataFrame:
     for data in responses:
         if not isinstance(data, dict):
             raise ValueError("Invalid Bloomberg BSRCH response")
+        if data.get("Error"):
+            raise RuntimeError(f"Bloomberg BSRCH response error: {data['Error']}")
         if data.get("responseError") or data.get("ErrorReport"):
             raise RuntimeError(f"Bloomberg BSRCH response error: {data!r}")
         titles = data.get("ColumnTitles")
