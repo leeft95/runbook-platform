@@ -600,122 +600,172 @@ def test_bdib_serializes_requests_on_supplied_session(monkeypatch):
     assert list(result["security"]) == ["A", "B"]
 
 
-def _grid_response(columns, rows, event="RESPONSE"):
-    """Match blp's serialized ExcelGetGrid sequence and choice containers."""
-    return {
-        "eventTypeName": f"blpapi.Event.{event}",
-        "message": {
-            "element": {
-                "ExcelGetGridResponse": {
-                    "ColumnTitles": columns,
-                    "DataRecords": [
-                        {"DataRecords": {"DataFields": [{"DataFields": {"value": value}} for value in row]}}
-                        for row in rows
-                    ],
-                }
-            }
-        },
+def _grid_response(columns, rows):
+    data = {
+        "DataRecords": [{"DataFields": [{"value": value} for value in row]} for row in rows],
+        "NumOfRecords": len(rows),
     }
+    if columns is not None:
+        data.update(ColumnTitles=columns, NumOfFields=len(columns))
+    return data
 
 
-@pytest.mark.parametrize("supplied_session", [False, True], ids=["owned-session", "caller-session"])
-@pytest.mark.parametrize("failure", [None, "query", "response"], ids=["success", "query-failure", "response-failure"])
-def test_bsrch_request_and_session_ownership(monkeypatch, supplied_session, failure):
-    session = Mock() if supplied_session else None
-    connection = Mock()
-    original_services = {"HistoricalDataRequest": "//blp/refdata"}
-    connection._SERVICES = original_services
-    connection.__enter__ = Mock(return_value=connection)
-    connection.__exit__ = Mock(return_value=False)
-    query = Mock(return_value=connection)
-    monkeypatch.setattr(bbg, "_blp_types", lambda: (None, query))
-    responses = [
-        _grid_response(["Ticker", "Value"], [["A", 12.5]], "PARTIAL_RESPONSE"),
-        _grid_response(["Ticker", "Value"], [["B", None]]),
-    ]
-    if failure == "response":
-        responses[-1]["message"]["element"] = {"ExcelGetGridResponse": {"responseError": "Not entitled"}}
+def _bsrch_runtime(monkeypatch, parts):
+    api = ModuleType("blpapi")
+    api.Event = type("Event", (), {"PARTIAL_RESPONSE": 1, "RESPONSE": 2, "TIMEOUT": 3, "REQUEST_STATUS": 4})
+    session, queue, request = Mock(), Mock(), Mock()
+    api.Session = Mock(return_value=session)
+    api.EventQueue = Mock(return_value=queue)
+    session.getService.return_value.createRequest.return_value = request
+    monkeypatch.setitem(sys.modules, "blpapi", api)
 
-    def fetch(request, *, parse, collector):
-        assert parse is False
-        if failure == "query":
-            raise ConnectionError("Unexpected blpapi.Event.TIMEOUT")
-        return collector(iter(responses))
+    def event(kind, payloads):
+        result = MagicMock()
+        result.eventType.return_value = getattr(api.Event, kind)
+        messages = [Mock(toPy=Mock(return_value=data)) for data in payloads]
+        result.__iter__.side_effect = lambda: iter(messages)
+        return result
 
-    connection.query.side_effect = fetch
-    if failure:
-        with pytest.raises((ConnectionError, RuntimeError), match="TIMEOUT|Not entitled"):
-            bbg.bsrch("IPD:DEX", "saved-search-key", session=session)
-    else:
-        result = bbg.bsrch("IPD:DEX", "saved-search-key", session=session)
-        pd.testing.assert_frame_equal(result, pd.DataFrame({"Ticker": ["A", "B"], "Value": [12.5, np.nan]}))
-    query.assert_called_once_with(timeout=30000)
-    assert connection._SERVICES == {"ExcelGetGridRequest": "//blp/exrsvc"}
-    assert original_services == {"HistoricalDataRequest": "//blp/refdata"}
-    connection.query.assert_called_once_with(
-        {
-            "ExcelGetGridRequest": {
-                "Domain": "IPD:DEX",
-                "Overrides": [
-                    {"Overrides": {"name": "BIKEY", "value": "saved-search-key"}},
-                ],
-            }
-        },
-        parse=False,
-        collector=bbg._normalise_bsrch,
+    queue.nextEvent.side_effect = [event(kind, payloads) for kind, payloads in parts]
+    return api, session, queue, request
+
+
+@pytest.mark.parametrize("borrowed", [False, True])
+def test_bsrch_request_and_session_ownership(monkeypatch, borrowed):
+    api, session, queue, request = _bsrch_runtime(
+        monkeypatch,
+        [
+            ("PARTIAL_RESPONSE", [_grid_response(["Ticker", "Value"], [["A", 12.5]])]),
+            ("RESPONSE", [_grid_response(None, [["B", None]])]),
+        ],
     )
-    if supplied_session:
-        assert connection.session is session
-        assert connection._started is True
-        connection.start.assert_called_once_with()
-        session.start.assert_not_called()
-        session.stop.assert_not_called()
-        connection.stop.assert_not_called()
-        connection.__enter__.assert_not_called()
-        connection.__exit__.assert_not_called()
-    else:
-        connection.__enter__.assert_called_once()
-        connection.__exit__.assert_called_once()
+    result = bbg.bsrch("IPD:DEX", "saved-key", session if borrowed else None)
+    assert result.to_dict("records") == [{"Ticker": "A", "Value": 12.5}, {"Ticker": "B", "Value": None}]
+    request.set.assert_called_once_with("Domain", "IPD:DEX")
+    request.getElement.assert_called_once_with("Overrides")
+    assert request.getElement.return_value.appendElement.return_value.setElement.call_args_list == [
+        call("name", "BIKEY"),
+        call("value", "saved-key"),
+    ]
+    session.sendRequest.assert_called_once_with(request, eventQueue=queue)
+    session.nextEvent.assert_not_called()
+    queue.purge.assert_called_once()
+    assert session.start.call_count == session.stop.call_count == (0 if borrowed else 1)
+    assert api.Session.call_count == (0 if borrowed else 1)
 
 
-def test_bsrch_grid_types_empty_results_and_partial_headers():
-    date = pd.Timestamp("2026-10-13")
-    columns = ["Name", "Number", "Date", "Flag", "Missing"]
-    first = _grid_response(columns, [["Asset", 1.25, date, True, None]], "PARTIAL_RESPONSE")
-    second = _grid_response(None, [["Next", -2.0, date, False, None]])
-    # CHOICE elements may be serialized directly under their element name.
-    second["message"]["element"]["ExcelGetGridResponse"]["DataRecords"][0]["DataRecords"]["DataFields"][0] = {
-        "DataFields": "Next",
-    }
-    actual = bbg._normalise_bsrch([first, second])
-    expected = pd.DataFrame([["Asset", 1.25, date, True, None], ["Next", -2.0, date, False, None]], columns=columns)
-    pd.testing.assert_frame_equal(actual, expected)
-    empty = bbg._normalise_bsrch([_grid_response(columns, [])])
-    assert empty.empty and empty.columns.tolist() == columns
+def test_bsrch_typed_weather_grid_overrides_and_reachmax(monkeypatch):
+    import datetime
+
+    date = datetime.date(2026, 11, 3)
+    columns = ["Location", "Date", "Temperature", "Valid", "ID", "Missing"]
+    payload = _grid_response(columns, [["London", date, 12.5, True, 2**60 + 1, None]])
+    payload["ReachMax"] = True
+    _, session, _, request = _bsrch_runtime(monkeypatch, [("RESPONSE", [payload])])
+    overrides = {"LOCATION": "London", "DATE": "20261103"}
+    result = bbg.bsrch("weather-domain", session=session, overrides=overrides)
+    assert result.iloc[0].tolist() == ["London", date, 12.5, True, 2**60 + 1, None]
+    assert request.getElement.return_value.appendElement.return_value.setElement.call_args_list == [
+        call("name", "LOCATION"),
+        call("value", "London"),
+        call("name", "DATE"),
+        call("value", "20261103"),
+    ]
+    assert overrides == {"LOCATION": "London", "DATE": "20261103"}
+
+
+def test_bsrch_grid_empty_and_partial_headers():
+    empty = bbg._normalise_bsrch([_grid_response(["A"], [])])
+    assert empty.empty and empty.columns.tolist() == ["A"]
+    result = bbg._normalise_bsrch([_grid_response(["A"], [[None]]), _grid_response(None, [[123]])])
+    assert result["A"].tolist() == [None, 123]
 
 
 @pytest.mark.parametrize(
-    "responses, error",
+    "payloads,error",
     [
         ([], "No data"),
         ([_grid_response([], [])], "no ColumnTitles"),
         ([_grid_response(["A", "B"], [[1]])], "row length"),
-        ([_grid_response(["A"], [[1]], "PARTIAL_RESPONSE"), _grid_response(["B"], [[2]])], "titles changed"),
-        ([_grid_response(["A"], [[1]], "REQUEST_STATUS")], "request failed"),
+        ([_grid_response(["A"], [[1]]), _grid_response(["B"], [[2]])], "titles changed"),
+        ([_grid_response(["A", "A"], [[1, 2]])], "duplicate"),
+        ([{"responseError": {"description": "Denied"}}], "response error"),
+        ([{"ErrorReport": ["Invalid domain"]}], "response error"),
+        ([dict(_grid_response(["A"], [[1]]), NumOfFields=2)], "NumOfFields"),
+        ([dict(_grid_response(["A"], [[1]]), NumOfRecords=2)], "NumOfRecords"),
+        ([dict(_grid_response(["A"], [[1]]), NumOfRecords=True)], "NumOfRecords"),
+        ([{"ColumnTitles": ["A"], "DataRecords": [{}]}], "DataFields"),
     ],
 )
-def test_bsrch_rejects_failed_or_inconsistent_responses(responses, error):
+def test_bsrch_rejects_failed_or_inconsistent_responses(payloads, error):
     with pytest.raises((RuntimeError, ValueError), match=error):
-        bbg._normalise_bsrch(responses)
+        bbg._normalise_bsrch(payloads)
 
 
-@pytest.mark.parametrize("dataset,bikey", [("", "key"), ("IPD:DEX", None), ("IPD:DEX", " ")])
-def test_bsrch_validates_search_before_loading_bloomberg(monkeypatch, dataset, bikey):
-    loader = Mock(side_effect=AssertionError("Runtime should not be imported"))
-    monkeypatch.setattr(bbg, "_blp_types", loader)
-    with pytest.raises(ValueError, match="nonempty"):
-        bbg.bsrch(dataset, bikey)
-    loader.assert_not_called()
+@pytest.mark.parametrize("borrowed", [False, True])
+@pytest.mark.parametrize("failure", ["start", "service", "send", "timeout", "partial_timeout", "status", "vendor"])
+def test_bsrch_failure_cleanup(monkeypatch, borrowed, failure):
+    parts = [("RESPONSE", [_grid_response(["A"], [[1]])])]
+    if failure in {"timeout", "partial_timeout"}:
+        parts = [("TIMEOUT", [])]
+        if failure == "partial_timeout":
+            parts.insert(0, ("PARTIAL_RESPONSE", [_grid_response(["A"], [[1]])]))
+    elif failure == "status":
+        parts = [("REQUEST_STATUS", [{"reason": "RequestFailure"}])]
+    elif failure == "vendor":
+        parts = [("RESPONSE", [{"ErrorReport": "Denied"}])]
+    _, session, queue, _ = _bsrch_runtime(monkeypatch, parts)
+    if failure == "start":
+        if borrowed:
+            return
+        session.start.return_value = False
+    if failure == "service":
+        session.openService.return_value = False
+    if failure == "send":
+        session.sendRequest.side_effect = RuntimeError("send failed")
+    with pytest.raises((ConnectionError, RuntimeError, TimeoutError)):
+        bbg.bsrch(bikey="key", session=session if borrowed else None)
+    assert session.stop.call_count == (0 if borrowed else 1)
+    assert queue.purge.call_count == (0 if failure in {"start", "service"} else 1)
+
+
+def test_bsrch_overall_deadline_not_reset_by_partial_response(monkeypatch):
+    _, session, queue, _ = _bsrch_runtime(
+        monkeypatch,
+        [
+            ("PARTIAL_RESPONSE", [_grid_response(["A"], [[1]])]),
+            ("RESPONSE", [_grid_response(None, [[2]])]),
+        ],
+    )
+    monkeypatch.setattr(bbg, "monotonic", Mock(side_effect=[0.0, 0.1, 0.3, 0.7, 1.1]))
+    with pytest.raises(TimeoutError):
+        bbg.bsrch(bikey="key", session=session, timeout=1)
+    waits = [c.args[0] for c in queue.nextEvent.call_args_list]
+    assert 0 < waits[1] < waits[0] <= 1000
+    queue.purge.assert_called_once()
+    session.stop.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},
+        {"bikey": ""},
+        {"dataset": "", "bikey": "key"},
+        {"bikey": "key", "overrides": {"X": "Y"}},
+        {"overrides": {}},
+        {"overrides": {"X": None}},
+        {"overrides": {"": "Y"}},
+        {"bikey": "key", "timeout": 0},
+        {"bikey": "key", "timeout": True},
+        {"bikey": "key", "timeout": float("nan")},
+        {"bikey": "key", "timeout": float("inf")},
+    ],
+)
+def test_bsrch_validates_before_loading_bloomberg(monkeypatch, kwargs):
+    monkeypatch.setitem(sys.modules, "blpapi", None)
+    with pytest.raises(ValueError):
+        bbg.bsrch(**kwargs)
 
 
 def test_receive_owned_waits_once_and_preserves_remainder(monkeypatch):

@@ -89,26 +89,34 @@ while a host-owned Dash route resolver handles the same logical destinations.
 
 ### Bloomberg saved searches
 
-`bsrch` uses the legacy core package's `ExcelGetGridRequest` with a `Domain`
-and `BIKEY` override, returning a DataFrame with Bloomberg's column titles.
-Pass the saved search key explicitly:
+Use `bsrch(dataset="IPD:DEX", bikey=None, session=None, *,
+overrides=None, timeout=30.0)` with either a saved-search BIKEY or an explicit
+mapping of Bloomberg override names to string values:
 
 ```python
 from runbook.core.bloomberg import bbg
 
 result = bbg.bsrch("IPD:DEX", bikey="your-saved-search-key")
-
-# Reuse the same started synchronous blpapi.Session used for bdh/bref/etc.
-result = bbg.bsrch("IPD:DEX", bikey="your-saved-search-key", session=session)
+result = bbg.bsrch(domain, session=session, overrides=search_overrides, timeout=30.0)
 ```
 
-An omitted session uses the standard local Bloomberg connection and closes it
-after the request. A supplied session is neither started nor stopped by this
-helper; its authentication and lifecycle remain with the caller. The request
-opens `//blp/exrsvc`, uses its own event queue, combines partial responses and
-retains column names for empty results. Response waits use a 30-second timeout.
-The migrated helper does not embed the old handler's host, application identity
-or default saved-search key.
+BIKEY and explicit overrides are mutually exclusive. Existing positional
+`dataset, bikey, session` calls remain supported. A supplied started session
+is never started or stopped by this helper; an owned local session is always
+closed. Only `//blp/exrsvc` is opened.
+
+Responses use a native request-local `blpapi.EventQueue` and `message.toPy()`.
+Partial responses are collected through the final RESPONSE under one overall
+response deadline (seconds, starting before send). Startup/service opening use
+Bloomberg's connection timeouts. Queue cleanup cancels pending requests without
+consuming other requests' events or stopping a borrowed session.
+
+ColumnTitles become DataFrame columns. Object dtypes retain native dates,
+booleans, large integers and nulls without stringification or numeric precision
+loss. Vendor errors, inconsistent column schemas, mismatched per-message
+NumOfFields/NumOfRecords, malformed rows and missing final responses raise.
+`ReachMax=True` alone does not mean truncation; it is not used to reject an
+otherwise complete response or trigger pagination.
 
 ### Bloomberg live data
 

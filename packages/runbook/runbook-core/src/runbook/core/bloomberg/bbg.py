@@ -974,79 +974,143 @@ def bql(query: str, pivot: bool = True, session: tp.Any = None):
 
 
 def _bsrch_value(field):
-    """Unwrap blp's named sequence/choice containers, retaining typed cell values."""
+    """Unwrap native CHOICE cells without stringifying values or nulls."""
     while isinstance(field, dict):
         if not field:
             return None
         if len(field) != 1:
             raise ValueError(f"Invalid Bloomberg BSRCH cell: {field!r}")
         field = next(iter(field.values()))
+    if isinstance(field, (list, tuple)):
+        raise ValueError(f"Invalid Bloomberg BSRCH cell: {field!r}")
     return field
 
 
 def _normalise_bsrch(responses) -> pd.DataFrame:
-    """Collect ExcelGetGrid ColumnTitles/DataRecords, including partial responses."""
+    """Collect native GridResponse payloads, validating each response part."""
     columns = None
     rows = []
-    for response in responses:
-        message = response["message"]
-        if response["eventTypeName"] not in {"blpapi.Event.PARTIAL_RESPONSE", "blpapi.Event.RESPONSE"}:
-            raise RuntimeError(f"Bloomberg BSRCH request failed: {message['element']!r}")
-        data = next(iter(message["element"].values()))
+    for data in responses:
+        if not isinstance(data, dict):
+            raise ValueError("Invalid Bloomberg BSRCH response")
         if data.get("responseError") or data.get("ErrorReport"):
             raise RuntimeError(f"Bloomberg BSRCH response error: {data!r}")
         titles = data.get("ColumnTitles")
-        if titles:
+        if titles is not None:
+            if not isinstance(titles, list) or not titles or any(not isinstance(c, str) for c in titles):
+                raise ValueError("Bloomberg BSRCH response has no ColumnTitles")
+            if len(set(titles)) != len(titles):
+                raise ValueError("Bloomberg BSRCH duplicate ColumnTitles")
             if columns is not None and columns != titles:
                 raise ValueError("Bloomberg BSRCH column titles changed between response parts")
             columns = titles
         if columns is None:
             raise ValueError("Bloomberg BSRCH response has no ColumnTitles")
-        for record in data.get("DataRecords", []):
-            fields = record["DataRecords"]["DataFields"]
-            row = [_bsrch_value(field) for field in fields]
+        records = data.get("DataRecords", [])
+        if not isinstance(records, list):
+            raise ValueError("Invalid Bloomberg BSRCH DataRecords")
+        for name, actual in (("NumOfFields", len(columns)), ("NumOfRecords", len(records))):
+            if name in data:
+                count = data[name]
+                if isinstance(count, bool) or not isinstance(count, int) or count != actual:
+                    raise ValueError(f"Bloomberg BSRCH {name} does not match response data")
+        for record in records:
+            if not isinstance(record, dict) or not isinstance(record.get("DataFields"), list):
+                raise ValueError("Invalid Bloomberg BSRCH DataFields")
+            row = [_bsrch_value(field) for field in record["DataFields"]]
             if len(row) != len(columns):
                 raise ValueError("Bloomberg BSRCH row length does not match ColumnTitles")
             rows.append(row)
     if columns is None:
         raise ValueError("No data returned from Bloomberg BSRCH request")
-    return pd.DataFrame(rows, columns=columns)
+    # Object columns retain native dates, booleans, large integers and None exactly.
+    return pd.DataFrame(rows, columns=columns, dtype=object)
 
 
-def bsrch(dataset: str = "IPD:DEX", bikey: str | None = None, session: tp.Any = None) -> pd.DataFrame:
-    """Fetch a saved Bloomberg search using the core package's ExcelGetGrid request.
+def bsrch(
+    dataset: str = "IPD:DEX",
+    bikey: str | None = None,
+    session: tp.Any = None,
+    *,
+    overrides: tp.Mapping[str, str] | None = None,
+    timeout: float = 30.0,
+) -> pd.DataFrame:
+    """Fetch an ExcelGetGrid search using BIKEY or explicit name/value overrides.
 
-    Pass the saved search's ``bikey`` explicitly. ColumnTitles become DataFrame
-    columns and DataRecords become rows, preserving Bloomberg's cell values.
-    Partial responses are combined in arrival order; an empty search retains
-    its column names.
+    Supply exactly one of a nonempty BIKEY or a nonempty overrides mapping.
+    Partial responses are combined through the final RESPONSE using a native,
+    request-local EventQueue and message.toPy(). Object columns preserve native
+    cell values and nulls. ReachMax alone is not treated as truncation.
 
-    ``session`` may be a started synchronous ``blpapi.Session``. The caller
-    owns its lifecycle when supplied, as with ``bdh``. Otherwise a local
-    session is opened and closed for this call. Only ``//blp/exrsvc`` is opened;
-    response waits use the other helpers' 30-second timeout and a request-local
-    event queue. The optional Bloomberg runtime is imported only on invocation.
+    Timeout is an overall response deadline in seconds, beginning before send.
+    Vendor errors, inconsistent schemas/counts and missing final responses fail
+    the request. Pending requests are cancelled on exit via queue.purge().
+    A supplied started session is never started or stopped here; otherwise a
+    local default blpapi.Session is started and always stopped. Service opening
+    and session startup use Bloomberg's own connection timeouts.
     """
     if not isinstance(dataset, str) or not dataset.strip():
         raise ValueError("dataset must be a nonempty Bloomberg search domain")
-    if not isinstance(bikey, str) or not bikey.strip():
-        raise ValueError("bikey must be the nonempty saved Bloomberg search key")
-    _, BlpQuery = _blp_types()
-    request = {
-        "ExcelGetGridRequest": {
-            "Domain": dataset,
-            "Overrides": [{"Overrides": {"name": "BIKEY", "value": bikey}}],
-        }
-    }
-    log.info("query start source=bloomberg operation=bsrch dataset={}", dataset)
+    if bikey is not None:
+        if not isinstance(bikey, str) or not bikey.strip():
+            raise ValueError("bikey must be the nonempty saved Bloomberg search key")
+        if overrides is not None:
+            raise ValueError("Pass either bikey or overrides, not both")
+        overrides = {"BIKEY": bikey}
+    if (
+        not isinstance(overrides, tp.Mapping)
+        or not overrides
+        or any(not isinstance(k, str) or not k.strip() or not isinstance(v, str) for k, v in overrides.items())
+    ):
+        raise ValueError("Pass a nonempty bikey or overrides mapping of string names to string values")
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not np.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be a positive finite number of seconds")
+
+    import blpapi
+
+    owned = session is None
+    if owned:
+        session = blpapi.Session()
+    queue = None
     try:
-        with _blp_connection(
-            BlpQuery, timeout=30000, parser=None, session=session, services={"ExcelGetGridRequest": "//blp/exrsvc"}
-        ) as conn:
-            # blp's standard parser handles refdata, not ExcelGetGrid responses.
-            df = conn.query(request, parse=False, collector=_normalise_bsrch)
-    except Exception:
-        log.error("query failed source=bloomberg operation=bsrch dataset={}", dataset)
-        raise
-    log.info("query complete source=bloomberg operation=bsrch rows={} columns={}", len(df), len(df.columns))
-    return df
+        if owned and not session.start():
+            raise ConnectionError("Failed to start Bloomberg session")
+        if not session.openService("//blp/exrsvc"):
+            raise ConnectionError("Failed to open Bloomberg //blp/exrsvc")
+        request = session.getService("//blp/exrsvc").createRequest("ExcelGetGridRequest")
+        request.set("Domain", dataset)
+        elements = request.getElement("Overrides")
+        for name, value in overrides.items():
+            element = elements.appendElement()
+            element.setElement("name", name)
+            element.setElement("value", value)
+        queue = blpapi.EventQueue()
+        deadline = monotonic() + timeout
+        session.sendRequest(request, eventQueue=queue)
+
+        def responses():
+            while True:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Timed out waiting for complete Bloomberg BSRCH response")
+                event = queue.nextEvent(max(1, int(remaining * 1000)))
+                kind = event.eventType()
+                if kind == blpapi.Event.TIMEOUT:
+                    raise TimeoutError("Timed out waiting for complete Bloomberg BSRCH response")
+                if kind not in {blpapi.Event.PARTIAL_RESPONSE, blpapi.Event.RESPONSE}:
+                    raise RuntimeError(f"Bloomberg BSRCH request failed: {[m.toPy() for m in event]!r}")
+                for message in event:
+                    if monotonic() >= deadline:
+                        raise TimeoutError("Timed out waiting for complete Bloomberg BSRCH response")
+                    yield message.toPy()
+                if kind == blpapi.Event.RESPONSE:
+                    return
+
+        return _normalise_bsrch(responses())
+    finally:
+        try:
+            if queue is not None:
+                queue.purge()
+        finally:
+            if owned:
+                session.stop()
