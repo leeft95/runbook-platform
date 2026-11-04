@@ -62,6 +62,9 @@ by the caller; templates contain no fixture data or fixed report dates.
 | Same reports, already calculated | `cot_ice_mifid_summary_table`, `cot_euattf_summary_table`, `cot_lme_summary_table` | Existing `analysis_mifid` summary rows |
 | CME / macro alerts | `cot_cme_position_change_table`, `cot_macro_position_change_table`; `cot_cme_position_divergence_table`, `cot_macro_position_divergence_table` | Summary rows screened by `position_change` / `position_divergence` |
 | `oil/dashboard.py` | `oil_dashboard_table` | Daily prices; ten rows, 20-observation MA, linked seasonal charts |
+| `oil/doe_stocks_bbg.py` signal snapshot | `doe_signal_table` | Prepared crude, PADD2-Cushing and whisper signals with metric-specific formatting |
+| `oil/doe_stocks_bbg.py` cross-product summary | `doe_overview_table` | Weekly liquids, products, runs and demand; latest, changes, history and update dates |
+| `oil/doe_stocks_bbg.py` detailed balances | `doe_detail_table`; `doe_crude_table`, `doe_mogas_table`, `doe_distillates_table` | Weekly balance components, stock-change rate, historical comparisons and optional prepared consensus row |
 | `oil/kpler_inventory.py`, `product_inventory.py` | `kpler_inventory_table`, `product_inventory_table` | Prepared daily stocks; 20-observation changes, three months, four quarters, QTD, Y-1/5Y; excludes 2020 |
 | Consensus rows in those inventory reports | `kpler_inventory_consensus_table`, `product_inventory_consensus_table` | Monthly balances; Kpler global crude uses means, product consensus uses levels; three quarters; `aggregation_type="diff"` for US crude |
 | `oil/russia_exports.py`, `opec_exports.py`, `clean_exports.py`, `oil_demand_centres.py` | `russia_exports_table`, `opec_exports_table`, `clean_exports_table`, `oil_demand_centres_table` | Prepared daily flows; 10/20-observation means, five months, 92-observation highlights, supplied quarter benchmark |
@@ -77,6 +80,33 @@ which prepared data the report passes in: provider fetching, totals, participant
 aggregation, units and any upstream smoothing remain the caller's responsibility.
 This is a catalog of implemented presets, not a port of every custom table in
 `new_reports`; some recovered report/helper sections are incomplete.
+
+### DOE weekly tables
+
+The DOE report's three table families are available from both
+`runbook.core.table` and `runbook.core.table.templates`:
+
+```python
+from runbook.core.table import doe_crude_table, doe_overview_table, doe_signal_table
+
+overview = doe_overview_table(
+    weekly_totals[["Liquids", "Crude", "Gasoline", "Distillates", "Runs", "Demand"]]
+)
+crude = doe_crude_table(
+    weekly_crude[["Stocks", "Runs", "Exports", "Production", "Imports", "Adjustment"]],
+    consensus={"1 week change": consensus_1w, "4 week change": consensus_4w},
+)
+signals = doe_signal_table(prepared_signal_rows)
+```
+
+`doe_overview_table` treats columns named by `demand_columns` as four-week
+levels, matching the source report; the other columns use changes. The
+detailed template requires `Stocks`, derives `Change in stock (kbd)`, and is
+shared by the crude, mogas and distillates presets. `history_years` and
+`history_label` replace the source report's fixed 2018–2025 comparison cohort.
+The optional crude consensus is a prepared mapping keyed by displayed output
+column, because vendor retrieval and monthly-to-weekly conversion remain
+upstream report logic. Templates copy their inputs and generate no plots.
 
 ```python
 from runbook.core.table.templates import kpler_inventory_table, russia_exports_table

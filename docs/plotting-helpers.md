@@ -33,6 +33,10 @@ plotting functions remain available.
 | Daily line with moving average | `plot_line_with_moving_average` |
 | Daily line with secondary comparison | `plot_line_with_comparison` |
 | First-column baseline with differences and cumulative differences | `comparison_chart` |
+| DOE current inventory level with historical-change bars | `plot_doe_inventory_change` |
+| DOE seasonality with historical range and forecasts | `plot_doe_seasonal_range` |
+| DOE seasonal inventory change with z-score signal | `plot_doe_inventory_signal` |
+| DOE Actual versus Whisper with lower price panel | `plot_doe_actual_vs_whisper` |
 | Seasonal and cumulative comparisons | `plot_seasonal_comparison` |
 | Seasonal forecast with reversed axes | `plot_reversed_seasonal_forecast` |
 | Seasonal columns beside ordinary history | `plot_seasonal_with_history` |
@@ -57,6 +61,46 @@ from runbook.core.timeseries.cot import prepare_cot_data
 positions = plot_cot_long_short(prepare_cot_data(cot_observations))
 gas = plot_rollup_seasonal(power_ts["Gas"], windows=("5d", "20d", "3m"))
 ```
+
+### DOE inventory charts
+
+The ordinary DOE/EA tracker lines use the existing `plot_line` helper. Four
+source-report layouts have named presets because they add calculations or a
+fixed panel contract:
+
+```python
+from runbook.core.plotting.templates import (
+    plot_doe_actual_vs_whisper,
+    plot_doe_inventory_change,
+    plot_doe_inventory_signal,
+    plot_doe_seasonal_range,
+)
+
+levels = plot_doe_inventory_change(crude_stocks, exclude_years=[2020])
+seasonal = plot_doe_seasonal_range(
+    crude_stock_changes,
+    cumulative=True,
+    forecasts=ea_forecasts,
+)
+signal = plot_doe_inventory_signal(crude_change_4w, crude_change_zscore)
+miss = plot_doe_actual_vs_whisper(actual_and_whisper, wti_price)
+```
+
+`plot_doe_inventory_change` draws the current seasonal stock level on a
+secondary axis and bars for its difference from the selected historical mean
+and previous available year. `plot_doe_seasonal_range` uses the shared
+`plot_seasonal` calculations, then adds the selected history's min/max band,
+average and optional forecast overlays. Set `cumulative=True` for the report's
+YTD stock-change charts. `history_years` accepts an integer lookback or explicit
+year list; inventory changes default to all available history, while seasonal
+ranges default to the source report's 2018/2019/2021/2023/2024/2025 cohort.
+Excluded years are removed before selection.
+
+`plot_doe_inventory_signal` expects a prepared change series and z-score; the
+report-specific z-score construction remains upstream. Likewise,
+`plot_doe_actual_vs_whisper` expects prepared Actual/Whisper observations and
+a price series. The product-supplied and DOE/EA tracker charts need no named
+preset because they are direct `plot_line` calls.
 
 `plot_rollup_seasonal` uses calendar-day/month averages, matching
 [`rollup_table_hst`](table-templates.md#calendar-roll-up-table). It includes

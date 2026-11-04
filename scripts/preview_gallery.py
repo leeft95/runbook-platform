@@ -22,6 +22,10 @@ from runbook.core.plotting.templates import (
     plot_cot_long_short,
     plot_cot_net,
     plot_cot_positions,
+    plot_doe_actual_vs_whisper,
+    plot_doe_inventory_change,
+    plot_doe_inventory_signal,
+    plot_doe_seasonal_range,
     plot_forecast_bars,
     plot_four_week_price_position,
     plot_highlighted_bar,
@@ -49,6 +53,9 @@ from runbook.core.table.templates import (
     cot_ice_mifid_summary_table,
     cot_ice_mifid_timeseries_table,
     daily_prices_table,
+    doe_crude_table,
+    doe_overview_table,
+    doe_signal_table,
     ea_evolution_table,
     ea_evolution_table_yoy,
     eu_power_rollup_table,
@@ -553,6 +560,98 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         oil_dashboard_table,
         price.tail(130),
         footer="Synthetic observations · 1 July 2025",
+    )
+    doe_history = pd.DataFrame(
+        {
+            "Stocks": 420_000 + w * 90 + 4000 * np.sin(w / 13),
+            "Runs": 16_000 + 500 * np.sin(w / 9),
+            "Exports": 3500 + 300 * np.cos(w / 11),
+            "Production": 13_000 + w * 2,
+            "Imports": 6200 + 250 * np.sin(w / 10),
+            "Demand": 20_000 + 700 * np.sin(w / 8),
+        },
+        index=weekly,
+    )
+    table(
+        "doe-overview",
+        "DOE · runs, demand and stocks overview",
+        "The cross-product weekly snapshot: latest values, one/four-week changes, historical comparisons and update dates. Demand uses four-week levels.",
+        doe_overview_table,
+        doe_history[["Stocks", "Runs", "Demand"]].rename(columns={"Stocks": "Liquids"}),
+    )
+    table(
+        "doe-detail",
+        "DOE · crude detailed balance",
+        "The shared crude/mogas/distillates balance shape, including the derived stock-change rate and a prepared consensus row.",
+        doe_crude_table,
+        doe_history[["Stocks", "Runs", "Exports", "Production", "Imports"]],
+        consensus={"1 week change": -350, "4 week change": -1100},
+    )
+    table(
+        "doe-signals",
+        "DOE · inventory trading signals",
+        "Prepared Crude, PADD2-Cushing and Whisper rows with percentage, score and position formatting from the source report.",
+        doe_signal_table,
+        pd.DataFrame(
+            {
+                "Stocks Change": ["Crude", "PADD2-Cushing", "Whisper"],
+                "Weekly Chg (kb)": [1200, -450, 600],
+                "4w average change (%)": [0.012, -0.004, 0.003],
+                "4y z-score": [1.24, -0.72, 0.31],
+                "s-curve signal": [0.85, -0.62, np.nan],
+                "Contract": ["COZ5", "CLZ5F6", None],
+                "Position": [125, -48, np.nan],
+                "Position chg": [12, -6, np.nan],
+            }
+        ),
+    )
+    chart(
+        "doe-inventory-change",
+        "DOE · inventory level versus historical changes",
+        "Current-year crude stocks on the secondary axis, with changes versus the five-year mean and previous year as bars.",
+        plot_doe_inventory_change,
+        doe_history["Stocks"],
+        current_year=2025,
+        title="Total crude stocks",
+    )
+    doe_changes = doe_history["Stocks"].diff().rename("Weekly stock change")
+    chart(
+        "doe-seasonal-range",
+        "DOE · YTD stock change with historical range",
+        "Shared seasonal comparisons plus a five-year min/max band, average and a dashed EA forecast overlay.",
+        plot_doe_seasonal_range,
+        doe_changes,
+        current_year=2025,
+        cumulative=True,
+        forecasts=pd.DataFrame(
+            {"EA latest": [12_000, 12_800, 13_200]},
+            index=pd.date_range("2025-07-08", periods=3, freq="W-TUE"),
+        ),
+        title="Crude Stock YTD change",
+    )
+    chart(
+        "doe-inventory-signal",
+        "DOE · seasonal inventory change signal",
+        "Four-week percentage changes by year above a prepared current-year historical z-score.",
+        plot_doe_inventory_signal,
+        doe_history["Stocks"].pct_change().rolling(4).mean().mul(100).rename("4w stock change"),
+        pd.Series(
+            np.linspace(-1.2, 0.8, 26),
+            index=pd.date_range("2025-01-03", periods=26, freq="W-FRI"),
+            name="4y z-score",
+        ),
+        current_year=2025,
+    )
+    chart(
+        "doe-actual-whisper",
+        "DOE · Actual versus Whisper",
+        "The release surprise comparison with WTI in a shared-date lower panel.",
+        plot_doe_actual_vs_whisper,
+        pd.DataFrame(
+            {"Actual": 500 * np.sin(w[-52:] / 4), "Whisper": 450 * np.sin(w[-52:] / 4 + 0.3)},
+            index=weekly[-52:],
+        ),
+        pd.Series(70 + 4 * np.sin(w[-52:] / 8), index=weekly[-52:], name="WTI"),
     )
     table(
         "linked-general",

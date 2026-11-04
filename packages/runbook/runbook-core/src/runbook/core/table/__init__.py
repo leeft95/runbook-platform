@@ -51,6 +51,12 @@ from runbook.core.table.models import (
     validate_link_url,
 )
 from runbook.core.table.templates import (
+    doe_crude_table,
+    doe_detail_table,
+    doe_distillates_table,
+    doe_mogas_table,
+    doe_overview_table,
+    doe_signal_table,
     ea_evolution_table,
     ea_evolution_table_yoy,
     rollup_table_fcst,
@@ -89,6 +95,12 @@ from runbook.core.table.templates.table_with_link_monthly import (
 )
 
 __all__ = [
+    "doe_crude_table",
+    "doe_detail_table",
+    "doe_distillates_table",
+    "doe_mogas_table",
+    "doe_overview_table",
+    "doe_signal_table",
     "ea_evolution_table",
     "ea_evolution_table_yoy",
     "period_table",

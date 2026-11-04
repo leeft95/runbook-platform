@@ -6,6 +6,7 @@ override preset defaults and are passed to the documented plotting helper.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import pandas as pd
@@ -13,11 +14,304 @@ import plotly.graph_objects as go
 
 from ..timeseries.analysis import MovingAvgModes, calculate_moving_average
 from ..timeseries.rollup import calendar_moving_average
+from ..timeseries.transforms import ts_by_year
 from .bar import plot_bar_forecast
 from .cot import plot_cot_market
+from .graphly import GraphlyTraceSpec, PlotType
 from .line import plot_line
+from .mixed import plot_mixed
 from .regression import plot_price_vs_position, plot_regression
 from .seasonal import _comparison_difference, plot_cot, plot_seasonal, plot_seasonal_grid
+
+_DOE_HISTORY_YEARS = (2018, 2019, 2021, 2023, 2024, 2025)
+
+
+def _doe_series(data: pd.Series) -> pd.Series:
+    if not isinstance(data, pd.Series) or not isinstance(data.index, pd.DatetimeIndex):
+        raise TypeError("data requires a pandas Series with a DatetimeIndex")
+    if data.empty or data.index.hasnans or not data.index.is_unique:
+        raise ValueError("data requires non-empty, unique dates without NaT")
+    return pd.to_numeric(data, errors="raise").sort_index()
+
+
+def _doe_years(
+    data: pd.Series,
+    *,
+    frequency: str,
+    current_year: int | None,
+    history_years: int | Sequence[int] | None,
+    exclude_years: Sequence[int],
+) -> tuple[pd.DataFrame, int, list[int]]:
+    name = data.name if data.name is not None else "Value"
+    by_year = ts_by_year(data.to_frame(name=name), frequency=frequency, column=name, dummy_date_index=True)
+    by_year = by_year.drop(columns=list(exclude_years), errors="ignore")
+    if by_year.empty:
+        raise ValueError("No DOE seasonal years remain after exclusions")
+    if current_year is None:
+        eligible = [int(year) for year in by_year if year <= pd.Timestamp.today().year]
+        current_year = eligible[-1] if eligible else int(by_year.columns[-1])
+    if current_year not in by_year:
+        raise ValueError(f"current_year {current_year} is not available")
+    available = [int(year) for year in by_year if year < current_year]
+    if history_years is None:
+        selected = available
+    elif isinstance(history_years, int) and not isinstance(history_years, bool):
+        if history_years < 1:
+            raise ValueError("history_years must be positive")
+        selected = available[-history_years:]
+    else:
+        selected = [int(year) for year in history_years if int(year) in available]
+    if not selected:
+        raise ValueError("No DOE history years are available")
+    return by_year, current_year, selected
+
+
+def plot_doe_inventory_change(
+    data: pd.Series,
+    title: str | None = None,
+    *,
+    frequency: str = "W",
+    current_year: int | None = None,
+    history_years: int | Sequence[int] | None = None,
+    exclude_years: Sequence[int] = (2020,),
+    y_axis_title: str = "Storage vs history",
+    level_axis_title: str = "Total storage",
+    width: int = 750,
+    height: int = 500,
+) -> go.Figure:
+    """Plot the current DOE stock level against changes from history.
+
+    The current seasonal level is a line on the secondary axis. Bars show its
+    difference from the selected historical average and previous available
+    year, matching ``new_stocks_chart`` in the DOE source report.
+    """
+    series = _doe_series(data)
+    by_year, current_year, selected = _doe_years(
+        series,
+        frequency=frequency,
+        current_year=current_year,
+        history_years=history_years,
+        exclude_years=exclude_years,
+    )
+    current = by_year[current_year]
+    previous = selected[-1]
+    differences = pd.DataFrame(
+        {
+            "Delta vs Average": current - by_year[selected].mean(axis=1),
+            "Delta vs Last Year": current - by_year[previous],
+        }
+    )
+    level = current.to_frame(str(current_year))
+    figure = plot_mixed(
+        [
+            GraphlyTraceSpec(
+                data=differences,
+                plot_type=PlotType.bar,
+                y_axis_title=y_axis_title,
+                series_styles={
+                    "Delta vs Average": {"marker": {"color": "black"}},
+                    "Delta vs Last Year": {"marker": {"color": "lightblue"}},
+                },
+            ),
+            GraphlyTraceSpec(
+                data=level,
+                plot_type=PlotType.line,
+                secondary_y=True,
+                y_axis_title=level_axis_title,
+                series_styles={str(current_year): {"line": {"color": "black", "width": 2}}},
+            ),
+        ],
+        title=title or str(series.name or "DOE inventory change"),
+        width=width,
+        height=height,
+        tickformat="%b",
+    )
+    figure.update_yaxes(title_text=y_axis_title, secondary_y=False)
+    figure.update_yaxes(title_text=level_axis_title, secondary_y=True)
+    return figure
+
+
+def plot_doe_seasonal_range(
+    data: pd.Series,
+    title: str | None = None,
+    *,
+    frequency: str = "W",
+    current_year: int | None = None,
+    history_years: int | Sequence[int] = _DOE_HISTORY_YEARS,
+    exclude_years: Sequence[int] = (2020,),
+    cumulative: bool = False,
+    forecasts: pd.DataFrame | None = None,
+    history_label: str | None = None,
+    y_axis_title: str | None = None,
+    width: int = 750,
+    height: int = 500,
+) -> go.Figure:
+    """Show DOE seasonality, a historical min/max band and comparisons.
+
+    ``cumulative=True`` converts each seasonal year before comparisons, as in
+    the report's YTD stock-change charts. Optional forecast columns are drawn
+    as dashed overlays on the seasonal panel and are never used in history.
+    """
+    series = _doe_series(data)
+    by_year, current_year, selected = _doe_years(
+        series,
+        frequency=frequency,
+        current_year=current_year,
+        history_years=history_years,
+        exclude_years=exclude_years,
+    )
+    omitted = [int(year) for year in by_year if year not in {*selected, current_year}]
+    figure = plot_seasonal(
+        series.to_frame(name=series.name or "Value"),
+        frequency=frequency,
+        current_year=current_year,
+        exclude_years=[*exclude_years, *omitted],
+        df_ytd=cumulative,
+        title=title or str(series.name or "DOE seasonal range"),
+        y_axis_title=y_axis_title,
+        width=width,
+        height=height,
+        tickformat="%b",
+    )
+    comparison = by_year[[*selected, current_year]].cumsum() if cumulative else by_year[[*selected, current_year]]
+    history = comparison[selected]
+    selected_average = history.mean(axis=1)
+    for trace in figure.data:
+        if trace.name == "Cur Yr vs 5y Avg":
+            trace.y = _comparison_difference(comparison[current_year], selected_average)
+            break
+    if history_label is None:
+        history_label = "2018-2025 Avg" if selected == list(_DOE_HISTORY_YEARS) else f"{len(selected)}Y Avg"
+    figure.add_scatter(
+        x=history.index,
+        y=history.min(axis=1),
+        name="Min",
+        mode="lines",
+        line={"color": "rgba(160,160,160,0)", "width": 0},
+        row=1,
+        col=1,
+    )
+    figure.add_scatter(
+        x=history.index,
+        y=history.max(axis=1),
+        name="Max",
+        mode="lines",
+        line={"color": "rgba(160,160,160,0)", "width": 0},
+        fill="tonexty",
+        fillcolor="rgba(160,160,160,0.2)",
+        row=1,
+        col=1,
+    )
+    figure.add_scatter(
+        x=history.index,
+        y=history.mean(axis=1),
+        name=history_label,
+        mode="lines",
+        line={"color": "black", "width": 2, "dash": "dash"},
+        row=1,
+        col=1,
+    )
+    if forecasts is not None:
+        if not isinstance(forecasts, pd.DataFrame) or not isinstance(forecasts.index, pd.DatetimeIndex):
+            raise TypeError("forecasts requires a DataFrame with a DatetimeIndex")
+        if forecasts.index.hasnans or not forecasts.index.is_unique:
+            raise ValueError("forecasts requires unique dates without NaT")
+        for column in forecasts:
+            forecast = pd.to_numeric(forecasts[column], errors="raise").sort_index()
+            seasonal = ts_by_year(
+                forecast.to_frame(name=str(column)),
+                frequency=frequency,
+                column=str(column),
+                dummy_date_index=True,
+            )
+            if current_year in seasonal:
+                figure.add_scatter(
+                    x=seasonal.index,
+                    y=seasonal[current_year],
+                    name=str(column),
+                    mode="lines",
+                    line={"color": "blue", "width": 2, "dash": "dash"},
+                    row=1,
+                    col=1,
+                )
+    return figure
+
+
+def plot_doe_inventory_signal(
+    change: pd.Series,
+    zscore: pd.Series,
+    title: str | None = None,
+    *,
+    frequency: str = "W",
+    current_year: int | None = None,
+    exclude_years: Sequence[int] = (2020,),
+    y_axis_title: str = "%",
+    signal_axis_title: str = "z-score",
+    width: int = 750,
+    height: int = 500,
+) -> go.Figure:
+    """Plot seasonal DOE inventory changes above the current z-score signal."""
+    series = _doe_series(change)
+    signal = _doe_series(zscore)
+    by_year, current_year, _ = _doe_years(
+        series,
+        frequency=frequency,
+        current_year=current_year,
+        history_years=1,
+        exclude_years=exclude_years,
+    )
+    seasonal = by_year.rename(columns=str)
+    styles = {str(current_year): {"line": {"color": "black", "width": 2}}}
+    figure = plot_line(
+        {"Seasonal change": seasonal, "Signal": signal.to_frame(signal.name or "z-score")},
+        title=title or str(series.name or "DOE inventory signal"),
+        rows=2,
+        row_heights=[0.7, 0.3],
+        shared_xaxes=False,
+        series_styles=styles,
+        width=width,
+        height=height,
+        tickformat="%b",
+    )
+    figure.update_yaxes(title_text=y_axis_title, row=1, col=1)
+    figure.update_yaxes(title_text=signal_axis_title, row=2, col=1)
+    return figure
+
+
+def plot_doe_actual_vs_whisper(
+    observations: pd.DataFrame,
+    price: pd.Series | pd.DataFrame,
+    title: str = "DOE inventory actual vs whisper",
+    *,
+    inventory_axis_title: str = "kbbl",
+    price_axis_title: str = "Price",
+    width: int = 750,
+    height: int = 500,
+) -> go.Figure:
+    """Plot Actual/Whisper observations over a lower price panel."""
+    if not isinstance(observations, pd.DataFrame) or not isinstance(observations.index, pd.DatetimeIndex):
+        raise TypeError("observations requires a DataFrame with a DatetimeIndex")
+    if observations.empty or observations.index.hasnans or not observations.index.is_unique:
+        raise ValueError("observations requires non-empty, unique dates without NaT")
+    if not {"Actual", "Whisper"}.issubset(observations.columns):
+        raise ValueError("observations must contain Actual and Whisper columns")
+    price_frame = price.to_frame(price.name or "Price") if isinstance(price, pd.Series) else price
+    if not isinstance(price_frame, pd.DataFrame) or not isinstance(price_frame.index, pd.DatetimeIndex):
+        raise TypeError("price requires a Series or DataFrame with a DatetimeIndex")
+    if price_frame.empty or price_frame.index.hasnans or not price_frame.index.is_unique:
+        raise ValueError("price requires non-empty, unique dates without NaT")
+    figure = plot_line(
+        {"Inventory": observations[["Actual", "Whisper"]].copy(), "Price": price_frame.copy()},
+        title=title,
+        rows=2,
+        row_heights=[0.7, 0.3],
+        shared_xaxes=True,
+        width=width,
+        height=height,
+    )
+    figure.update_yaxes(title_text=inventory_axis_title, row=1, col=1)
+    figure.update_yaxes(title_text=price_axis_title, row=2, col=1)
+    return figure
 
 
 def plot_line_with_moving_average(
@@ -399,6 +693,10 @@ def plot_rollup_seasonal(
 
 __all__ = [
     "comparison_chart",
+    "plot_doe_actual_vs_whisper",
+    "plot_doe_inventory_change",
+    "plot_doe_inventory_signal",
+    "plot_doe_seasonal_range",
     "plot_rollup_seasonal",
     "plot_line_with_moving_average",
     "plot_line_with_comparison",
