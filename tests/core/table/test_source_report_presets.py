@@ -116,3 +116,76 @@ def test_price_range_report_formats_percentiles_without_changing_calculated_valu
     assert payload["data"].index.tolist() == ["Brent", "WTI"]
     with pytest.raises(ValueError, match="Missing price-range"):
         futures_price_range_table(summary.drop(columns=percentile))
+
+
+@pytest.mark.parametrize("mode", ["mean", "diff"])
+@pytest.mark.parametrize("after", [None, "Stock"])
+def test_inventory_combines_separate_consensus_without_changing_stocks(daily, mode, after):
+    monthly = pd.DataFrame(
+        {"Consensus": np.arange(31, dtype=float) ** 2},
+        index=pd.date_range("2023-01-01", periods=31, freq="MS"),
+    )
+    original_daily, original_monthly = daily.copy(), monthly.copy()
+    options = {"aggregation_columns": {"Flow": "mean"}, "show_aggregation_labels": False}
+    base = kpler_inventory_table(daily, "Stocks", **options)["Stocks"]
+    combined = kpler_inventory_table(
+        daily,
+        "Stocks",
+        consensus=monthly,
+        consensus_label="Balance",
+        consensus_after=after,
+        consensus_aggregation=mode,
+        **options,
+    )["Stocks"]
+    labels = ["Stock", "Balance", "Flow"] if after else ["Stock", "Flow", "Balance"]
+    assert combined["data"].Stocks.tolist() == labels
+    consensus_row = combined["data"].set_index("Stocks").loc["Balance"]
+    assert consensus_row["20d Change"] == pytest.approx(900 if mode == "mean" else 59)
+    assert consensus_row["2025-06"] == pytest.approx(841 if mode == "mean" else 57)
+    assert consensus_row["2025Q2"] == pytest.approx(np.mean([729, 784, 841]) if mode == "mean" else 165)
+    assert consensus_row["_plot_link"] in combined["plot_names"]
+    pd.testing.assert_frame_equal(
+        combined["data"].loc[combined["data"].Stocks != "Balance"].reset_index(drop=True),
+        base["data"],
+        check_dtype=False,
+    )
+    assert [plot.to_json() for plot in combined["plots"][:-1]] == [plot.to_json() for plot in base["plots"]]
+    assert combined["style"]["options"]["max_rows"] == 3
+    pd.testing.assert_frame_equal(daily, original_daily)
+    pd.testing.assert_frame_equal(monthly, original_monthly)
+    render_table_html(combined["data"], combined["style"])
+
+
+def test_inventory_without_consensus_matches_existing_preset(daily):
+    from runbook.core.table.templates import inventory_summary_table
+
+    expected = inventory_summary_table(daily, "Stocks", history_quarters=4, exclude_years=[2020])["Stocks"]
+    actual = kpler_inventory_table(daily, "Stocks")["Stocks"]
+    pd.testing.assert_frame_equal(actual["data"], expected["data"])
+    assert actual["style"] == expected["style"]
+    assert actual["plot_names"] == expected["plot_names"]
+    assert [p.to_json() for p in actual["plots"]] == [p.to_json() for p in expected["plots"]]
+
+
+def test_inventory_consensus_is_clipped_at_stock_cutoff(daily):
+    monthly = pd.DataFrame(
+        {"Consensus": [10.0, 20.0, 9999.0]}, index=pd.to_datetime(["2025-05-01", "2025-06-01", "2025-07-01"])
+    )
+    result = kpler_inventory_table(daily, consensus=monthly, as_of="2025-06-15")["Crude Stocks"]
+    assert result["data"].iloc[-1]["20d Change"] == 20
+    assert list(result["plots"][-1].data[0].y) == [10.0, 20.0]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"freq": "D"},
+        {"consensus_aggregation": "sum"},
+        {"consensus_after": "Unknown"},
+        {"consensus_label": ""},
+    ],
+)
+def test_inventory_rejects_invalid_consensus_options(daily, options):
+    monthly = pd.DataFrame({"Consensus": [1.0, 2.0]}, index=pd.date_range("2025-05-01", periods=2, freq="MS"))
+    with pytest.raises(ValueError):
+        kpler_inventory_table(daily, consensus=monthly, **options)

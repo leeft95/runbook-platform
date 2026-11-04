@@ -87,6 +87,36 @@ inventory = kpler_inventory_table(
 flows = russia_exports_table(flow_history, "Flows", benchmark_quarter="2025Q4")
 ```
 
+To add a separate monthly consensus balance to an inventory table:
+
+```python
+inventory = kpler_inventory_table(
+    stock_history,
+    "Stocks",
+    consensus=monthly_consensus,  # DatetimeIndex and a numeric "Consensus" column
+    freq="M",
+    consensus_label="Consensus (kbd)",
+    consensus_after="Total (kbd)",  # Omit to append at the bottom
+    consensus_aggregation="mean",  # Use "diff" for US crude stock differences
+    aggregation_columns={"Total (kbd)": "mean"},
+    show_aggregation_labels=False,
+)
+```
+
+Consensus is summarised independently, clipped to the stock history's last date
+(or an earlier `as_of`), and aligned to the stock table's columns. Supply values
+already in the intended display units; the helper performs no unit conversion.
+Monthly means are the default; `consensus_aggregation="diff"` uses stock
+differences. Only `freq="M"` is supported when consensus is supplied.
+The insertion row must match exactly once, using its name without an aggregation
+suffix. Stock calculations and linked plots are preserved, with a separate
+consensus plot added. Omitting `consensus` preserves the existing output.
+
+`show_aggregation_labels=False` is also available on
+`table_with_linked_plots_monthly` and presets that forward its options. It hides
+row suffixes such as `[Change]` and `[MA]` while retaining their aggregation
+calculations and plot links. The default remains `True`.
+
 The original generic presets remain available with their existing defaults:
 `daily_prices_table`, `inventory_summary_table`, `flow_quarterly_table`,
 `flow_monthly_table`, `monthly_consensus_table`, `mtd_inventory_table`,

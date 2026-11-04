@@ -477,17 +477,86 @@ def oil_dashboard_table(data: pd.DataFrame, header: str = "Liquids Price", **opt
 
 
 def kpler_inventory_table(
-    data: pd.DataFrame, header: str = "Crude Stocks", **options: Any
+    data: pd.DataFrame,
+    header: str = "Crude Stocks",
+    *,
+    consensus: pd.DataFrame | None = None,
+    freq: str = "M",
+    consensus_label: str = "Consensus (kbd)",
+    consensus_after: str | None = None,
+    consensus_aggregation: str = "mean",
+    **options: Any,
 ) -> dict[str, dict[str, Any]]:
-    """oil/kpler_inventory.py and product_inventory.py: stock changes and history.
+    """Daily stock changes, optionally followed by a monthly consensus balance.
 
-    Takes prepared daily stock levels (including any report-side five-day
-    smoothing). Uses 20-observation changes, three months, four quarters, QTD,
-    Y-1/5Y and seasonal highlights excluding 2020. Pass aggregation_columns
-    for derived flow rows, e.g. {"Total (kbd)": "mean"}; no smoothing or unit
-    conversion is inferred from column names.
+    Stock rows retain 20-observation changes, calendar changes and seasonal
+    highlights. Derived flow rows use explicit aggregation_columns overrides.
+    Consensus must contain a monthly Consensus column in the desired display
+    units; it is summarised independently and clipped to stock dates.
+    consensus_aggregation selects monthly means (default) or stock differences.
+    consensus_after inserts below the named stock row; otherwise the row is appended.
+    No smoothing or unit conversion is inferred from names.
     """
-    return inventory_summary_table(data, header, **{"history_quarters": 4, "exclude_years": [2020], **options})
+    if consensus is not None:
+        if consensus_aggregation not in {"mean", "diff"}:
+            raise ValueError("Consensus aggregation must be mean or diff")
+        if freq != "M":
+            raise ValueError('Inventory consensus requires freq="M"')
+        if not isinstance(consensus, pd.DataFrame) or "Consensus" not in consensus:
+            raise ValueError("Inventory consensus requires a Consensus column")
+        if not isinstance(consensus.index, pd.DatetimeIndex):
+            raise ValueError("Inventory consensus requires a datetime index")
+        if not isinstance(consensus_label, str) or not consensus_label.strip():
+            raise ValueError("Consensus label must not be blank")
+    result = inventory_summary_table(data, header, **{"history_quarters": 4, "exclude_years": [2020], **options})
+    if consensus is None:
+        return result
+    daily = result[header]
+    position = len(daily["data"])
+    if consensus_after is not None:
+        labels = daily["data"][header].astype(str).str.replace(r" \[(?:Change|MA|Sum|Level)\]$", "", regex=True)
+        positions = [i for i, label in enumerate(labels) if label == consensus_after]
+        if len(positions) != 1:
+            raise ValueError(f"Consensus insertion row must exist exactly once: {consensus_after}")
+        position = positions[0] + 1
+    monthly_header = f"{header} Consensus"
+    cutoff = data.index.max()
+    if options.get("as_of") is not None:
+        cutoff = min(cutoff, pd.Timestamp(options["as_of"]))
+    monthly = kpler_inventory_consensus_table(
+        consensus[["Consensus"]].rename(columns={"Consensus": consensus_label}),
+        monthly_header,
+        input_frequency=freq,
+        aggregation_type=consensus_aggregation,
+        history_months=3,
+        history_quarters=4,
+        exclude_years=options.get("exclude_years", [2020]),
+        as_of=cutoff,
+        all_plots_link=False,
+    )[monthly_header]
+    row = (
+        monthly["data"]
+        .rename(
+            columns={
+                monthly_header: header,
+                "1m MA": "20d Change",
+                "Y-1 1m MA": "Y-1 20d Change",
+                "5Y 1m MA": "5Y 20d Change",
+                "1m Change": "20d Change",
+                "Y-1 1m Change": "Y-1 20d Change",
+                "5Y 1m Change": "5Y 20d Change",
+            }
+        )
+        .reindex(columns=daily["data"].columns)
+    )
+    if len(row) != 1:
+        raise ValueError("Inventory consensus requires exactly one summary row")
+    combined = pd.concat([daily["data"].iloc[:position], row, daily["data"].iloc[position:]], ignore_index=True)
+    daily["data"] = combined
+    daily["style"]["options"]["max_rows"] = len(combined)
+    daily["plots"] = [*daily["plots"], *monthly.get("plots", [])]
+    daily["plot_names"] = [*daily.get("plot_names", []), *monthly.get("plot_names", [])]
+    return result
 
 
 def product_inventory_table(

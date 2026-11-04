@@ -149,3 +149,16 @@ def test_table_with_linked_plots_monthly_label_column_is_formatted_and_helper_hi
     assert ">x</a>" in html
     assert "_plot_link" not in html
     assert ">260<" in html
+
+
+def test_hiding_aggregation_labels_preserves_calculations_and_plot_targets():
+    idx = pd.date_range("2024-01-01", periods=100)
+    frame = pd.DataFrame({"Stock": np.arange(100.0), "Flow": np.arange(100.0) ** 2}, index=idx)
+    options = dict(aggregation_type="diff", aggregation_columns={"Flow": "mean"})
+    labelled = table_with_linked_plots_monthly(frame, "Inventory", **options)["Inventory"]
+    hidden = table_with_linked_plots_monthly(frame, "Inventory", show_aggregation_labels=False, **options)["Inventory"]
+    assert labelled["data"].Inventory.tolist() == ["Stock [Change]", "Flow [MA]"]
+    assert hidden["data"].Inventory.tolist() == ["Stock", "Flow"]
+    pd.testing.assert_frame_equal(labelled["data"].drop(columns="Inventory"), hidden["data"].drop(columns="Inventory"))
+    assert labelled["plot_names"] == hidden["plot_names"]
+    assert [p.to_json() for p in labelled["plots"]] == [p.to_json() for p in hidden["plots"]]

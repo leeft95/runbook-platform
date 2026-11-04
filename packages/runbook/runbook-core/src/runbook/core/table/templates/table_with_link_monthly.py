@@ -313,6 +313,7 @@ def _build_monthly_style(
     plot_target_column: str | None = None,
     links: list[TableLink] | None = None,
     highlight_columns: tp.Sequence[str] | None = None,
+    show_aggregation_labels: bool = True,
 ) -> dict[str, tp.Any]:
     """Build monthly style."""
     all_columns = [str(col) for col in ret_df.columns]
@@ -420,6 +421,7 @@ def table_with_linked_plots_monthly(
     smooth: int | None = None,
     mtd: bool = False,
     highlight_columns: tp.Sequence[str] | None = None,
+    show_aggregation_labels: bool = True,
 ) -> dict[str, dict[str, tp.Any]]:
     """Build the predefined monthly summary table with linked seasonal plots.
 
@@ -434,6 +436,7 @@ def table_with_linked_plots_monthly(
     the corresponding links.
     ``highlight_columns`` selects rolling-window highlights; [] disables
     coloured highlights while retaining red negative values.
+    ``show_aggregation_labels=False`` hides aggregation suffixes without changing calculations.
 
     ``windows`` counts observations for daily inputs and calendar months for
     monthly inputs. Use ``windows=(20,), history_months=3, comparison_years=5``
@@ -512,7 +515,7 @@ def table_with_linked_plots_monthly(
     if last_update is not None:
         table_df["_last_update"] = last_update
 
-    if aggregation_columns is not None:
+    if aggregation_columns is not None and show_aggregation_labels:
         formatted_index: list[str] = []
         for col in table_df.index:
             col_name = str(col)
