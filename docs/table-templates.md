@@ -354,8 +354,10 @@ the corresponding links; use `row_plot_links=[...]` to select a subset of
 displayed row labels. Either option accepts a valid absolute or relative URL
 to use a custom destination.
 
-**Current Month** averages all supplied observations in today's calendar month,
-including future dates in that month. This month is independent of the Latest
+**Current Month** averages supplied observations from tomorrow through the end
+of today's calendar month, excluding every timestamp today. On the last day
+of the month the result is missing (displayed as `-`), not zero. Genuine zeroes
+are preserved. This month is independent of the Latest
 date. `today` optionally fixes the current date for a reproducible report;
 otherwise `datetime.today()` supplies the current calendar date, interpreted
 in `df`'s timezone. This also sets the Latest/MA anchor when no history is supplied;
@@ -375,7 +377,7 @@ payload = rollup_table_fcst(
 ```
 
 For example, if `today="2025-07-10"` and the last `df_hst` row is dated June 20,
-Current Month uses all supplied July observations, while Latest and every MA
+Current Month uses supplied observations from July 11 through July 31, while Latest and every MA
 reference June 20. The linked history and seasonal charts retain all supplied
 data, including forecasts after that date.
 
@@ -386,8 +388,9 @@ columns, and `[]` disables the colours. Latest uses the trailing
 `df_hst` when provided, otherwise `df`. MAs use their rolling-average histories
 from `df` over the trailing 20 calendar days. Both windows end at the Latest anchor;
 earlier or future observations are excluded from the z-score reference sample.
-Current Month is opt-in: its value is scored against monthly averages in the
-last 20 calendar months, including the current month. Every selected column
+Current Month is opt-in: its value is scored against whole-month averages in the
+last 20 calendar months, including the current month. This unchanged benchmark
+is not restricted to remaining days. Every selected column
 uses its own value and reference with the configured `std_limits`.
 `highlight_columns` remains supported.
 Negative values remain red in every column; values and averages are unchanged.

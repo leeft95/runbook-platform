@@ -148,8 +148,9 @@ def rollup_table_fcst(
     last non-null value forward to the anchor. Missing columns or series
     without prior data stay missing; averages and plots are not filled.
 
-    Current Month averages all supplied observations in today's calendar month,
-    including future dates, independently of the Latest date. ``today`` pins
+    Current Month averages observations from tomorrow through month-end,
+    excluding all of today, independently of the Latest date. An empty window
+    stays missing (displayed as '-'); zeroes are preserved. ``today`` pins
     the calendar date for reproducible reports; None uses ``datetime.today()``.
     Dates are interpreted in ``df``'s timezone. Linked charts retain the full
     supplied time series.
@@ -157,8 +158,9 @@ def rollup_table_fcst(
     ``std_limits`` and other presentation options work as in ``rollup_table_hst``.
     Highlighting defaults to Latest and 20d MA, when present. ``use_highlighting``
     can select any displayed column, including Current Month, or [] to disable
-    coloured bands. Current Month uses the last 20 calendar months of monthly
-    averages, including the current month; Latest and MAs use their own series'
+    coloured bands. Current Month uses the last 20 calendar months of
+    whole-month averages, including the current month; the benchmark is not
+    restricted to remaining days. Latest and MAs use their own series'
     trailing 20-calendar-day reference windows, anchored to the Latest date.
     Latest uses ``df_hst`` for its reference when supplied, otherwise ``df``.
     ``highlight_columns`` remains supported; red negatives are independent.
@@ -305,7 +307,8 @@ def _rollup_table(
             continue
         if current_month is not None and label.strip().casefold() == "current month":
             month_start = current_month.replace(day=1)
-            sample = frame.loc[(frame.index >= month_start) & (frame.index < month_start + pd.DateOffset(months=1))]
+            tomorrow = current_month + pd.DateOffset(days=1)
+            sample = frame.loc[(frame.index >= tomorrow) & (frame.index < month_start + pd.DateOffset(months=1))]
             values[label] = sample.mean()
             if label in highlighted:
                 benchmarks[label] = reference(frame.resample("MS").mean(), month_start, monthly=True)

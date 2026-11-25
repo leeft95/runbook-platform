@@ -208,7 +208,11 @@ def test_rollup_custom_pages_and_selected_zscore_columns_match_all_renderers(tmp
         assert row.children[0].children.href == "https://example.test/power"
         for pos in (1, 2, 4):
             assert row.children[pos].style.get("backgroundColor") in (None, "lightblue")
-            assert row.children[pos].style["color"] == "red"
+            if pos == 1:
+                assert "color" not in row.children[pos].style
+                assert frame["Current Month"].isna().all()
+            else:
+                assert row.children[pos].style["color"] == "red"
         assert row.children[3].style["backgroundColor"] == "#FF8787"
     grid = _build_ag_grid(frame, block, ctx, None, {})
     assert grid.column_defs[0]["headerComponentParams"]["runbookHeaderLink"] == "../power.html"

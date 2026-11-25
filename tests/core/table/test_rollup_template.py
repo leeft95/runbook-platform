@@ -425,7 +425,7 @@ def test_forecast_rollup_anchors_all_averages_to_history_but_keeps_current_month
     ]
     assert payload["data"].loc["Gas", list(resolved.visible_columns)].to_dict() == pytest.approx(
         {
-            "Current Month": 50,
+            "Current Month": 60,
             "Latest": -888,
             "5d MA": 519,
             "20d MA": 517,
@@ -458,7 +458,8 @@ def test_forecast_rollup_without_history_uses_today_not_final_df_row(history) ->
     payload = rollup_table_fcst(
         frame, history, ["Current Month", "Latest", "5d MA"], today="2025-02-01", format_spec="{:,.2f}"
     )["Roll-up"]
-    assert payload["data"].loc["Total", ["Current Month", "Latest", "5d MA"]].tolist() == [100, 100, 130 / 3]
+    assert pd.isna(payload["data"].loc["Total", "Current Month"])
+    assert payload["data"].loc["Total", ["Latest", "5d MA"]].tolist() == [100, 130 / 3]
     resolved = resolve_table_style(payload["data"], payload["style"])
     assert resolved.index_css[0] == {"font-weight": "bold", "border-top": "1px solid #000000"}
     assert "100.00" in render_table_html(payload["data"], payload["style"])
@@ -548,7 +549,7 @@ def test_forecast_rollup_current_month_and_history_anchor_use_df_timezone() -> N
     payload = rollup_table_fcst(
         frame, history, ["Current Month", "Latest", "5d MA"], today="2025-03-31 23:30Z", include_total=False
     )["Roll-up"]
-    assert payload["data"].loc["Value", ["Current Month", "Latest", "5d MA"]].tolist() == [60, 999, 15]
+    assert payload["data"].loc["Value", ["Current Month", "Latest", "5d MA"]].tolist() == [100, 999, 15]
 
 
 @pytest.mark.parametrize(
@@ -588,3 +589,56 @@ def test_fill_latest_is_opt_in_and_does_not_fill_calculations(mode):
     pd.testing.assert_frame_equal(default["data"].drop(columns="Latest"), filled["data"].drop(columns="Latest"))
     assert [p.to_json() for p in default["plots"]] == [p.to_json() for p in filled["plots"]]
     pd.testing.assert_frame_equal(frame, original)
+
+
+@pytest.mark.parametrize(
+    "today",
+    ["2025-06-15", "2025-02-27", "2024-02-28", "2025-03-30", "2025-10-26"],
+)
+def test_current_month_only_averages_remaining_calendar_days(today) -> None:
+    date = pd.Timestamp(today, tz="Europe/London")
+    tomorrow = date + pd.DateOffset(days=1)
+    next_month = date.replace(day=1) + pd.DateOffset(months=1)
+    dates = pd.DatetimeIndex(
+        [
+            date - pd.DateOffset(days=1),
+            date,
+            date + pd.Timedelta(hours=12),
+            tomorrow,
+            next_month - pd.Timedelta(minutes=1),
+            next_month,
+        ]
+    )
+    frame = pd.DataFrame(
+        {
+            "A": [999, 100, 999, 0, 20, 999],
+            "B": [999, 100, 999, np.nan, 10, 999],
+            "Zero": [999, 100, 999, 0, 0, 999],
+            "Missing": [999, 100, 999, np.nan, np.nan, 999],
+        },
+        index=dates,
+    )
+    original = frame.copy()
+    payload = rollup_table_fcst(frame, today=date, use_highlighting=["Current Month"])["Roll-up"]
+    result = payload["data"]
+    assert result.loc[["A", "B", "Zero", "Total"], "Current Month"].tolist() == [10, 10, 0, 20]
+    assert pd.isna(result.loc["Missing", "Current Month"])
+    assert result.loc["A", "Latest"] == 100
+    assert result.loc["A", "5d MA"] == 549.5
+    monthly = frame.resample("MS").mean().loc[: date.replace(day=1)]
+    assert result.loc["A", "_rollup_0_mean"] == monthly["A"].mean()
+    assert list(payload["plots"][0].data[0].x) == list(dates)
+    assert list(payload["plots"][0].data[0].y) == frame["A"].tolist()
+    pd.testing.assert_frame_equal(frame, original)
+
+
+@pytest.mark.parametrize("today", ["2025-06-30", "2025-02-28", "2024-02-29", "2025-12-31"])
+@pytest.mark.parametrize("precomputed_total", [False, True])
+def test_current_month_at_month_end_is_missing_including_total(today, precomputed_total) -> None:
+    date = pd.Timestamp(today)
+    frame = pd.DataFrame({"A": [10, 20, 30]}, index=[date, date + pd.Timedelta(hours=23), date + pd.DateOffset(days=1)])
+    if precomputed_total:
+        frame["Total"] = [100, 200, 300]
+    payload = rollup_table_fcst(frame, today=date, params=["Current Month"], use_highlighting=[])["Roll-up"]
+    assert payload["data"]["Current Month"].isna().all()
+    assert render_table_html(payload["data"], payload["style"]).count(">-</td>") == 2

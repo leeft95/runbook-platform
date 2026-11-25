@@ -36,6 +36,21 @@ contract if the persisted meaning changes, then test HTML and native Dash
 parity. AG Grid may translate the resolved semantics, but must not become the
 owner of a renderer-neutral option.
 
+### Change standard roll-up calculations
+
+Own shared statistics in `core/table/templates/rollup.py::_rollup_table`.
+`rollup_table_fcst` supplies the timezone-normalized report date; Current Month
+averages tomorrow through month-end and stays missing (`-`) at month-end.
+Keep Latest, other averages and full companion plot inputs unchanged.
+The optional Current Month z-score still uses whole-month averages.
+Both `core.table` and `core.table.templates` export this forecast entry point;
+`scripts/preview_gallery.py` and `scripts/preview_rollup_options.py` consume it.
+The other shared caller, `rollup_table_hst`, also backs Reports' thin
+`eu_power_rollup_table` wrapper and has no Current Month column. Do not duplicate
+forecast calculations in Reports. See [table templates](../table-templates.md)
+and `tests/core/table/test_rollup_template.py`, plus plot-link and SDK renderer
+coverage in `test_predefined_plot_links.py` and `test_row_format_renderers.py`.
+
 ### Add a PDL field or block
 
 Trace `core/pdl/models.py` → the matching JSON schema (`spec.json` or

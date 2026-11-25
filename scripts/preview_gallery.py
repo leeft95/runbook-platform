@@ -1134,7 +1134,7 @@ def build_examples() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     table(
         "rollup-forecast",
         "Power forecast · current month and calendar roll-ups",
-        "Current Month averages all June forecasts. Latest and the MAs reference the final historical row, 18 June; linked charts retain the full series. Latest and 20d MA receive z-score highlights using configurable ±1/±2 SD limits. Other columns, including Current Month, are opt-in.",
+        "Current Month averages June 21–30 forecasts, excluding all of today (June 20). Latest and the MAs reference the final historical row, 18 June; linked charts retain the full series. Latest and 20d MA receive z-score highlights using configurable ±1/±2 SD limits. Other columns, including Current Month, are opt-in.",
         rollup_table_fcst,
         rollup_power,
         params=["Current Month", "Latest", "5d MA", "20d MA", "3m MA", "Y-1 20d MA", "5Y 20d MA"],
