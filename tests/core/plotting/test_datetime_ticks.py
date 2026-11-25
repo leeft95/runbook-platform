@@ -21,7 +21,7 @@ def test_short_daily_helpers_use_plotly_auto_ticks(helper, freq, width):
 
     assert fig.layout.width == width
     assert fig.layout.xaxis.dtick is None
-    assert fig.layout.xaxis.tickformat is None
+    assert fig.layout.xaxis.tickformat == ("%b" if helper is plot_seasonal else None)
     assert fig.layout.xaxis.nticks is None
     assert len(fig.data[0].x) == 14
 
@@ -222,4 +222,4 @@ def test_seasonal_plots_use_auto_ticks_unless_overridden(tick_settings):
         data, start_month=7, end_month=6, over_year=True, frequency="M", vs_average=False, **tick_settings
     )
     assert fig.layout.xaxis.dtick == tick_settings.get("dtick")
-    assert fig.layout.xaxis.tickformat == tick_settings.get("tickformat")
+    assert fig.layout.xaxis.tickformat == tick_settings.get("tickformat", "%b")

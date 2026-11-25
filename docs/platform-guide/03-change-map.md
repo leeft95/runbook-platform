@@ -51,6 +51,20 @@ forecast calculations in Reports. See [table templates](../table-templates.md)
 and `tests/core/table/test_rollup_template.py`, plus plot-link and SDK renderer
 coverage in `test_predefined_plot_links.py` and `test_row_format_renderers.py`.
 
+### Change seasonal chart dates and labels
+
+Own seasonal defaults in `core/plotting/seasonal.py::plot_seasonal`.
+`timeseries/transforms.py::ts_by_year` maps values and source-row identities
+through the same seasonal slots. Original dates reach Graphly through
+`PlotlyPlotDef.series_styles` as Plotly `customdata`, including forecast splits.
+Do not reconstruct calendar years from season names. Shared axes keep month-only
+labels; derived comparisons/cumulative traces use year-free seasonal hovers.
+Explicit tick formats and hover templates take precedence. Follow native
+wrappers in `plotting/templates.py`, `plot_seasonal_grid`, and table companion
+plots; keep ordinary history axes unchanged. See [plotting helpers](../plotting-helpers.md)
+and `tests/core/plotting/test_seasonal.py`, `test_datetime_ticks.py`, and
+`test_report_plots.py` for coverage.
+
 ### Add a PDL field or block
 
 Trace `core/pdl/models.py` → the matching JSON schema (`spec.json` or

@@ -620,3 +620,95 @@ def test_seasonal_rate_missing_values_and_transform_flags(df_ytd, ytd_diff) -> N
         expected = [np.nan, 2900, 8900] if ytd_diff else [3100, 8900, 20900]
     values = next(t.y for t in fig.data if t.name == "YTD cumulative change")
     np.testing.assert_allclose(values, expected, equal_nan=True)
+
+
+@pytest.mark.parametrize("timezone", [None, "Europe/London"])
+def test_seasonal_hover_preserves_original_dates_through_forecast_split(timezone):
+    dates = pd.DatetimeIndex(["2024-04-29", "2024-04-30", "2025-04-29", "2025-04-30"], tz=timezone)
+    frame = pd.DataFrame({"value": [1.25, 2.5, 3.75, 0.0]}, index=dates)
+    fig = plot_seasonal(frame, current_year=2025, dash_from=pd.Timestamp("2025-04-30"), ytd_cum_sum=True)
+    expected = {
+        "2024": [("2024-04-29", 1.25), ("2024-04-30", 2.5)],
+        "2025": [("2025-04-29", 3.75)],
+        "2025_Forecast": [("2025-04-30", 0.0)],
+    }
+    for trace in fig.data:
+        if trace.name in expected:
+            assert [(date, value) for date, value in zip(trace.customdata, trace.y) if pd.notna(value)] == expected[
+                trace.name
+            ]
+            assert trace.hovertemplate == "%{customdata}<br>%{y}<extra>%{fullData.name}</extra>"
+            assert all(pd.Timestamp(x).year == pd.Timestamp.today().year for x in trace.x)
+        else:
+            assert trace.customdata is None
+            assert trace.hovertemplate == "%{x|%b %d}<br>%{y}<extra>%{fullData.name}</extra>"
+    assert all(axis.tickformat == "%b" for axis in fig.select_xaxes())
+
+
+@pytest.mark.parametrize("frequency", ["D", "W", "M", "Q"])
+def test_seasonal_hover_uses_calendar_year_across_seasons_and_last_slot_observation(frequency):
+    dates = pd.to_datetime(["2024-12-30", "2024-12-31", "2025-01-01", "2025-01-02"])
+    frame = pd.DataFrame({"value": [1.0, 2.0, 3.0, 4.0]}, index=dates)
+    fig = plot_seasonal(
+        frame,
+        frequency=frequency,
+        start_month=10,
+        end_month=9,
+        over_year=True,
+        current_year=2024,
+        dash_from=pd.Timestamp("2025-01-01"),
+        vs_average=False,
+    )
+    seen = []
+    for trace in fig.data:
+        for date, value in zip(trace.customdata, trace.y):
+            if pd.notna(value):
+                assert date == dates[int(value) - 1].strftime("%Y-%m-%d")
+                assert trace.name == ("2024_Forecast" if date >= "2025-01-01" else "2024")
+                seen.append(value)
+    assert 4 in seen
+    if frequency == "D":
+        assert sorted(seen) == [1, 2, 3, 4]
+
+
+def test_seasonal_hover_dates_keep_leap_day_omission_and_missing_slots_aligned():
+    dates = pd.to_datetime(["2024-02-28", "2024-02-29", "2024-03-01", "2025-02-28", "2025-03-01"])
+    frame = pd.DataFrame({"value": [10.0, 999.0, 20.0, np.nan, 30.0]}, index=dates)
+    fig = plot_seasonal(frame, current_year=2025, vs_average=False)
+    assert list(fig.data[0].customdata) == ["2024-02-28", "2024-03-01"]
+    assert list(fig.data[0].y) == [10, 20]
+    assert list(fig.data[1].customdata) == ["2025-02-28", "2025-03-01"]
+    assert pd.isna(fig.data[1].y[0])
+    assert fig.data[1].y[1] == 30
+
+
+@pytest.mark.parametrize("template", ["%{customdata}: %{y:.2f}<extra>Custom</extra>", ""])
+def test_seasonal_explicit_tick_and_hover_overrides_reach_every_panel(template):
+    frame = pd.DataFrame(
+        {"value": [1.0, 2.0, 3.0, 4.0]}, index=pd.to_datetime(["2024-04-29", "2024-04-30", "2025-04-29", "2025-04-30"])
+    )
+    fig = plot_seasonal(
+        frame,
+        current_year=2025,
+        dash_from=pd.Timestamp("2025-04-30"),
+        ytd=True,
+        ytd_cum_sum=True,
+        tickformat="%d/%m",
+        hovertemplate=template,
+    )
+    assert all(trace.hovertemplate == template for trace in fig.data)
+    assert all(axis.tickformat == "%d/%m" for axis in fig.select_xaxes())
+
+
+def test_seasonal_cumulative_input_has_derived_hover_and_grid_preserves_metadata():
+    from runbook.core.plotting.seasonal import plot_seasonal_grid
+
+    frame = pd.DataFrame({"value": [1.0, 2.0]}, index=pd.to_datetime(["2024-04-29", "2025-04-29"]))
+    derived = plot_seasonal(frame, current_year=2025, df_ytd=True)
+    assert all(trace.customdata is None and "%{x|%b %d}" in trace.hovertemplate for trace in derived.data)
+    grid = plot_seasonal_grid({"Seasonal": frame}, history=frame, current_year=2025)
+    assert list(grid.data[0].customdata) == ["2024-04-29"]
+    assert grid.layout.xaxis.tickformat == "%b"
+    history = grid.data[-1]
+    assert list(pd.to_datetime(history.x)) == list(frame.index)
+    assert history.customdata is None

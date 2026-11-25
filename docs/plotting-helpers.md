@@ -209,14 +209,16 @@ with layout.section("Market") as section:
         grid.plot(bars_ref)
 ```
 
-Line, scatter, seasonal, COT, and mixed line/bar charts let Plotly choose
+Line, scatter, COT, and mixed line/bar charts let Plotly choose
 datetime tick spacing and formatting from the date range and available axis
 width. Narrow plots can show fewer labels, and zooming recalculates the spacing.
 There is no fixed daily-tick override or point-count cutoff. Overlaid traces
 and shared x-axes use their combined date range; independent subplots adapt
 separately. Pass `dtick` and/or `tickformat`
 in any helper to override these defaults. For example, `dtick="M1", tickformat="%b"`
-requests monthly ticks with month-name labels.
+requests monthly ticks with month-name labels. Seasonal panels retain automatic
+tick spacing but default to month-only labels (`%b`), including comparison and
+cumulative panels.
 Bar-only datetime axes instead label each distinct bar timestamp, including
 forecast bars. Labels use month/year for inferred monthly or quarterly data,
 years for yearly data, and dates for daily or weekly data. Missing bars do not
@@ -262,7 +264,21 @@ selected value must exist in the index.
 ## Seasonal charts
 
 `plot_seasonal` expects a DataFrame indexed by timestamps. It reshapes values
-by year and can add comparisons, YTD panels, and an optional forecast cutoff:
+by year and can add comparisons, YTD panels, and an optional forecast cutoff.
+Its shared axis aligns seasons while historical and forecast hovers display the
+original observation date (`YYYY-MM-DD`), including the actual calendar year
+across December/January. Dates follow the same slot selection as values (last
+observation wins); daily February 29 omission is unchanged. Derived comparison
+and cumulative traces instead show a year-free seasonal date and their trace
+name, without claiming a single original observation date. Numeric formatting
+is left to Plotly. Explicit `tickformat` and `hovertemplate` override defaults;
+observation dates are also available as `%{customdata}` in custom templates.
+Native wrappers and `plot_seasonal_grid` inherit this behavior; an ordinary
+history panel retains its actual date axis. Run
+`python scripts/preview_seasonal_dates.py` for a synthetic review gallery in
+`/tmp/runbook-seasonal-dates/index.html`.
+
+For example:
 
 ```python
 seasonality = plot_seasonal(

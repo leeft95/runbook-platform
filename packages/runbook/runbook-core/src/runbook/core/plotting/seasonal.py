@@ -75,6 +75,11 @@ def plot_seasonal(
 ) -> plotly.graph_objs._figure.Figure:
     """Plot seasonal years, optional comparisons, and an optional cumulative panel.
 
+    Seasonal axes default to month-only tick labels. Year and forecast hovers
+    show the original observation date, including its calendar year; derived
+    comparisons and cumulative values show a year-free seasonal date instead.
+    Explicit ``tickformat`` and ``hovertemplate`` override these defaults.
+
     All frequencies include a month-end boundary unless
     it starts the next cycle. Other end boundaries remain exclusive. Years label
     the start of each cycle; ``dash_from`` uses the original observation dates.
@@ -127,6 +132,9 @@ def plot_seasonal(
     if df.empty:
         raise ValueError("No seasonal data available after applying start.")
 
+    if tickformat is None:
+        tickformat = "%b"
+
     if holiday_countries is None:
         holiday_countries = []
 
@@ -154,6 +162,13 @@ def plot_seasonal(
         current_year = int(non_future_years[-1] if len(non_future_years) else df_by_year.columns[-1])
     if current_year not in df_by_year.columns:
         raise KeyError(f"current_year {current_year!r} not found in seasonal data.")
+
+    # Transform row identities with the values so slot collisions and cross-year
+    # seasons retain the exact source observation, rather than the season's year.
+    source_rows = pd.Series(np.arange(len(df)), index=df.index, name=column)
+    observation_dates = ts_by_year(source_rows, **transform_kwargs).reindex_like(df_by_year)
+    date_labels = dict(enumerate(df.index.strftime("%Y-%m-%d")))
+    observation_dates = observation_dates.apply(lambda series: series.map(date_labels))
 
     rate_weights: float | pd.DataFrame = 1.0
     if cumsum_rate:
@@ -202,10 +217,14 @@ def plot_seasonal(
 
         base_name = str(year)
         base_style: dict[str, tp.Any] = {}
+        if not df_ytd:
+            base_style["customdata"] = observation_dates[year].to_numpy()
+            if hovertemplate is None:
+                base_style["hovertemplate"] = "%{customdata}<br>%{y}<extra>%{fullData.name}</extra>"
         if year == current_year:
-            base_style = {"line": {"color": "black", "width": 2}}
+            base_style["line"] = {"color": "black", "width": 2}
         elif prev_year is not None and year == prev_year:
-            base_style = {"line": {"color": "blue", "width": 1}}
+            base_style["line"] = {"color": "blue", "width": 1}
         series = df_by_year[year]
 
         if not forecast_mask[year].any():
@@ -226,11 +245,12 @@ def plot_seasonal(
             fcst_name = f"{year}_{dash_name}"
             seasonal_data[fcst_name] = fcst_series
             series_styles[fcst_name] = {
+                **base_style,
                 "line": {
                     "color": forecast_color_by_year.get(year, forecast_year_colors[0]),
                     "width": 2,
                     "dash": "dash",
-                }
+                },
             }
 
     subplot_frames: list[pd.DataFrame] = [seasonal_data]
@@ -291,7 +311,9 @@ def plot_seasonal(
             row=row,
             col=1,
             plot_type=PlotType.line,
-            hovertemplate=hovertemplate,
+            hovertemplate=(
+                hovertemplate if hovertemplate is not None else "%{x|%b %d}<br>%{y}<extra>%{fullData.name}</extra>"
+            ),
             tickformat=tickformat,
             dtick=dtick,
             use_rangebreaks=use_rangebreaks,
